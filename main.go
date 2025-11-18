@@ -11,20 +11,59 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
+	"gopkg.in/yaml.v3"
 )
+
+// ModuleUpdate represents a module source and its target version
+type ModuleUpdate struct {
+	Source  string `yaml:"source"`
+	Version string `yaml:"version"`
+}
+
+// Config represents the configuration file structure
+type Config struct {
+	Modules []ModuleUpdate `yaml:"modules"`
+}
 
 func main() {
 	// Define CLI flags
 	pattern := flag.String("pattern", "", "Glob pattern for Terraform files (e.g., '*.tf' or 'modules/**/*.tf')")
 	moduleSource := flag.String("module", "", "Source of the module to update (e.g., 'terraform-aws-modules/vpc/aws')")
 	version := flag.String("version", "", "Desired version number")
+	configFile := flag.String("config", "", "Path to YAML config file with multiple module updates")
 	flag.Parse()
 
-	// Validate inputs
-	if *pattern == "" || *moduleSource == "" || *version == "" {
-		fmt.Println("Usage: tf-version-bump -pattern <glob> -module <source> -version <version>")
-		flag.PrintDefaults()
-		os.Exit(1)
+	// Determine operation mode
+	var updates []ModuleUpdate
+	var err error
+
+	if *configFile != "" {
+		// Config file mode
+		if *moduleSource != "" || *version != "" {
+			log.Fatal("Error: Cannot use -config with -module or -version flags")
+		}
+		if *pattern == "" {
+			log.Fatal("Error: -pattern flag is required")
+		}
+		updates, err = loadConfig(*configFile)
+		if err != nil {
+			log.Fatalf("Error loading config file: %v", err)
+		}
+		if len(updates) == 0 {
+			log.Fatal("Error: Config file contains no module updates")
+		}
+	} else {
+		// Single module mode
+		if *pattern == "" || *moduleSource == "" || *version == "" {
+			fmt.Println("Usage:")
+			fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -version <version>")
+			fmt.Println("  Config file:    tf-version-bump -pattern <glob> -config <config-file>")
+			flag.PrintDefaults()
+			os.Exit(1)
+		}
+		updates = []ModuleUpdate{
+			{Source: *moduleSource, Version: *version},
+		}
 	}
 
 	// Find matching files
@@ -39,21 +78,54 @@ func main() {
 
 	fmt.Printf("Found %d file(s) matching pattern '%s'\n", len(files), *pattern)
 
-	// Process each file
-	updatedCount := 0
+	// Process each file with all module updates
+	totalUpdates := 0
 	for _, file := range files {
-		updated, err := updateModuleVersion(file, *moduleSource, *version)
-		if err != nil {
-			log.Printf("Error processing %s: %v", file, err)
-			continue
-		}
-		if updated {
-			fmt.Printf("✓ Updated module source '%s' to version '%s' in %s\n", *moduleSource, *version, file)
-			updatedCount++
+		fileUpdates := 0
+		for _, update := range updates {
+			updated, err := updateModuleVersion(file, update.Source, update.Version)
+			if err != nil {
+				log.Printf("Error processing %s: %v", file, err)
+				continue
+			}
+			if updated {
+				fmt.Printf("✓ Updated module source '%s' to version '%s' in %s\n", update.Source, update.Version, file)
+				fileUpdates++
+				totalUpdates++
+			}
 		}
 	}
 
-	fmt.Printf("\nSuccessfully updated %d file(s)\n", updatedCount)
+	if len(updates) > 1 {
+		fmt.Printf("\nSuccessfully applied %d update(s) across all files\n", totalUpdates)
+	} else {
+		fmt.Printf("\nSuccessfully updated %d file(s)\n", totalUpdates)
+	}
+}
+
+// loadConfig reads and parses the YAML configuration file
+func loadConfig(filename string) ([]ModuleUpdate, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+	}
+
+	// Validate config
+	for i, module := range config.Modules {
+		if module.Source == "" {
+			return nil, fmt.Errorf("module at index %d is missing 'source' field", i)
+		}
+		if module.Version == "" {
+			return nil, fmt.Errorf("module at index %d is missing 'version' field", i)
+		}
+	}
+
+	return config.Modules, nil
 }
 
 // updateModuleVersion parses a Terraform file, finds modules with the specified source, updates their version, and writes it back
