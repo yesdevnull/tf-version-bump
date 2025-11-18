@@ -50,6 +50,7 @@ func main() {
 	moduleSource := flag.String("module", "", "Source of the module to update (e.g., 'terraform-aws-modules/vpc/aws')")
 	version := flag.String("version", "", "Desired version number")
 	configFile := flag.String("config", "", "Path to YAML config file with multiple module updates")
+	forceAdd := flag.Bool("force-add", false, "Add version attribute to modules that don't have one (default: skip with warning)")
 	flag.Parse()
 
 	// Determine operation mode
@@ -102,7 +103,7 @@ func main() {
 	for _, file := range files {
 		fileUpdates := 0
 		for _, update := range updates {
-			updated, err := updateModuleVersion(file, update.Source, update.Version)
+			updated, err := updateModuleVersion(file, update.Source, update.Version, *forceAdd)
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				continue
@@ -159,18 +160,22 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 // updates their version attribute, and writes the modified content back to the file.
 //
 // The function preserves all formatting, comments, and other HCL structures in the file.
-// If a matching module doesn't have a version attribute, one will be added.
+// If a matching module doesn't have a version attribute:
+//   - When forceAdd is false (default): a warning is printed and the module is skipped
+//   - When forceAdd is true: a version attribute is added to the module
+//
 // All modules with the same source attribute will be updated to the same version.
 //
 // Parameters:
 //   - filename: Path to the Terraform file to process
 //   - moduleSource: The module source to match (e.g., "terraform-aws-modules/vpc/aws")
 //   - version: The target version to set (e.g., "5.0.0")
+//   - forceAdd: If true, add version attribute to modules that don't have one
 //
 // Returns:
 //   - bool: true if at least one module was updated, false otherwise
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateModuleVersion(filename, moduleSource, version string) (bool, error) {
+func updateModuleVersion(filename, moduleSource, version string, forceAdd bool) (bool, error) {
 	// Read the file
 	src, err := os.ReadFile(filename)
 	if err != nil {
@@ -202,7 +207,23 @@ func updateModuleVersion(filename, moduleSource, version string) (bool, error) {
 
 				// Check if this module's source matches
 				if sourceValue == moduleSource {
-					// Update or set the version attribute
+					// Check if the module has a version attribute
+					versionAttr := block.Body().GetAttribute("version")
+					if versionAttr == nil {
+						if !forceAdd {
+							// Module doesn't have a version attribute - print warning and skip
+							moduleName := ""
+							if len(block.Labels()) > 0 {
+								moduleName = block.Labels()[0]
+							}
+							fmt.Fprintf(os.Stderr, "Warning: Module %q in %s (source: %q) has no version attribute, skipping\n",
+								moduleName, filename, moduleSource)
+							continue
+						}
+						// forceAdd is true, so we'll add the version attribute below
+					}
+
+					// Update or add the version attribute
 					block.Body().SetAttributeValue("version", cty.StringVal(version))
 					updated = true
 				}
