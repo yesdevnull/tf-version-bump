@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -15,13 +16,13 @@ import (
 func main() {
 	// Define CLI flags
 	pattern := flag.String("pattern", "", "Glob pattern for Terraform files (e.g., '*.tf' or 'modules/**/*.tf')")
-	moduleName := flag.String("module", "", "Name of the module to update")
+	moduleSource := flag.String("module", "", "Source of the module to update (e.g., 'terraform-aws-modules/vpc/aws')")
 	version := flag.String("version", "", "Desired version number")
 	flag.Parse()
 
 	// Validate inputs
-	if *pattern == "" || *moduleName == "" || *version == "" {
-		fmt.Println("Usage: tf-version-bump -pattern <glob> -module <name> -version <version>")
+	if *pattern == "" || *moduleSource == "" || *version == "" {
+		fmt.Println("Usage: tf-version-bump -pattern <glob> -module <source> -version <version>")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
@@ -41,13 +42,13 @@ func main() {
 	// Process each file
 	updatedCount := 0
 	for _, file := range files {
-		updated, err := updateModuleVersion(file, *moduleName, *version)
+		updated, err := updateModuleVersion(file, *moduleSource, *version)
 		if err != nil {
 			log.Printf("Error processing %s: %v", file, err)
 			continue
 		}
 		if updated {
-			fmt.Printf("✓ Updated module '%s' to version '%s' in %s\n", *moduleName, *version, file)
+			fmt.Printf("✓ Updated module source '%s' to version '%s' in %s\n", *moduleSource, *version, file)
 			updatedCount++
 		}
 	}
@@ -55,8 +56,8 @@ func main() {
 	fmt.Printf("\nSuccessfully updated %d file(s)\n", updatedCount)
 }
 
-// updateModuleVersion parses a Terraform file, finds the specified module, updates its version, and writes it back
-func updateModuleVersion(filename, moduleName, version string) (bool, error) {
+// updateModuleVersion parses a Terraform file, finds modules with the specified source, updates their version, and writes it back
+func updateModuleVersion(filename, moduleSource, version string) (bool, error) {
 	// Read the file
 	src, err := os.ReadFile(filename)
 	if err != nil {
@@ -74,13 +75,24 @@ func updateModuleVersion(filename, moduleName, version string) (bool, error) {
 
 	// Iterate through all blocks in the file
 	for _, block := range file.Body().Blocks() {
-		// Look for module blocks with matching labels
+		// Look for module blocks with matching source
 		if block.Type() == "module" {
-			labels := block.Labels()
-			if len(labels) > 0 && labels[0] == moduleName {
-				// Update or set the version attribute
-				block.Body().SetAttributeValue("version", cty.StringVal(version))
-				updated = true
+			// Get the source attribute
+			sourceAttr := block.Body().GetAttribute("source")
+			if sourceAttr != nil {
+				// Extract the source value
+				sourceTokens := sourceAttr.Expr().BuildTokens(nil)
+				sourceValue := string(sourceTokens.Bytes())
+
+				// Remove whitespace and quotes from the source value
+				sourceValue = trimQuotes(strings.TrimSpace(sourceValue))
+
+				// Check if this module's source matches
+				if sourceValue == moduleSource {
+					// Update or set the version attribute
+					block.Body().SetAttributeValue("version", cty.StringVal(version))
+					updated = true
+				}
 			}
 		}
 	}
@@ -94,4 +106,14 @@ func updateModuleVersion(filename, moduleName, version string) (bool, error) {
 	}
 
 	return updated, nil
+}
+
+// trimQuotes removes surrounding quotes from a string
+func trimQuotes(s string) string {
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }
