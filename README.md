@@ -1,5 +1,9 @@
 # Terraform Version Bump
 
+[![CI](https://github.com/yesdevnull/tf-version-bump/workflows/CI/badge.svg)](https://github.com/yesdevnull/tf-version-bump/actions)
+[![Go Report Card](https://goreportcard.com/badge/github.com/yesdevnull/tf-version-bump)](https://goreportcard.com/report/github.com/yesdevnull/tf-version-bump)
+[![codecov](https://codecov.io/gh/yesdevnull/tf-version-bump/branch/main/graph/badge.svg)](https://codecov.io/gh/yesdevnull/tf-version-bump)
+
 A CLI tool written in Go that updates Terraform module versions across multiple files using glob patterns. The tool matches modules by their source attribute, making it easy to update all instances of a particular module to a new version.
 
 ## Features
@@ -17,7 +21,19 @@ A CLI tool written in Go that updates Terraform module versions across multiple 
 
 - Go 1.24.7 or later
 
+### Install with go install
+
+The easiest way to install the tool is using `go install`:
+
+```bash
+go install github.com/yesdevnull/tf-version-bump@latest
+```
+
+This will install the `tf-version-bump` binary to your `$GOPATH/bin` directory (usually `~/go/bin`). Make sure this directory is in your `PATH`.
+
 ### Build from source
+
+Alternatively, you can build from source:
 
 ```bash
 git clone https://github.com/yesdevnull/tf-version-bump.git
