@@ -161,6 +161,8 @@ modules:
     version: "5.1.0"
 ```
 
+**Note about local modules:** While local modules (e.g., `./modules/vpc` or `../shared-modules/s3`) typically don't use version attributes in standard Terraform configurations, this tool requires a version field for all modules in the config file. You can use this for internal versioning, documentation, or to track which version of a local module is being used across your infrastructure.
+
 #### Examples
 
 Update modules using a basic config file:
