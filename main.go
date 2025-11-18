@@ -1,3 +1,11 @@
+// Package main provides a CLI tool for updating Terraform module versions across multiple files.
+//
+// The tool supports two modes of operation:
+//  1. Single Module Mode: Update one module at a time via command-line flags
+//  2. Config File Mode: Update multiple modules using a YAML configuration file
+//
+// It uses the official HashiCorp HCL library to safely parse and modify Terraform files
+// while preserving formatting and comments.
 package main
 
 import (
@@ -14,13 +22,24 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ModuleUpdate represents a module source and its target version
+// ModuleUpdate represents a single module source and its target version.
+// It is used both for single module updates via CLI flags and for batch
+// updates from YAML configuration files.
 type ModuleUpdate struct {
-	Source  string `yaml:"source"`
-	Version string `yaml:"version"`
+	Source  string `yaml:"source"`  // Module source (e.g., "terraform-aws-modules/vpc/aws")
+	Version string `yaml:"version"` // Target version (e.g., "5.0.0")
 }
 
-// Config represents the configuration file structure
+// Config represents the structure of a YAML configuration file for batch updates.
+// The YAML file should contain a top-level "modules" key with a list of module updates.
+//
+// Example YAML:
+//
+//	modules:
+//	  - source: "terraform-aws-modules/vpc/aws"
+//	    version: "5.0.0"
+//	  - source: "terraform-aws-modules/s3-bucket/aws"
+//	    version: "4.0.0"
 type Config struct {
 	Modules []ModuleUpdate `yaml:"modules"`
 }
@@ -103,7 +122,15 @@ func main() {
 	}
 }
 
-// loadConfig reads and parses the YAML configuration file
+// loadConfig reads and parses a YAML configuration file containing module updates.
+// It validates that all required fields (source and version) are present for each module.
+//
+// Parameters:
+//   - filename: Path to the YAML configuration file
+//
+// Returns:
+//   - []ModuleUpdate: List of module updates parsed from the file
+//   - error: Any error encountered during reading, parsing, or validation
 func loadConfig(filename string) ([]ModuleUpdate, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -128,7 +155,21 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 	return config.Modules, nil
 }
 
-// updateModuleVersion parses a Terraform file, finds modules with the specified source, updates their version, and writes it back
+// updateModuleVersion parses a Terraform file, finds modules with the specified source,
+// updates their version attribute, and writes the modified content back to the file.
+//
+// The function preserves all formatting, comments, and other HCL structures in the file.
+// If a matching module doesn't have a version attribute, one will be added.
+// All modules with the same source attribute will be updated to the same version.
+//
+// Parameters:
+//   - filename: Path to the Terraform file to process
+//   - moduleSource: The module source to match (e.g., "terraform-aws-modules/vpc/aws")
+//   - version: The target version to set (e.g., "5.0.0")
+//
+// Returns:
+//   - bool: true if at least one module was updated, false otherwise
+//   - error: Any error encountered during file reading, parsing, or writing
 func updateModuleVersion(filename, moduleSource, version string) (bool, error) {
 	// Read the file
 	src, err := os.ReadFile(filename)
@@ -180,7 +221,20 @@ func updateModuleVersion(filename, moduleSource, version string) (bool, error) {
 	return updated, nil
 }
 
-// trimQuotes removes surrounding quotes from a string
+// trimQuotes removes surrounding single or double quotes from a string.
+// If the string doesn't have matching quotes on both ends, it returns the original string.
+//
+// Parameters:
+//   - s: The string to trim quotes from
+//
+// Returns:
+//   - string: The string with quotes removed, or the original string if no matching quotes found
+//
+// Examples:
+//   - `"hello"` returns `hello`
+//   - `'hello'` returns `hello`
+//   - `hello` returns `hello`
+//   - `"hello'` returns `"hello'` (mismatched quotes)
 func trimQuotes(s string) string {
 	if len(s) >= 2 {
 		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {

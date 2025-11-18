@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -296,5 +297,222 @@ func TestUpdateModuleVersionFileNotFound(t *testing.T) {
 
 	if updated {
 		t.Error("Should not report file as updated when it doesn't exist")
+	}
+}
+
+// TestUpdateModuleVersionEmptyFile tests handling of an empty Terraform file
+func TestUpdateModuleVersionEmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "empty.tf")
+
+	err := os.WriteFile(tmpFile, []byte(""), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0")
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if updated {
+		t.Error("Empty file should not be reported as updated")
+	}
+}
+
+// TestUpdateModuleVersionMultipleVersionFormats tests different version formats
+func TestUpdateModuleVersionMultipleVersionFormats(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+	}{
+		{"semantic version", "5.0.0"},
+		{"version with v prefix", "v5.0.0"},
+		{"version with patch", "5.0.1"},
+		{"version with prerelease", "5.0.0-beta.1"},
+		{"git tag", "v1.2.3"},
+		{"commit hash", "abc123"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := `module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "1.0.0"
+}`
+
+			tmpDir := t.TempDir()
+			tmpFile := filepath.Join(tmpDir, "test.tf")
+
+			err := os.WriteFile(tmpFile, []byte(input), 0644)
+			if err != nil {
+				t.Fatalf("Failed to create temp file: %v", err)
+			}
+
+			updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", tt.version)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if !updated {
+				t.Error("Expected file to be updated")
+			}
+
+			content, err := os.ReadFile(tmpFile)
+			if err != nil {
+				t.Fatalf("Failed to read updated file: %v", err)
+			}
+
+			expectedVersion := fmt.Sprintf(`version = "%s"`, tt.version)
+			if !strings.Contains(string(content), expectedVersion) {
+				t.Errorf("Expected version %q not found in content:\n%s", expectedVersion, string(content))
+			}
+		})
+	}
+}
+
+// TestUpdateModuleVersionGitSource tests modules with Git sources
+func TestUpdateModuleVersionGitSource(t *testing.T) {
+	input := `module "example" {
+  source  = "git::https://github.com/example/terraform-module.git"
+  version = "v1.0.0"
+}`
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.tf")
+
+	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	updated, err := updateModuleVersion(tmpFile, "git::https://github.com/example/terraform-module.git", "v2.0.0")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !updated {
+		t.Error("Expected file to be updated")
+	}
+
+	content, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("Failed to read updated file: %v", err)
+	}
+
+	if !strings.Contains(string(content), `version = "v2.0.0"`) {
+		t.Error("Git module version was not updated correctly")
+	}
+}
+
+// TestUpdateModuleVersionNoModuleBlocks tests files without module blocks
+func TestUpdateModuleVersionNoModuleBlocks(t *testing.T) {
+	input := `resource "aws_instance" "example" {
+  ami           = "ami-12345"
+  instance_type = "t2.micro"
+}
+
+variable "region" {
+  type    = string
+  default = "us-east-1"
+}`
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.tf")
+
+	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if updated {
+		t.Error("File without module blocks should not be reported as updated")
+	}
+}
+
+// TestUpdateModuleVersionComplexFile tests a file with multiple resource types
+func TestUpdateModuleVersionComplexFile(t *testing.T) {
+	input := `terraform {
+  required_version = ">= 1.0"
+}
+
+variable "vpc_cidr" {
+  type = string
+}
+
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.0.0"
+  cidr    = var.vpc_cidr
+}
+
+resource "aws_instance" "app" {
+  ami           = "ami-12345"
+  instance_type = "t2.micro"
+}
+
+module "security_group" {
+  source  = "terraform-aws-modules/security-group/aws"
+  version = "4.0.0"
+  vpc_id  = module.vpc.vpc_id
+}
+
+output "vpc_id" {
+  value = module.vpc.vpc_id
+}`
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.tf")
+
+	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	// Update only VPC module
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !updated {
+		t.Error("Expected file to be updated")
+	}
+
+	content, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("Failed to read updated file: %v", err)
+	}
+
+	contentStr := string(content)
+
+	// VPC module should be updated
+	if !strings.Contains(contentStr, `version = "5.0.0"`) {
+		t.Error("VPC module was not updated")
+	}
+
+	// Security group module should remain unchanged
+	if !strings.Contains(contentStr, `version = "4.0.0"`) {
+		t.Error("Security group module should not have been changed")
+	}
+
+	// Other blocks should be preserved
+	if !strings.Contains(contentStr, `terraform {`) {
+		t.Error("Terraform block was not preserved")
+	}
+	if !strings.Contains(contentStr, `variable "vpc_cidr"`) {
+		t.Error("Variable block was not preserved")
+	}
+	if !strings.Contains(contentStr, `resource "aws_instance" "app"`) {
+		t.Error("Resource block was not preserved")
+	}
+	if !strings.Contains(contentStr, `output "vpc_id"`) {
+		t.Error("Output block was not preserved")
 	}
 }
