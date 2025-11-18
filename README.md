@@ -7,6 +7,7 @@ A CLI tool written in Go that updates Terraform module versions across multiple 
 - Parse Terraform files using the official HashiCorp HCL library
 - Update module versions by matching on module source
 - Process multiple files using glob patterns
+- **Batch updates** via YAML configuration files
 - Preserves formatting and comments in Terraform files
 - Safe and reliable HCL parsing and writing
 - Comprehensive test suite
@@ -39,17 +40,24 @@ go build -o tf-version-bump
 
 ## Usage
 
+The tool supports two modes of operation:
+
+1. **Single Module Mode**: Update one module at a time
+2. **Config File Mode**: Update multiple modules using a YAML configuration file
+
+### Single Module Mode
+
 ```bash
 ./tf-version-bump -pattern <glob-pattern> -module <module-source> -version <version>
 ```
 
-### Arguments
+#### Arguments
 
 - `-pattern`: Glob pattern for Terraform files (e.g., `*.tf`, `modules/**/*.tf`)
 - `-module`: Source of the module to update (e.g., `terraform-aws-modules/vpc/aws`)
 - `-version`: Desired version number
 
-### Examples
+#### Examples
 
 Update all VPC modules from the Terraform AWS modules registry to version `5.0.0`:
 
@@ -80,6 +88,61 @@ Update local modules:
 ```bash
 ./tf-version-bump -pattern "*.tf" -module "./modules/my-module" -version "1.0.0"
 ```
+
+### Config File Mode
+
+For updating multiple modules at once, use a YAML configuration file:
+
+```bash
+./tf-version-bump -pattern <glob-pattern> -config <config-file>
+```
+
+#### Arguments
+
+- `-pattern`: Glob pattern for Terraform files (required)
+- `-config`: Path to YAML configuration file
+
+#### Config File Format
+
+Create a YAML file with the following structure:
+
+```yaml
+modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+  - source: "terraform-aws-modules/security-group/aws"
+    version: "5.1.0"
+```
+
+#### Examples
+
+Update modules using a basic config file:
+
+```bash
+./tf-version-bump -pattern "*.tf" -config "config.yml"
+```
+
+Update modules in production environment:
+
+```bash
+./tf-version-bump -pattern "environments/prod/**/*.tf" -config "config-production.yml"
+```
+
+Update all Terraform files recursively:
+
+```bash
+./tf-version-bump -pattern "**/*.tf" -config "module-updates.yml"
+```
+
+#### Example Config Files
+
+See the `examples/` directory for sample configuration files:
+
+- `config-basic.yml` - Simple configuration with a few modules
+- `config-advanced.yml` - Advanced configuration showing various module types (subpaths, local modules, Git sources)
+- `config-production.yml` - Production-ready configuration with common AWS modules
 
 ## How it Works
 
@@ -144,6 +207,8 @@ The project includes a comprehensive test suite covering various scenarios:
 - Modules with and without version attributes
 - Mixed modules with different sources
 - Modules with subpaths in sources
+- Config file parsing and validation
+- Batch updates from configuration files
 - Preserving formatting and comments
 - Error handling for invalid HCL and missing files
 
@@ -157,6 +222,7 @@ go test -v
 
 - `github.com/hashicorp/hcl/v2` - HCL parsing and writing
 - `github.com/zclconf/go-cty` - Configuration type system for HCL
+- `gopkg.in/yaml.v3` - YAML parsing for configuration files
 
 ## License
 
