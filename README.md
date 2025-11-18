@@ -15,7 +15,7 @@ A CLI tool written in Go that updates Terraform module versions across multiple 
 
 ### Prerequisites
 
-- Go 1.24.7 or later
+- Go 1.24 or later
 
 ### Install with go install
 
