@@ -57,13 +57,13 @@ func TestTrimQuotes(t *testing.T) {
 
 func TestUpdateModuleVersion(t *testing.T) {
 	tests := []struct {
-		name          string
-		inputContent  string
-		moduleSource  string
-		version       string
-		expectUpdate  bool
-		expectError   bool
-		checkContent  func(string) bool
+		name         string
+		inputContent string
+		moduleSource string
+		version      string
+		expectUpdate bool
+		expectError  bool
+		checkContent func(string) bool
 	}{
 		{
 			name: "update single module",
