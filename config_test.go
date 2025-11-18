@@ -300,7 +300,11 @@ func TestLoadConfigWithGitSources(t *testing.T) {
 	}
 }
 
-// TestLoadConfigWithLocalModules tests config with local module sources
+// TestLoadConfigWithLocalModules tests config file parsing with local module sources.
+// Note: This tests the config parsing capability only. In actual Terraform usage,
+// local modules (./path or ../path) typically don't use version attributes since
+// they reference local filesystem paths. However, this tool allows version tracking
+// for local modules for use cases like internal versioning or documentation purposes.
 func TestLoadConfigWithLocalModules(t *testing.T) {
 	configYAML := `modules:
   - source: "./modules/vpc"
@@ -323,6 +327,14 @@ func TestLoadConfigWithLocalModules(t *testing.T) {
 
 	if len(updates) != 2 {
 		t.Errorf("Got %d modules, want 2", len(updates))
+	}
+
+	// Verify local paths are parsed correctly
+	if updates[0].Source != "./modules/vpc" {
+		t.Errorf("First module source = %q, want %q", updates[0].Source, "./modules/vpc")
+	}
+	if updates[1].Source != "../shared-modules/s3" {
+		t.Errorf("Second module source = %q, want %q", updates[1].Source, "../shared-modules/s3")
 	}
 }
 
