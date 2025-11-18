@@ -93,6 +93,7 @@ tf-version-bump -pattern <glob-pattern> -module <module-source> -version <versio
 - `-pattern`: Glob pattern for Terraform files (e.g., `*.tf`, `modules/**/*.tf`)
 - `-module`: Source of the module to update (e.g., `terraform-aws-modules/vpc/aws`)
 - `-version`: Desired version number
+- `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
 
 #### Examples
 
@@ -146,6 +147,7 @@ tf-version-bump -pattern <glob-pattern> -config <config-file>
 
 - `-pattern`: Glob pattern for Terraform files (required)
 - `-config`: Path to YAML configuration file (required)
+- `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
 
 #### Config File Format
 
@@ -161,7 +163,7 @@ modules:
     version: "5.1.0"
 ```
 
-**Note about local modules:** While local modules (e.g., `./modules/vpc` or `../shared-modules/s3`) typically don't use version attributes in standard Terraform configurations, this tool requires a version field for all modules in the config file. You can use this for internal versioning, documentation, or to track which version of a local module is being used across your infrastructure.
+**Note about local modules:** While local modules (e.g., `./modules/vpc` or `../shared-modules/s3`) typically don't use version attributes in standard Terraform configurations, this tool requires a version field for all modules in the config file. However, if a local module in your Terraform files doesn't have a version attribute, the tool will print a warning and skip it rather than adding a version attribute. This approach allows you to specify desired versions in your config while respecting Terraform's conventions for local modules.
 
 #### Examples
 
@@ -198,9 +200,37 @@ See the `examples/` directory for sample configuration files:
    - Parses the HCL structure using `hashicorp/hcl/v2`
    - Searches for `module` blocks with the specified source attribute
    - Updates the `version` attribute to the desired version
-   - If a module doesn't have a version attribute, it adds one
+   - If a module doesn't have a version attribute, it prints a warning and skips it (no version will be added)
    - Writes the updated content back to the file with proper formatting
 3. Reports the number of files successfully updated
+
+### Modules Without Version Attributes
+
+By default, if a module matching the source pattern doesn't have a version attribute (common for local modules), the tool will:
+- Print a warning message to stderr indicating which module was skipped
+- Continue processing other modules
+- Not add a version attribute to that module
+
+This behavior ensures the tool doesn't make unintended changes to modules that don't typically use version attributes, such as local modules.
+
+**Example warning output:**
+```
+Warning: Module "local_vpc" in main.tf (source: "./modules/vpc") has no version attribute, skipping
+```
+
+#### Force-Adding Version Attributes
+
+If you want to add version attributes to modules that don't have them, use the `-force-add` flag:
+
+```bash
+# Add version attribute to local modules that don't have one
+tf-version-bump -pattern "*.tf" -module "./modules/vpc" -version "1.0.0" -force-add
+
+# Force-add with config file
+tf-version-bump -pattern "**/*.tf" -config "config.yml" -force-add
+```
+
+**Note:** Use this flag cautiously, especially with local modules, as Terraform typically doesn't use version attributes for local module sources.
 
 ## Example Terraform File
 
