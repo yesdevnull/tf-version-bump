@@ -18,7 +18,7 @@ A CLI tool written in Go that updates Terraform module versions across multiple 
 
 - Go 1.24 or later
 
-### Install with go install
+### Option 1: Install with go install (Recommended)
 
 The easiest way to install the tool is using `go install`:
 
@@ -28,7 +28,37 @@ go install github.com/yesdevnull/tf-version-bump@latest
 
 This will install the `tf-version-bump` binary to your `$GOPATH/bin` directory (usually `~/go/bin`). Make sure this directory is in your `PATH`.
 
-### Build from source
+**After installation, verify it's working:**
+
+```bash
+# Check if the binary is accessible
+tf-version-bump --help
+
+# If not in PATH, you can run it directly
+$GOPATH/bin/tf-version-bump --help
+# or typically
+~/go/bin/tf-version-bump --help
+```
+
+### Option 2: Install with go get (Legacy)
+
+For older Go versions or compatibility, you can use `go get`:
+
+```bash
+go get github.com/yesdevnull/tf-version-bump
+```
+
+**After installation, run the tool:**
+
+```bash
+# If $GOPATH/bin is in your PATH
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0"
+
+# Or use the full path
+$GOPATH/bin/tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0"
+```
+
+### Option 3: Build from source
 
 Alternatively, you can build from source:
 
@@ -36,20 +66,27 @@ Alternatively, you can build from source:
 git clone https://github.com/yesdevnull/tf-version-bump.git
 cd tf-version-bump
 go build -o tf-version-bump
+
+# Run the locally built binary
+./tf-version-bump --help
 ```
 
 ## Usage
 
 The tool supports two modes of operation:
 
-1. **Single Module Mode**: Update one module at a time
-2. **Config File Mode**: Update multiple modules using a YAML configuration file
+1. **Single Module Mode**: Update one module at a time via command-line flags
+2. **Config File Mode**: Update multiple modules in one operation using a YAML configuration file
 
 ### Single Module Mode
 
+Basic syntax:
+
 ```bash
-./tf-version-bump -pattern <glob-pattern> -module <module-source> -version <version>
+tf-version-bump -pattern <glob-pattern> -module <module-source> -version <version>
 ```
+
+**Note:** If you built from source, use `./tf-version-bump` instead of `tf-version-bump`.
 
 #### Arguments
 
@@ -62,31 +99,37 @@ The tool supports two modes of operation:
 Update all VPC modules from the Terraform AWS modules registry to version `5.0.0`:
 
 ```bash
-./tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0"
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0"
 ```
 
 Update S3 bucket modules in a specific directory:
 
 ```bash
-./tf-version-bump -pattern "environments/prod/*.tf" -module "terraform-aws-modules/s3-bucket/aws" -version "4.1.2"
+tf-version-bump -pattern "environments/prod/*.tf" -module "terraform-aws-modules/s3-bucket/aws" -version "4.1.2"
 ```
 
-Update modules across subdirectories:
+Update modules across subdirectories (recursive):
 
 ```bash
-./tf-version-bump -pattern "modules/**/*.tf" -module "terraform-aws-modules/security-group/aws" -version "4.9.0"
+tf-version-bump -pattern "modules/**/*.tf" -module "terraform-aws-modules/security-group/aws" -version "4.9.0"
 ```
 
 Update modules with subpaths in their source:
 
 ```bash
-./tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/iam/aws//modules/iam-user" -version "5.2.0"
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/iam/aws//modules/iam-user" -version "5.2.0"
 ```
 
 Update local modules:
 
 ```bash
-./tf-version-bump -pattern "*.tf" -module "./modules/my-module" -version "1.0.0"
+tf-version-bump -pattern "*.tf" -module "./modules/my-module" -version "1.0.0"
+```
+
+Update Git-based modules:
+
+```bash
+tf-version-bump -pattern "*.tf" -module "git::https://github.com/example/terraform-module.git" -version "v1.2.3"
 ```
 
 ### Config File Mode
@@ -94,13 +137,15 @@ Update local modules:
 For updating multiple modules at once, use a YAML configuration file:
 
 ```bash
-./tf-version-bump -pattern <glob-pattern> -config <config-file>
+tf-version-bump -pattern <glob-pattern> -config <config-file>
 ```
+
+**Note:** If you built from source, use `./tf-version-bump` instead of `tf-version-bump`.
 
 #### Arguments
 
 - `-pattern`: Glob pattern for Terraform files (required)
-- `-config`: Path to YAML configuration file
+- `-config`: Path to YAML configuration file (required)
 
 #### Config File Format
 
@@ -121,19 +166,19 @@ modules:
 Update modules using a basic config file:
 
 ```bash
-./tf-version-bump -pattern "*.tf" -config "config.yml"
+tf-version-bump -pattern "*.tf" -config "config.yml"
 ```
 
 Update modules in production environment:
 
 ```bash
-./tf-version-bump -pattern "environments/prod/**/*.tf" -config "config-production.yml"
+tf-version-bump -pattern "environments/prod/**/*.tf" -config "config-production.yml"
 ```
 
 Update all Terraform files recursively:
 
 ```bash
-./tf-version-bump -pattern "**/*.tf" -config "module-updates.yml"
+tf-version-bump -pattern "**/*.tf" -config "module-updates.yml"
 ```
 
 #### Example Config Files
@@ -177,7 +222,7 @@ module "another_vpc" {
 }
 ```
 
-**After running:** `./tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0"`
+**After running:** `tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0"`
 
 ```hcl
 module "vpc" {

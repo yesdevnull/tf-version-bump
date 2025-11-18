@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -234,5 +235,192 @@ module "s3" {
 	content2Str := string(content2)
 	if !strings.Contains(content2Str, `version = "5.0.0"`) {
 		t.Error("VPC module in test2.tf was not updated to 5.0.0")
+	}
+}
+
+// TestLoadConfigWithComments tests config file parsing with YAML comments
+func TestLoadConfigWithComments(t *testing.T) {
+	configYAML := `# Configuration file for module updates
+modules:
+  # Update VPC module
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+  # Update S3 bucket module
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+`
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 2 {
+		t.Errorf("Got %d modules, want 2", len(updates))
+	}
+}
+
+// TestLoadConfigWithGitSources tests config with Git-based module sources
+func TestLoadConfigWithGitSources(t *testing.T) {
+	configYAML := `modules:
+  - source: "git::https://github.com/example/terraform-module.git"
+    version: "v1.0.0"
+  - source: "git::ssh://git@github.com/example/private-module.git"
+    version: "v2.0.0"
+`
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 2 {
+		t.Errorf("Got %d modules, want 2", len(updates))
+	}
+
+	if updates[0].Source != "git::https://github.com/example/terraform-module.git" {
+		t.Errorf("First module source = %q, want %q", updates[0].Source, "git::https://github.com/example/terraform-module.git")
+	}
+	if updates[0].Version != "v1.0.0" {
+		t.Errorf("First module version = %q, want %q", updates[0].Version, "v1.0.0")
+	}
+}
+
+// TestLoadConfigWithLocalModules tests config with local module sources
+func TestLoadConfigWithLocalModules(t *testing.T) {
+	configYAML := `modules:
+  - source: "./modules/vpc"
+    version: "1.0.0"
+  - source: "../shared-modules/s3"
+    version: "2.0.0"
+`
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 2 {
+		t.Errorf("Got %d modules, want 2", len(updates))
+	}
+}
+
+// TestLoadConfigMultipleMissingFields tests various field validation errors
+func TestLoadConfigMultipleMissingFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		configYAML  string
+		errorSubstr string
+	}{
+		{
+			name: "first module missing source",
+			configYAML: `modules:
+  - version: "5.0.0"
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+`,
+			errorSubstr: "module at index 0 is missing 'source' field",
+		},
+		{
+			name: "second module missing version",
+			configYAML: `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+  - source: "terraform-aws-modules/s3-bucket/aws"
+`,
+			errorSubstr: "module at index 1 is missing 'version' field",
+		},
+		{
+			name: "middle module missing source",
+			configYAML: `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+  - version: "4.0.0"
+  - source: "terraform-aws-modules/rds/aws"
+    version: "3.0.0"
+`,
+			errorSubstr: "module at index 1 is missing 'source' field",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configFile := filepath.Join(tmpDir, "config.yml")
+
+			err := os.WriteFile(configFile, []byte(tt.configYAML), 0644)
+			if err != nil {
+				t.Fatalf("Failed to create temp config file: %v", err)
+			}
+
+			_, err = loadConfig(configFile)
+			if err == nil {
+				t.Error("Expected error but got none")
+				return
+			}
+
+			if !strings.Contains(err.Error(), tt.errorSubstr) {
+				t.Errorf("Expected error containing %q, got: %v", tt.errorSubstr, err)
+			}
+		})
+	}
+}
+
+// TestLoadConfigLargeFile tests handling of a config with many modules
+func TestLoadConfigLargeFile(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteString("modules:\n")
+
+	// Generate 50 module entries
+	for i := 0; i < 50; i++ {
+		sb.WriteString(fmt.Sprintf(`  - source: "terraform-aws-modules/module-%d/aws"
+    version: "1.0.%d"
+`, i, i))
+	}
+
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(sb.String()), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 50 {
+		t.Errorf("Got %d modules, want 50", len(updates))
+	}
+
+	// Verify first and last entries
+	if updates[0].Source != "terraform-aws-modules/module-0/aws" {
+		t.Errorf("First module source incorrect")
+	}
+	if updates[49].Source != "terraform-aws-modules/module-49/aws" {
+		t.Errorf("Last module source incorrect")
 	}
 }
