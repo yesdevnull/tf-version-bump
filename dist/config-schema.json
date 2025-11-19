@@ -28,24 +28,30 @@
           },
           "version": {
             "type": "string",
-            "description": "Target version to update the module to",
+            "description": "Target version to update the module to. Supports full SemVer 2.0.0 specification including pre-release and build metadata",
             "minLength": 1,
-            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
             "examples": [
               "5.0.0",
               "1.2.3",
-              "10.15.2"
+              "10.15.2",
+              "2.0.0-alpha",
+              "1.0.0-beta.1",
+              "3.5.0-rc.2+build.123",
+              "4.1.0+20240115"
             ]
           },
           "from": {
             "type": "string",
-            "description": "Optional: Only update the module if its current version matches this value",
+            "description": "Optional: Only update the module if its current version matches this value. Supports full SemVer 2.0.0 specification including pre-release and build metadata",
             "minLength": 1,
-            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
             "examples": [
               "4.0.0",
               "1.0.0",
-              "9.12.1"
+              "9.12.1",
+              "1.5.0-rc.1",
+              "2.0.0-beta.2+exp.sha.5114f85"
             ]
           }
         },
