@@ -65,7 +65,7 @@ The tool supports two modes of operation:
 Basic syntax:
 
 ```bash
-tf-version-bump -pattern <glob-pattern> -module <module-source> -version <version>
+tf-version-bump -pattern <glob-pattern> -module <module-source> -to <version>
 ```
 
 **Note:** If you built from source, use `./tf-version-bump` instead of `tf-version-bump`.
@@ -74,7 +74,7 @@ tf-version-bump -pattern <glob-pattern> -module <module-source> -version <versio
 
 - `-pattern`: Glob pattern for Terraform files (e.g., `*.tf`, `modules/**/*.tf`)
 - `-module`: Source of the module to update (e.g., `terraform-aws-modules/vpc/aws`)
-- `-version`: Desired version number
+- `-to`: Desired version number
 - `-from`: (Optional) Only update modules with this current version (e.g., `4.0.0`)
 - `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
 
@@ -83,37 +83,37 @@ tf-version-bump -pattern <glob-pattern> -module <module-source> -version <versio
 Update all VPC modules from the Terraform AWS modules registry to version `5.0.0`:
 
 ```bash
-tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0"
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0"
 ```
 
 Update S3 bucket modules in a specific directory:
 
 ```bash
-tf-version-bump -pattern "environments/prod/*.tf" -module "terraform-aws-modules/s3-bucket/aws" -version "4.1.2"
+tf-version-bump -pattern "environments/prod/*.tf" -module "terraform-aws-modules/s3-bucket/aws" -to "4.1.2"
 ```
 
 Update modules across subdirectories (recursive):
 
 ```bash
-tf-version-bump -pattern "modules/**/*.tf" -module "terraform-aws-modules/security-group/aws" -version "4.9.0"
+tf-version-bump -pattern "modules/**/*.tf" -module "terraform-aws-modules/security-group/aws" -to "4.9.0"
 ```
 
 Update modules with subpaths in their source:
 
 ```bash
-tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/iam/aws//modules/iam-user" -version "5.2.0"
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/iam/aws//modules/iam-user" -to "5.2.0"
 ```
 
 Update only modules currently at version `3.14.0` to version `5.0.0`:
 
 ```bash
-tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0" -from "3.14.0"
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -from "3.14.0"
 ```
 
 Update Git-based modules:
 
 ```bash
-tf-version-bump -pattern "*.tf" -module "git::https://github.com/example/terraform-module.git" -version "v1.2.3"
+tf-version-bump -pattern "*.tf" -module "git::https://github.com/example/terraform-module.git" -to "v1.2.3"
 ```
 
 **Note:** Local modules (sources starting with `./`, `../`, or `/`) are not supported and will be skipped with a warning. Version bumping is only supported for registry modules and remote sources (Git, HTTP, etc.).
@@ -225,7 +225,7 @@ If you want to add version attributes to registry modules that don't have them, 
 
 ```bash
 # Add version attribute to registry modules that don't have one
-tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0" -force-add
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -force-add
 
 # Force-add with config file
 tf-version-bump -pattern "**/*.tf" -config "config.yml" -force-add
@@ -255,7 +255,7 @@ module "another_vpc" {
 }
 ```
 
-**After running:** `tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0"`
+**After running:** `tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0"`
 
 ```hcl
 module "vpc" {
