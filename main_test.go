@@ -190,8 +190,8 @@ module "s3" {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
 
-			// Run the update (default behavior: don't force-add)
-			updated, err := updateModuleVersion(tmpFile, tt.moduleSource, tt.version, false)
+			// Run the update (default behavior: don't force-add, no from version filter)
+			updated, err := updateModuleVersion(tmpFile, tt.moduleSource, tt.version, "", false)
 
 			// Check error expectation
 			if tt.expectError {
@@ -249,7 +249,7 @@ resource "aws_instance" "example" {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", false)
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -290,7 +290,7 @@ resource "aws_instance" "example" {
 }
 
 func TestUpdateModuleVersionFileNotFound(t *testing.T) {
-	updated, err := updateModuleVersion("/nonexistent/file.tf", "test", "1.0.0", false)
+	updated, err := updateModuleVersion("/nonexistent/file.tf", "test", "1.0.0", "", false)
 
 	if err == nil {
 		t.Error("Expected error for non-existent file")
@@ -311,7 +311,7 @@ func TestUpdateModuleVersionEmptyFile(t *testing.T) {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", false)
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false)
 
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -351,7 +351,7 @@ func TestUpdateModuleVersionMultipleVersionFormats(t *testing.T) {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
 
-			updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", tt.version, false)
+			updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", tt.version, "", false)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -388,7 +388,7 @@ func TestUpdateModuleVersionGitSource(t *testing.T) {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(tmpFile, "git::https://github.com/example/terraform-module.git", "v2.0.0", false)
+	updated, err := updateModuleVersion(tmpFile, "git::https://github.com/example/terraform-module.git", "v2.0.0", "", false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -427,7 +427,7 @@ variable "region" {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", false)
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -459,7 +459,7 @@ module "registry_module" {
 	}
 
 	// Try to update local module (which has no version)
-	updated, err := updateModuleVersion(tmpFile, "./modules/my-module", "1.0.0", false)
+	updated, err := updateModuleVersion(tmpFile, "./modules/my-module", "1.0.0", "", false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -511,7 +511,7 @@ module "vpc3" {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", false)
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -574,7 +574,7 @@ module "registry_module" {
 	}
 
 	// Try to update local module with force-add=true
-	updated, err := updateModuleVersion(tmpFile, "./modules/my-module", "1.0.0", true)
+	updated, err := updateModuleVersion(tmpFile, "./modules/my-module", "1.0.0", "", true)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -648,7 +648,7 @@ output "vpc_id" {
 	}
 
 	// Update only VPC module
-	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", false)
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -686,5 +686,173 @@ output "vpc_id" {
 	}
 	if !strings.Contains(contentStr, `output "vpc_id"`) {
 		t.Error("Output block was not preserved")
+	}
+}
+
+func TestUpdateModuleVersionWithFromFilter(t *testing.T) {
+	tests := []struct {
+		name         string
+		inputContent string
+		moduleSource string
+		version      string
+		fromVersion  string
+		expectUpdate bool
+		checkContent func(string) bool
+	}{
+		{
+			name: "update module matching from version",
+			inputContent: `module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.14.0"
+
+  name = "my-vpc"
+}`,
+			moduleSource: "terraform-aws-modules/vpc/aws",
+			version:      "5.0.0",
+			fromVersion:  "3.14.0",
+			expectUpdate: true,
+			checkContent: func(content string) bool {
+				return strings.Contains(content, `version = "5.0.0"`)
+			},
+		},
+		{
+			name: "skip module not matching from version",
+			inputContent: `module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "4.0.0"
+
+  name = "my-vpc"
+}`,
+			moduleSource: "terraform-aws-modules/vpc/aws",
+			version:      "5.0.0",
+			fromVersion:  "3.14.0",
+			expectUpdate: false,
+			checkContent: func(content string) bool {
+				// Should keep original version
+				return strings.Contains(content, `version = "4.0.0"`)
+			},
+		},
+		{
+			name: "update only modules matching from version in multi-module file",
+			inputContent: `module "vpc1" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.14.0"
+}
+
+module "vpc2" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "4.0.0"
+}
+
+module "vpc3" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.14.0"
+}`,
+			moduleSource: "terraform-aws-modules/vpc/aws",
+			version:      "5.0.0",
+			fromVersion:  "3.14.0",
+			expectUpdate: true,
+			checkContent: func(content string) bool {
+				// Should have 2 modules at 5.0.0 and 1 at 4.0.0
+				count5 := strings.Count(content, `version = "5.0.0"`)
+				count4 := strings.Count(content, `version = "4.0.0"`)
+				return count5 == 2 && count4 == 1
+			},
+		},
+		{
+			name: "empty from version updates all matching modules",
+			inputContent: `module "vpc1" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.14.0"
+}
+
+module "vpc2" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "4.0.0"
+}`,
+			moduleSource: "terraform-aws-modules/vpc/aws",
+			version:      "5.0.0",
+			fromVersion:  "",
+			expectUpdate: true,
+			checkContent: func(content string) bool {
+				// Both should be updated to 5.0.0
+				count := strings.Count(content, `version = "5.0.0"`)
+				return count == 2
+			},
+		},
+		{
+			name: "from version with different module sources",
+			inputContent: `module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.14.0"
+}
+
+module "s3" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "3.14.0"
+}`,
+			moduleSource: "terraform-aws-modules/vpc/aws",
+			version:      "5.0.0",
+			fromVersion:  "3.14.0",
+			expectUpdate: true,
+			checkContent: func(content string) bool {
+				// Only VPC should be updated, S3 should remain at 3.14.0
+				hasVpcUpdate := strings.Contains(content, `version = "5.0.0"`)
+				countOldVersion := strings.Count(content, `version = "3.14.0"`)
+				return hasVpcUpdate && countOldVersion == 1
+			},
+		},
+		{
+			name: "from version filter with semantic versioning variations",
+			inputContent: `module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.14.0"
+}`,
+			moduleSource: "terraform-aws-modules/vpc/aws",
+			version:      "5.0.0",
+			fromVersion:  "3.14",
+			expectUpdate: false,
+			checkContent: func(content string) bool {
+				// Should NOT update because "3.14.0" != "3.14"
+				return strings.Contains(content, `version = "3.14.0"`)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temporary file
+			tmpDir := t.TempDir()
+			tmpFile := filepath.Join(tmpDir, "test.tf")
+
+			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0644)
+			if err != nil {
+				t.Fatalf("Failed to create temp file: %v", err)
+			}
+
+			// Run the update with from version filter
+			updated, err := updateModuleVersion(tmpFile, tt.moduleSource, tt.version, tt.fromVersion, false)
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			// Check update expectation
+			if updated != tt.expectUpdate {
+				t.Errorf("Expected updated=%v, got %v", tt.expectUpdate, updated)
+			}
+
+			// Check file content
+			if tt.checkContent != nil {
+				content, err := os.ReadFile(tmpFile)
+				if err != nil {
+					t.Fatalf("Failed to read updated file: %v", err)
+				}
+
+				if !tt.checkContent(string(content)) {
+					t.Errorf("Content check failed. File contents:\n%s", string(content))
+				}
+			}
+		})
 	}
 }
