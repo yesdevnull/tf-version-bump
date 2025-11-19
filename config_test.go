@@ -204,11 +204,11 @@ module "s3" {
 
 	// Apply updates
 	for _, update := range updates {
-		_, err := updateModuleVersion(tf1File, update.Source, update.Version, false)
+		_, err := updateModuleVersion(tf1File, update.Source, update.Version, update.From, false)
 		if err != nil {
 			t.Errorf("Failed to update %s: %v", tf1File, err)
 		}
-		_, err = updateModuleVersion(tf2File, update.Source, update.Version, false)
+		_, err = updateModuleVersion(tf2File, update.Source, update.Version, update.From, false)
 		if err != nil {
 			t.Errorf("Failed to update %s: %v", tf2File, err)
 		}
@@ -434,5 +434,201 @@ func TestLoadConfigLargeFile(t *testing.T) {
 	}
 	if updates[49].Source != "terraform-aws-modules/module-49/aws" {
 		t.Errorf("Last module source incorrect")
+	}
+}
+
+// TestLoadConfigWithFromField tests config parsing with optional 'from' field
+func TestLoadConfigWithFromField(t *testing.T) {
+	tests := []struct {
+		name        string
+		configYAML  string
+		expectError bool
+		expectCount int
+		validate    func(*testing.T, []ModuleUpdate)
+	}{
+		{
+			name: "config with from field specified",
+			configYAML: `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    from: "3.14.0"
+`,
+			expectError: false,
+			expectCount: 1,
+			validate: func(t *testing.T, updates []ModuleUpdate) {
+				if updates[0].Source != "terraform-aws-modules/vpc/aws" {
+					t.Errorf("Module source = %q, want %q", updates[0].Source, "terraform-aws-modules/vpc/aws")
+				}
+				if updates[0].Version != "5.0.0" {
+					t.Errorf("Module version = %q, want %q", updates[0].Version, "5.0.0")
+				}
+				if updates[0].From != "3.14.0" {
+					t.Errorf("Module from = %q, want %q", updates[0].From, "3.14.0")
+				}
+			},
+		},
+		{
+			name: "config with mixed from fields",
+			configYAML: `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    from: "3.14.0"
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+`,
+			expectError: false,
+			expectCount: 2,
+			validate: func(t *testing.T, updates []ModuleUpdate) {
+				if updates[0].From != "3.14.0" {
+					t.Errorf("First module from = %q, want %q", updates[0].From, "3.14.0")
+				}
+				if updates[1].From != "" {
+					t.Errorf("Second module from = %q, want empty string", updates[1].From)
+				}
+			},
+		},
+		{
+			name: "config with all modules having from field",
+			configYAML: `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    from: "3.14.0"
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+    from: "3.0.0"
+  - source: "terraform-aws-modules/iam/aws"
+    version: "5.2.0"
+    from: "5.1.0"
+`,
+			expectError: false,
+			expectCount: 3,
+			validate: func(t *testing.T, updates []ModuleUpdate) {
+				if updates[0].From != "3.14.0" {
+					t.Errorf("First module from = %q, want %q", updates[0].From, "3.14.0")
+				}
+				if updates[1].From != "3.0.0" {
+					t.Errorf("Second module from = %q, want %q", updates[1].From, "3.0.0")
+				}
+				if updates[2].From != "5.1.0" {
+					t.Errorf("Third module from = %q, want %q", updates[2].From, "5.1.0")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configFile := filepath.Join(tmpDir, "config.yml")
+
+			err := os.WriteFile(configFile, []byte(tt.configYAML), 0644)
+			if err != nil {
+				t.Fatalf("Failed to create temp config file: %v", err)
+			}
+
+			updates, err := loadConfig(configFile)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if len(updates) != tt.expectCount {
+				t.Errorf("Got %d modules, want %d", len(updates), tt.expectCount)
+			}
+
+			if tt.validate != nil {
+				tt.validate(t, updates)
+			}
+		})
+	}
+}
+
+// TestConfigFileIntegrationWithFromField tests end-to-end config file usage with from field
+func TestConfigFileIntegrationWithFromField(t *testing.T) {
+	// Create test Terraform files
+	tmpDir := t.TempDir()
+
+	tfContent := `module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.14.0"
+}
+
+module "s3" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "3.0.0"
+}
+
+module "iam" {
+  source  = "terraform-aws-modules/iam/aws"
+  version = "5.1.0"
+}
+`
+
+	tfFile := filepath.Join(tmpDir, "test.tf")
+	err := os.WriteFile(tfFile, []byte(tfContent), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp Terraform file: %v", err)
+	}
+
+	// Create config with from field
+	configYAML := `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    from: "3.14.0"
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+    from: "2.0.0"
+  - source: "terraform-aws-modules/iam/aws"
+    version: "5.2.0"
+`
+
+	configFile := filepath.Join(tmpDir, "config.yml")
+	err = os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	// Load config
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Apply updates
+	for _, update := range updates {
+		_, err := updateModuleVersion(tfFile, update.Source, update.Version, update.From, false)
+		if err != nil {
+			t.Fatalf("Failed to update module: %v", err)
+		}
+	}
+
+	// Verify results
+	content, err := os.ReadFile(tfFile)
+	if err != nil {
+		t.Fatalf("Failed to read updated file: %v", err)
+	}
+
+	contentStr := string(content)
+
+	// VPC should be updated (from 3.14.0 matches)
+	if !strings.Contains(contentStr, `version = "5.0.0"`) {
+		t.Error("VPC module should be updated to 5.0.0")
+	}
+
+	// S3 should NOT be updated (from 2.0.0 doesn't match current 3.0.0)
+	if !strings.Contains(contentStr, `version = "3.0.0"`) {
+		t.Error("S3 module should remain at 3.0.0")
+	}
+
+	// IAM should be updated (no from filter)
+	if !strings.Contains(contentStr, `version = "5.2.0"`) {
+		t.Error("IAM module should be updated to 5.2.0")
 	}
 }

@@ -28,6 +28,7 @@ import (
 type ModuleUpdate struct {
 	Source  string `yaml:"source"`  // Module source (e.g., "terraform-aws-modules/vpc/aws")
 	Version string `yaml:"version"` // Target version (e.g., "5.0.0")
+	From    string `yaml:"from"`    // Optional: only update if current version matches this (e.g., "4.0.0")
 }
 
 // Config represents the structure of a YAML configuration file for batch updates.
@@ -38,6 +39,7 @@ type ModuleUpdate struct {
 //	modules:
 //	  - source: "terraform-aws-modules/vpc/aws"
 //	    version: "5.0.0"
+//	    from: "4.0.0"  # Optional: only update if current version is 4.0.0
 //	  - source: "terraform-aws-modules/s3-bucket/aws"
 //	    version: "4.0.0"
 type Config struct {
@@ -49,6 +51,7 @@ func main() {
 	pattern := flag.String("pattern", "", "Glob pattern for Terraform files (e.g., '*.tf' or 'modules/**/*.tf')")
 	moduleSource := flag.String("module", "", "Source of the module to update (e.g., 'terraform-aws-modules/vpc/aws')")
 	version := flag.String("version", "", "Desired version number")
+	from := flag.String("from", "", "Optional: only update modules with this current version (e.g., '4.0.0')")
 	configFile := flag.String("config", "", "Path to YAML config file with multiple module updates")
 	forceAdd := flag.Bool("force-add", false, "Add version attribute to modules that don't have one (default: skip with warning)")
 	flag.Parse()
@@ -59,8 +62,8 @@ func main() {
 
 	if *configFile != "" {
 		// Config file mode
-		if *moduleSource != "" || *version != "" {
-			log.Fatal("Error: Cannot use -config with -module or -version flags")
+		if *moduleSource != "" || *version != "" || *from != "" {
+			log.Fatal("Error: Cannot use -config with -module, -version, or -from flags")
 		}
 		if *pattern == "" {
 			log.Fatal("Error: -pattern flag is required")
@@ -76,13 +79,13 @@ func main() {
 		// Single module mode
 		if *pattern == "" || *moduleSource == "" || *version == "" {
 			fmt.Println("Usage:")
-			fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -version <version>")
+			fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -version <version> [-from <version>]")
 			fmt.Println("  Config file:    tf-version-bump -pattern <glob> -config <config-file>")
 			flag.PrintDefaults()
 			os.Exit(1)
 		}
 		updates = []ModuleUpdate{
-			{Source: *moduleSource, Version: *version},
+			{Source: *moduleSource, Version: *version, From: *from},
 		}
 	}
 
@@ -103,13 +106,17 @@ func main() {
 	for _, file := range files {
 		fileUpdates := 0
 		for _, update := range updates {
-			updated, err := updateModuleVersion(file, update.Source, update.Version, *forceAdd)
+			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, *forceAdd)
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				continue
 			}
 			if updated {
-				fmt.Printf("✓ Updated module source '%s' to version '%s' in %s\n", update.Source, update.Version, file)
+				if update.From != "" {
+					fmt.Printf("✓ Updated module source '%s' from version '%s' to '%s' in %s\n", update.Source, update.From, update.Version, file)
+				} else {
+					fmt.Printf("✓ Updated module source '%s' to version '%s' in %s\n", update.Source, update.Version, file)
+				}
 				fileUpdates++
 				totalUpdates++
 			}
@@ -165,17 +172,19 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 //   - When forceAdd is true: a version attribute is added to the module
 //
 // All modules with the same source attribute will be updated to the same version.
+// If fromVersion is specified, only modules with that current version will be updated.
 //
 // Parameters:
 //   - filename: Path to the Terraform file to process
 //   - moduleSource: The module source to match (e.g., "terraform-aws-modules/vpc/aws")
 //   - version: The target version to set (e.g., "5.0.0")
+//   - fromVersion: Optional: only update if current version matches this (e.g., "4.0.0")
 //   - forceAdd: If true, add version attribute to modules that don't have one
 //
 // Returns:
 //   - bool: true if at least one module was updated, false otherwise
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateModuleVersion(filename, moduleSource, version string, forceAdd bool) (bool, error) {
+func updateModuleVersion(filename, moduleSource, version, fromVersion string, forceAdd bool) (bool, error) {
 	// Read the file
 	src, err := os.ReadFile(filename)
 	if err != nil {
@@ -221,6 +230,16 @@ func updateModuleVersion(filename, moduleSource, version string, forceAdd bool) 
 							continue
 						}
 						// forceAdd is true, so we'll add the version attribute below
+					} else if fromVersion != "" {
+						// If fromVersion is specified, check if current version matches
+						versionTokens := versionAttr.Expr().BuildTokens(nil)
+						currentVersion := string(versionTokens.Bytes())
+						currentVersion = trimQuotes(strings.TrimSpace(currentVersion))
+
+						if currentVersion != fromVersion {
+							// Current version doesn't match fromVersion, skip this module
+							continue
+						}
 					}
 
 					// Update or add the version attribute
