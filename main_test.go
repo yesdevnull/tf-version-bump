@@ -573,17 +573,17 @@ module "registry_module" {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	// Try to update local module with force-add=true
+	// Try to update local module with force-add=true (should be skipped)
 	updated, err := updateModuleVersion(tmpFile, "./modules/my-module", "1.0.0", "", true)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if !updated {
-		t.Error("Module should be reported as updated with force-add")
+	if updated {
+		t.Error("Local module should not be updated even with force-add")
 	}
 
-	// Verify file was modified and version was added
+	// Verify file was not modified
 	content, err := os.ReadFile(tmpFile)
 	if err != nil {
 		t.Fatalf("Failed to read file: %v", err)
@@ -591,20 +591,119 @@ module "registry_module" {
 
 	contentStr := string(content)
 
-	// Local module should now have version attribute
-	if !strings.Contains(contentStr, `version = "1.0.0"`) {
-		t.Error("Version should have been added to module with force-add=true")
+	// Local module should NOT have version attribute added
+	if strings.Contains(contentStr, `version = "1.0.0"`) {
+		t.Error("Version should not have been added to local module")
 	}
 
-	// Verify both modules are in the file
+	// Verify local module is still in the file unchanged
 	if !strings.Contains(contentStr, `"./modules/my-module"`) {
 		t.Error("Local module source should be preserved")
 	}
-	if !strings.Contains(contentStr, `"3.0.0"`) {
-		t.Error("Registry module version should be preserved")
+
+	// Test force-add with registry module without version
+	input2 := `module "s3" {
+  source = "terraform-aws-modules/s3-bucket/aws"
+  name   = "bucket"
+}`
+
+	tmpFile2 := filepath.Join(tmpDir, "test2.tf")
+	err = os.WriteFile(tmpFile2, []byte(input2), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
 	}
-	if !strings.Contains(contentStr, `module "registry_module"`) {
-		t.Error("Registry module should be preserved")
+
+	updated, err = updateModuleVersion(tmpFile2, "terraform-aws-modules/s3-bucket/aws", "4.0.0", "", true)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !updated {
+		t.Error("Registry module should be updated with force-add")
+	}
+
+	content, err = os.ReadFile(tmpFile2)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+
+	if !strings.Contains(string(content), `version = "4.0.0"`) {
+		t.Error("Version should have been added to registry module with force-add=true")
+	}
+}
+
+// TestUpdateModuleVersionLocalModulesSkipped tests that local modules are always skipped
+func TestUpdateModuleVersionLocalModulesSkipped(t *testing.T) {
+	tests := []struct {
+		name         string
+		inputContent string
+		moduleSource string
+		version      string
+		forceAdd     bool
+	}{
+		{
+			name: "local module with relative path ./ and version",
+			inputContent: `module "local" {
+  source  = "./modules/vpc"
+  version = "1.0.0"
+}`,
+			moduleSource: "./modules/vpc",
+			version:      "2.0.0",
+			forceAdd:     false,
+		},
+		{
+			name: "local module with parent path ../",
+			inputContent: `module "shared" {
+  source  = "../shared-modules/s3"
+  version = "1.0.0"
+}`,
+			moduleSource: "../shared-modules/s3",
+			version:      "2.0.0",
+			forceAdd:     false,
+		},
+		{
+			name: "local module without version and force-add",
+			inputContent: `module "local" {
+  source = "./modules/vpc"
+  name   = "test"
+}`,
+			moduleSource: "./modules/vpc",
+			version:      "1.0.0",
+			forceAdd:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			tmpFile := filepath.Join(tmpDir, "test.tf")
+
+			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0644)
+			if err != nil {
+				t.Fatalf("Failed to create temp file: %v", err)
+			}
+
+			// Try to update local module
+			updated, err := updateModuleVersion(tmpFile, tt.moduleSource, tt.version, "", tt.forceAdd)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if updated {
+				t.Error("Local module should never be updated")
+			}
+
+			// Verify file content is unchanged
+			content, err := os.ReadFile(tmpFile)
+			if err != nil {
+				t.Fatalf("Failed to read file: %v", err)
+			}
+
+			contentStr := string(content)
+			if contentStr != tt.inputContent {
+				t.Errorf("File content should not have changed. Got:\n%s\nWant:\n%s", contentStr, tt.inputContent)
+			}
+		})
 	}
 }
 
