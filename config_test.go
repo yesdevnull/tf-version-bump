@@ -112,7 +112,7 @@ func TestLoadConfig(t *testing.T) {
 			}
 
 			// Load config
-			updates, err := loadConfig(configFile)
+			updates, _, err := loadConfig(configFile)
 
 			// Check error expectation
 			if tt.expectError {
@@ -140,7 +140,7 @@ func TestLoadConfig(t *testing.T) {
 }
 
 func TestLoadConfigFileNotFound(t *testing.T) {
-	_, err := loadConfig("/nonexistent/config.yml")
+	_, _, err := loadConfig("/nonexistent/config.yml")
 	if err == nil {
 		t.Error("Expected error for non-existent file")
 	}
@@ -197,7 +197,7 @@ module "s3" {
 	}
 
 	// Load config
-	updates, err := loadConfig(configFile)
+	updates, _, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
@@ -257,7 +257,7 @@ modules:
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	updates, _, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestLoadConfigWithGitSources(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	updates, _, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestLoadConfigWithLocalModules(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	updates, _, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestLoadConfigMultipleMissingFields(t *testing.T) {
 				t.Fatalf("Failed to create temp config file: %v", err)
 			}
 
-			_, err = loadConfig(configFile)
+			_, _, err = loadConfig(configFile)
 			if err == nil {
 				t.Error("Expected error but got none")
 				return
@@ -419,7 +419,7 @@ func TestLoadConfigLargeFile(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	updates, _, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}

@@ -1,0 +1,48 @@
+# Git repository configuration example
+# Demonstrates using tf-version-bump with a Git repository to update multiple branches
+
+# Module version updates to apply
+modules:
+  # Public registry modules
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+
+  - source: "terraform-aws-modules/rds/aws"
+    version: "6.1.0"
+
+# Git repository configuration (optional)
+# When specified, tf-version-bump will:
+# 1. Clone the repository
+# 2. Find all branches matching the filter
+# 3. Apply version updates to each matching branch
+# 4. Commit changes with the specified author
+# 5. Optionally push changes back to the remote
+git:
+  # Repository URL to clone
+  repository: "https://github.com/example/terraform-infrastructure.git"
+
+  # Regex pattern to filter branches (e.g., "main", "release/.*", "feature/.*")
+  # This example matches all release branches like release/1.0, release/2.0, etc.
+  branch_filter: "release/.*"
+
+  # Git author information (required)
+  author_name: "Terraform Bot"
+  author_email: "terraform-bot@example.com"
+
+  # Path to SSH key for signing commits (optional)
+  # Note: go-git has limited SSH signing support. For full support, consider using git CLI.
+  signing_key: "/home/user/.ssh/id_ed25519"
+
+  # Custom commit message (optional)
+  # If not specified, a default message will be generated
+  commit_message: |
+    chore: update terraform module versions
+
+    Automated update of Terraform module versions to latest stable releases.
+
+  # Whether to push changes to the remote repository (default: false)
+  # Set to true to automatically push changes after committing
+  push: false
