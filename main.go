@@ -50,7 +50,7 @@ func main() {
 	// Define CLI flags
 	pattern := flag.String("pattern", "", "Glob pattern for Terraform files (e.g., '*.tf' or 'modules/**/*.tf')")
 	moduleSource := flag.String("module", "", "Source of the module to update (e.g., 'terraform-aws-modules/vpc/aws')")
-	version := flag.String("version", "", "Desired version number")
+	toVersion := flag.String("to", "", "Desired version number")
 	from := flag.String("from", "", "Optional: only update modules with this current version (e.g., '4.0.0')")
 	configFile := flag.String("config", "", "Path to YAML config file with multiple module updates")
 	forceAdd := flag.Bool("force-add", false, "Add version attribute to modules that don't have one (default: skip with warning)")
@@ -62,8 +62,8 @@ func main() {
 
 	if *configFile != "" {
 		// Config file mode
-		if *moduleSource != "" || *version != "" || *from != "" {
-			log.Fatal("Error: Cannot use -config with -module, -version, or -from flags")
+		if *moduleSource != "" || *toVersion != "" || *from != "" {
+			log.Fatal("Error: Cannot use -config with -module, -to, or -from flags")
 		}
 		if *pattern == "" {
 			log.Fatal("Error: -pattern flag is required")
@@ -77,15 +77,15 @@ func main() {
 		}
 	} else {
 		// Single module mode
-		if *pattern == "" || *moduleSource == "" || *version == "" {
+		if *pattern == "" || *moduleSource == "" || *toVersion == "" {
 			fmt.Println("Usage:")
-			fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -version <version> [-from <version>]")
+			fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -to <version> [-from <version>]")
 			fmt.Println("  Config file:    tf-version-bump -pattern <glob> -config <config-file>")
 			flag.PrintDefaults()
 			os.Exit(1)
 		}
 		updates = []ModuleUpdate{
-			{Source: *moduleSource, Version: *version, From: *from},
+			{Source: *moduleSource, Version: *toVersion, From: *from},
 		}
 	}
 
