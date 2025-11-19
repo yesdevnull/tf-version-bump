@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/yesdevnull/tf-version-bump/schema/config.json",
+  "title": "tf-version-bump Configuration",
+  "description": "Configuration file for tf-version-bump to specify Terraform module version updates",
+  "type": "object",
+  "required": ["modules"],
+  "properties": {
+    "modules": {
+      "type": "array",
+      "description": "List of Terraform modules to update",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["source", "version"],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "The module source identifier. Can be a registry module, local path, or Git URL",
+            "minLength": 1,
+            "examples": [
+              "terraform-aws-modules/vpc/aws",
+              "terraform-aws-modules/iam/aws//modules/iam-user",
+              "./modules/networking",
+              "../shared-modules/database",
+              "git::https://github.com/example/terraform-modules.git//vpc"
+            ]
+          },
+          "version": {
+            "type": "string",
+            "description": "Target version to update the module to",
+            "minLength": 1,
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+            "examples": [
+              "5.0.0",
+              "1.2.3",
+              "10.15.2"
+            ]
+          },
+          "from": {
+            "type": "string",
+            "description": "Optional: Only update the module if its current version matches this value",
+            "minLength": 1,
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+            "examples": [
+              "4.0.0",
+              "1.0.0",
+              "9.12.1"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "modules": [
+        {
+          "source": "terraform-aws-modules/vpc/aws",
+          "version": "5.0.0"
+        }
+      ]
+    },
+    {
+      "modules": [
+        {
+          "source": "terraform-aws-modules/vpc/aws",
+          "version": "5.0.0",
+          "from": "4.0.0"
+        },
+        {
+          "source": "terraform-aws-modules/s3-bucket/aws",
+          "version": "4.0.0"
+        }
+      ]
+    }
+  ]
+}
