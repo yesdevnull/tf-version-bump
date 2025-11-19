@@ -18,9 +18,9 @@ A CLI tool written in Go that updates Terraform module versions across multiple 
 
 - Go 1.24 or later
 
-### Option 1: Install with go install (Recommended)
+### Option 1: Install with go install
 
-The easiest way to install the tool is using `go install`:
+Install the latest version using `go install`:
 
 ```bash
 go install github.com/yesdevnull/tf-version-bump@latest
@@ -28,7 +28,7 @@ go install github.com/yesdevnull/tf-version-bump@latest
 
 This will install the `tf-version-bump` binary to your `$GOPATH/bin` directory (usually `~/go/bin`). Make sure this directory is in your `PATH`.
 
-**After installation, verify it's working:**
+**Verify the installation:**
 
 ```bash
 # Check if the binary is accessible
@@ -40,25 +40,7 @@ $GOPATH/bin/tf-version-bump --help
 ~/go/bin/tf-version-bump --help
 ```
 
-### Option 2: Install with go get (Legacy)
-
-For older Go versions or compatibility, you can use `go get`:
-
-```bash
-go get github.com/yesdevnull/tf-version-bump
-```
-
-**After installation, run the tool:**
-
-```bash
-# If $GOPATH/bin is in your PATH
-tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0"
-
-# Or use the full path
-$GOPATH/bin/tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0"
-```
-
-### Option 3: Build from source
+### Option 2: Build from source
 
 Alternatively, you can build from source:
 
