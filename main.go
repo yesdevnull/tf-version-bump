@@ -214,6 +214,17 @@ func updateModuleVersion(filename, moduleSource, version, fromVersion string, fo
 				// Remove whitespace and quotes from the source value
 				sourceValue = trimQuotes(strings.TrimSpace(sourceValue))
 
+				// Skip local modules - they don't have versions
+				if isLocalModule(sourceValue) && sourceValue == moduleSource {
+					moduleName := ""
+					if len(block.Labels()) > 0 {
+						moduleName = block.Labels()[0]
+					}
+					fmt.Fprintf(os.Stderr, "Warning: Module %q in %s (source: %q) is a local module and cannot be version-bumped, skipping\n",
+						moduleName, filename, moduleSource)
+					continue
+				}
+
 				// Check if this module's source matches
 				if sourceValue == moduleSource {
 					// Check if the module has a version attribute
@@ -259,6 +270,26 @@ func updateModuleVersion(filename, moduleSource, version, fromVersion string, fo
 	}
 
 	return updated, nil
+}
+
+// isLocalModule checks if a module source is a local path.
+// Local modules use relative or absolute paths instead of registry sources.
+//
+// Parameters:
+//   - source: The module source to check
+//
+// Returns:
+//   - bool: true if the source is a local path, false otherwise
+//
+// Examples:
+//   - `./modules/vpc` returns true
+//   - `../shared/modules` returns true
+//   - `/absolute/path/module` returns true
+//   - `terraform-aws-modules/vpc/aws` returns false
+func isLocalModule(source string) bool {
+	return strings.HasPrefix(source, "./") ||
+		strings.HasPrefix(source, "../") ||
+		strings.HasPrefix(source, "/")
 }
 
 // trimQuotes removes surrounding single or double quotes from a string.

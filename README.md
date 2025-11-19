@@ -75,6 +75,7 @@ tf-version-bump -pattern <glob-pattern> -module <module-source> -version <versio
 - `-pattern`: Glob pattern for Terraform files (e.g., `*.tf`, `modules/**/*.tf`)
 - `-module`: Source of the module to update (e.g., `terraform-aws-modules/vpc/aws`)
 - `-version`: Desired version number
+- `-from`: (Optional) Only update modules with this current version (e.g., `4.0.0`)
 - `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
 
 #### Examples
@@ -103,10 +104,10 @@ Update modules with subpaths in their source:
 tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/iam/aws//modules/iam-user" -version "5.2.0"
 ```
 
-Update local modules:
+Update only modules currently at version `3.14.0` to version `5.0.0`:
 
 ```bash
-tf-version-bump -pattern "*.tf" -module "./modules/my-module" -version "1.0.0"
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0" -from "3.14.0"
 ```
 
 Update Git-based modules:
@@ -114,6 +115,8 @@ Update Git-based modules:
 ```bash
 tf-version-bump -pattern "*.tf" -module "git::https://github.com/example/terraform-module.git" -version "v1.2.3"
 ```
+
+**Note:** Local modules (sources starting with `./`, `../`, or `/`) are not supported and will be skipped with a warning. Version bumping is only supported for registry modules and remote sources (Git, HTTP, etc.).
 
 ### Config File Mode
 
@@ -139,13 +142,20 @@ Create a YAML file with the following structure:
 modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
+    from: "3.14.0"  # Optional: only update if current version is 3.14.0
   - source: "terraform-aws-modules/s3-bucket/aws"
     version: "4.0.0"
   - source: "terraform-aws-modules/security-group/aws"
     version: "5.1.0"
+    from: "4.0.0"   # Optional: only update from version 4.0.0
 ```
 
-**Note about local modules:** While local modules (e.g., `./modules/vpc` or `../shared-modules/s3`) typically don't use version attributes in standard Terraform configurations, this tool requires a version field for all modules in the config file. However, if a local module in your Terraform files doesn't have a version attribute, the tool will print a warning and skip it rather than adding a version attribute. This approach allows you to specify desired versions in your config while respecting Terraform's conventions for local modules.
+Each module entry supports the following fields:
+- `source` (required): Module source identifier
+- `version` (required): Target version to update to
+- `from` (optional): Only update modules currently at this version
+
+**Note about local modules:** Local modules (sources starting with `./`, `../`, or `/`) are not supported and will be skipped with a warning. The tool only updates registry modules and remote sources.
 
 #### Examples
 
@@ -172,7 +182,7 @@ tf-version-bump -pattern "**/*.tf" -config "module-updates.yml"
 See the `examples/` directory for sample configuration files:
 
 - `config-basic.yml` - Simple configuration with a few modules
-- `config-advanced.yml` - Advanced configuration showing various module types (subpaths, local modules, Git sources)
+- `config-advanced.yml` - Advanced configuration showing various module types (subpaths, Git sources)
 - `config-production.yml` - Production-ready configuration with common AWS modules
 
 ## How it Works
@@ -181,38 +191,47 @@ See the `examples/` directory for sample configuration files:
 2. For each file, it:
    - Parses the HCL structure using `hashicorp/hcl/v2`
    - Searches for `module` blocks with the specified source attribute
+   - Skips local modules (sources starting with `./`, `../`, or `/`) with a warning
+   - If the `-from` flag is specified, only updates modules with matching current version
    - Updates the `version` attribute to the desired version
    - If a module doesn't have a version attribute, it prints a warning and skips it (no version will be added)
    - Writes the updated content back to the file with proper formatting
 3. Reports the number of files successfully updated
 
+### Local Modules
+
+Local modules (those with sources starting with `./`, `../`, or `/`) are automatically skipped because they reference local filesystem paths and don't use version attributes in standard Terraform configurations.
+
+**Example warning output:**
+```
+Warning: Module "local_vpc" in main.tf (source: "./modules/vpc") is a local module and cannot be version-bumped, skipping
+```
+
 ### Modules Without Version Attributes
 
-By default, if a module matching the source pattern doesn't have a version attribute (common for local modules), the tool will:
+By default, if a registry module matching the source pattern doesn't have a version attribute, the tool will:
 - Print a warning message to stderr indicating which module was skipped
 - Continue processing other modules
 - Not add a version attribute to that module
 
-This behavior ensures the tool doesn't make unintended changes to modules that don't typically use version attributes, such as local modules.
-
 **Example warning output:**
 ```
-Warning: Module "local_vpc" in main.tf (source: "./modules/vpc") has no version attribute, skipping
+Warning: Module "vpc" in main.tf (source: "terraform-aws-modules/vpc/aws") has no version attribute, skipping
 ```
 
 #### Force-Adding Version Attributes
 
-If you want to add version attributes to modules that don't have them, use the `-force-add` flag:
+If you want to add version attributes to registry modules that don't have them, use the `-force-add` flag:
 
 ```bash
-# Add version attribute to local modules that don't have one
-tf-version-bump -pattern "*.tf" -module "./modules/vpc" -version "1.0.0" -force-add
+# Add version attribute to registry modules that don't have one
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -version "5.0.0" -force-add
 
 # Force-add with config file
 tf-version-bump -pattern "**/*.tf" -config "config.yml" -force-add
 ```
 
-**Note:** Use this flag cautiously, especially with local modules, as Terraform typically doesn't use version attributes for local module sources.
+**Note:** This flag only affects registry modules and remote sources. Local modules are always skipped regardless of the `-force-add` flag.
 
 ## Example Terraform File
 
@@ -264,6 +283,8 @@ The project includes a comprehensive test suite covering various scenarios:
 
 - Updating single and multiple modules
 - Modules with and without version attributes
+- Version filtering with the `-from` flag
+- Local module detection and skipping
 - Mixed modules with different sources
 - Modules with subpaths in sources
 - Config file parsing and validation
