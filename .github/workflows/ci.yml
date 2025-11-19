@@ -67,18 +67,18 @@ jobs:
 
     - name: Build for Linux
       run: |
-        GOOS=linux GOARCH=amd64 go build -o tf-version-bump-linux-amd64
-        GOOS=linux GOARCH=arm64 go build -o tf-version-bump-linux-arm64
+        GOOS=linux GOARCH=amd64 go build -o tf-version-bump-linux-amd64 ./cmd/tf-version-bump
+        GOOS=linux GOARCH=arm64 go build -o tf-version-bump-linux-arm64 ./cmd/tf-version-bump
 
     - name: Build for macOS
       run: |
-        GOOS=darwin GOARCH=amd64 go build -o tf-version-bump-darwin-amd64
-        GOOS=darwin GOARCH=arm64 go build -o tf-version-bump-darwin-arm64
+        GOOS=darwin GOARCH=amd64 go build -o tf-version-bump-darwin-amd64 ./cmd/tf-version-bump
+        GOOS=darwin GOARCH=arm64 go build -o tf-version-bump-darwin-arm64 ./cmd/tf-version-bump
 
     - name: Build for Windows
       run: |
-        GOOS=windows GOARCH=amd64 go build -o tf-version-bump-windows-amd64.exe
-        GOOS=windows GOARCH=arm64 go build -o tf-version-bump-windows-arm64.exe
+        GOOS=windows GOARCH=amd64 go build -o tf-version-bump-windows-amd64.exe ./cmd/tf-version-bump
+        GOOS=windows GOARCH=arm64 go build -o tf-version-bump-windows-arm64.exe ./cmd/tf-version-bump
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v5
