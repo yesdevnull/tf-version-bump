@@ -16,6 +16,7 @@ go.work
 
 # Binary output
 tf-version-bump
+tf-version-bump-*
 
 # IDE files
 .idea/
