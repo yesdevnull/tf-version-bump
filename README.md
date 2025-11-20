@@ -408,20 +408,26 @@ git checkout "$ORIGINAL_BRANCH"
 
 #### Dry Run Mode
 
-Preview which branches would be affected without making changes:
+Preview what changes would be made on each branch without modifying files:
 
 ```bash
 #!/bin/bash
 
 BRANCH_PATTERN="feature/*"
+MODULE_SOURCE="terraform-aws-modules/vpc/aws"
+TARGET_VERSION="5.0.0"
 
-echo "Branches that would be processed:"
-git branch --list "$BRANCH_PATTERN" --format='%(refname:short)' | while read branch; do
-    echo "  - $branch"
+ORIGINAL_BRANCH=$(git branch --show-current)
+
+for branch in $(git branch --list "$BRANCH_PATTERN" --format='%(refname:short)'); do
+    echo "Processing branch: $branch"
+    git checkout "$branch" || continue
+
+    # Use -dry-run to preview changes without modifying files
+    tf-version-bump -pattern "**/*.tf" -module "$MODULE_SOURCE" -to "$TARGET_VERSION" -dry-run
 done
 
-echo ""
-echo "To run the update, remove the dry-run flag from your script."
+git checkout "$ORIGINAL_BRANCH"
 ```
 
 #### Filtering by Recent Activity
