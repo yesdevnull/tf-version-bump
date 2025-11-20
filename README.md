@@ -77,6 +77,7 @@ tf-version-bump -pattern <glob-pattern> -module <module-source> -to <version>
 - `-to`: Desired version number
 - `-from`: (Optional) Only update modules with this current version (e.g., `4.0.0`)
 - `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
+- `-dry-run`: (Optional) Show what changes would be made without actually modifying files
 
 #### Examples
 
@@ -116,6 +117,12 @@ Update Git-based modules:
 tf-version-bump -pattern "*.tf" -module "git::https://github.com/example/terraform-module.git" -to "v1.2.3"
 ```
 
+Preview changes without modifying files (dry-run):
+
+```bash
+tf-version-bump -pattern "**/*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -dry-run
+```
+
 **Note:** Local modules (sources starting with `./`, `../`, or `/`) are not supported and will be skipped with a warning. Version bumping is only supported for registry modules and remote sources (Git, HTTP, etc.).
 
 ### Config File Mode
@@ -133,6 +140,7 @@ tf-version-bump -pattern <glob-pattern> -config <config-file>
 - `-pattern`: Glob pattern for Terraform files (required)
 - `-config`: Path to YAML configuration file (required)
 - `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
+- `-dry-run`: (Optional) Show what changes would be made without actually modifying files
 
 #### Config File Format
 

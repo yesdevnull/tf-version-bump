@@ -191,7 +191,7 @@ module "s3" {
 			}
 
 			// Run the update (default behavior: don't force-add, no from version filter)
-			updated, err := updateModuleVersion(tmpFile, tt.moduleSource, tt.version, "", false)
+			updated, err := updateModuleVersion(tmpFile, tt.moduleSource, tt.version, "", false, false)
 
 			// Check error expectation
 			if tt.expectError {
@@ -249,7 +249,7 @@ resource "aws_instance" "example" {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false)
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -290,7 +290,7 @@ resource "aws_instance" "example" {
 }
 
 func TestUpdateModuleVersionFileNotFound(t *testing.T) {
-	updated, err := updateModuleVersion("/nonexistent/file.tf", "test", "1.0.0", "", false)
+	updated, err := updateModuleVersion("/nonexistent/file.tf", "test", "1.0.0", "", false, false)
 
 	if err == nil {
 		t.Error("Expected error for non-existent file")
@@ -311,7 +311,7 @@ func TestUpdateModuleVersionEmptyFile(t *testing.T) {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false)
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false, false)
 
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -351,7 +351,7 @@ func TestUpdateModuleVersionMultipleVersionFormats(t *testing.T) {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
 
-			updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", tt.version, "", false)
+			updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", tt.version, "", false, false)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -388,7 +388,7 @@ func TestUpdateModuleVersionGitSource(t *testing.T) {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(tmpFile, "git::https://github.com/example/terraform-module.git", "v2.0.0", "", false)
+	updated, err := updateModuleVersion(tmpFile, "git::https://github.com/example/terraform-module.git", "v2.0.0", "", false, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -427,7 +427,7 @@ variable "region" {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false)
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -459,7 +459,7 @@ module "registry_module" {
 	}
 
 	// Try to update local module (which has no version)
-	updated, err := updateModuleVersion(tmpFile, "./modules/my-module", "1.0.0", "", false)
+	updated, err := updateModuleVersion(tmpFile, "./modules/my-module", "1.0.0", "", false, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -511,7 +511,7 @@ module "vpc3" {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false)
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -574,7 +574,7 @@ module "registry_module" {
 	}
 
 	// Try to update local module with force-add=true (should be skipped)
-	updated, err := updateModuleVersion(tmpFile, "./modules/my-module", "1.0.0", "", true)
+	updated, err := updateModuleVersion(tmpFile, "./modules/my-module", "1.0.0", "", true, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -613,7 +613,7 @@ module "registry_module" {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	updated, err = updateModuleVersion(tmpFile2, "terraform-aws-modules/s3-bucket/aws", "4.0.0", "", true)
+	updated, err = updateModuleVersion(tmpFile2, "terraform-aws-modules/s3-bucket/aws", "4.0.0", "", true, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -684,7 +684,7 @@ func TestUpdateModuleVersionLocalModulesSkipped(t *testing.T) {
 			}
 
 			// Try to update local module
-			updated, err := updateModuleVersion(tmpFile, tt.moduleSource, tt.version, "", tt.forceAdd)
+			updated, err := updateModuleVersion(tmpFile, tt.moduleSource, tt.version, "", tt.forceAdd, false)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -747,7 +747,7 @@ output "vpc_id" {
 	}
 
 	// Update only VPC module
-	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false)
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -930,7 +930,7 @@ module "s3" {
 			}
 
 			// Run the update with from version filter
-			updated, err := updateModuleVersion(tmpFile, tt.moduleSource, tt.version, tt.fromVersion, false)
+			updated, err := updateModuleVersion(tmpFile, tt.moduleSource, tt.version, tt.fromVersion, false, false)
 
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -953,5 +953,51 @@ module "s3" {
 				}
 			}
 		})
+	}
+}
+
+func TestUpdateModuleVersionDryRun(t *testing.T) {
+	inputContent := `
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.0.0"
+
+  name = "my-vpc"
+}
+`
+
+	// Create temporary file
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.tf")
+
+	err := os.WriteFile(tmpFile, []byte(inputContent), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	// Run the update in dry-run mode
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false, true)
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Should report that it would update
+	if !updated {
+		t.Error("Expected updated=true in dry-run mode, got false")
+	}
+
+	// File should NOT be modified
+	content, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+
+	if !strings.Contains(string(content), `version = "3.0.0"`) {
+		t.Error("File was modified in dry-run mode, but should not have been")
+	}
+
+	if strings.Contains(string(content), `version = "5.0.0"`) {
+		t.Error("File contains new version in dry-run mode, but should not")
 	}
 }

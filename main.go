@@ -29,6 +29,7 @@ func main() {
 	from := flag.String("from", "", "Optional: only update modules with this current version (e.g., '4.0.0')")
 	configFile := flag.String("config", "", "Path to YAML config file with multiple module updates")
 	forceAdd := flag.Bool("force-add", false, "Add version attribute to modules that don't have one (default: skip with warning)")
+	dryRun := flag.Bool("dry-run", false, "Show what changes would be made without actually modifying files")
 	flag.Parse()
 
 	// Determine operation mode
@@ -76,21 +77,31 @@ func main() {
 
 	fmt.Printf("Found %d file(s) matching pattern '%s'\n", len(files), *pattern)
 
+	if *dryRun {
+		fmt.Println("Running in dry-run mode - no files will be modified")
+	}
+
 	// Process each file with all module updates
 	totalUpdates := 0
 	for _, file := range files {
 		fileUpdates := 0
 		for _, update := range updates {
-			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, *forceAdd)
+			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, *forceAdd, *dryRun)
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				continue
 			}
 			if updated {
+				prefix := "✓"
+				action := "Updated"
+				if *dryRun {
+					prefix = "→"
+					action = "Would update"
+				}
 				if update.From != "" {
-					fmt.Printf("✓ Updated module source '%s' from version '%s' to '%s' in %s\n", update.Source, update.From, update.Version, file)
+					fmt.Printf("%s %s module source '%s' from version '%s' to '%s' in %s\n", prefix, action, update.Source, update.From, update.Version, file)
 				} else {
-					fmt.Printf("✓ Updated module source '%s' to version '%s' in %s\n", update.Source, update.Version, file)
+					fmt.Printf("%s %s module source '%s' to version '%s' in %s\n", prefix, action, update.Source, update.Version, file)
 				}
 				fileUpdates++
 				totalUpdates++
@@ -98,10 +109,18 @@ func main() {
 		}
 	}
 
-	if len(updates) > 1 {
-		fmt.Printf("\nSuccessfully applied %d update(s) across all files\n", totalUpdates)
+	if *dryRun {
+		if len(updates) > 1 {
+			fmt.Printf("\nDry run: would apply %d update(s) across all files\n", totalUpdates)
+		} else {
+			fmt.Printf("\nDry run: would update %d file(s)\n", totalUpdates)
+		}
 	} else {
-		fmt.Printf("\nSuccessfully updated %d file(s)\n", totalUpdates)
+		if len(updates) > 1 {
+			fmt.Printf("\nSuccessfully applied %d update(s) across all files\n", totalUpdates)
+		} else {
+			fmt.Printf("\nSuccessfully updated %d file(s)\n", totalUpdates)
+		}
 	}
 }
 
@@ -122,11 +141,12 @@ func main() {
 //   - version: The target version to set (e.g., "5.0.0")
 //   - fromVersion: Optional: only update if current version matches this (e.g., "4.0.0")
 //   - forceAdd: If true, add version attribute to modules that don't have one
+//   - dryRun: If true, show what would be changed without modifying files
 //
 // Returns:
-//   - bool: true if at least one module was updated, false otherwise
+//   - bool: true if at least one module was updated (or would be updated in dry-run mode), false otherwise
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateModuleVersion(filename, moduleSource, version, fromVersion string, forceAdd bool) (bool, error) {
+func updateModuleVersion(filename, moduleSource, version, fromVersion string, forceAdd bool, dryRun bool) (bool, error) {
 	// Read the file
 	src, err := os.ReadFile(filename)
 	if err != nil {
@@ -203,8 +223,8 @@ func updateModuleVersion(filename, moduleSource, version, fromVersion string, fo
 		}
 	}
 
-	// If we made changes, write the file back
-	if updated {
+	// If we made changes, write the file back (unless in dry-run mode)
+	if updated && !dryRun {
 		output := hclwrite.Format(file.Bytes())
 		if err := os.WriteFile(filename, output, 0644); err != nil {
 			return false, fmt.Errorf("failed to write file: %w", err)
