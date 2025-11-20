@@ -279,35 +279,8 @@ Note: Both modules are updated because they share the same source attribute, reg
 
 ## Testing
 
-The project includes a comprehensive test suite covering various scenarios:
-
-- Updating single and multiple modules
-- Modules with and without version attributes
-- Version filtering with the `-from` flag
-- Local module detection and skipping
-- Mixed modules with different sources
-- Modules with subpaths in sources
-- Config file parsing and validation
-- Batch updates from configuration files
-- Preserving formatting and comments
-- Error handling for invalid HCL and missing files
-
 Run the tests:
 
 ```bash
 go test -v
 ```
-
-## Dependencies
-
-- `github.com/hashicorp/hcl/v2` - HCL parsing and writing
-- `github.com/zclconf/go-cty` - Configuration type system for HCL
-- `gopkg.in/yaml.v3` - YAML parsing for configuration files
-
-## License
-
-MIT
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
