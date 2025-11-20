@@ -282,5 +282,5 @@ Note: Both modules are updated because they share the same source attribute, reg
 Run the tests:
 
 ```bash
-go test -v
+go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 ```
