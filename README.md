@@ -1,5 +1,7 @@
 # Terraform Version Bump
 
+> **Note:** This repository is an experiment for generative AI coding tools. It may contain bugs, incomplete features, or other issues. Use at your own discretion.
+
 A CLI tool written in Go that updates Terraform module versions across multiple files using glob patterns. The tool matches modules by their source attribute, making it easy to update all instances of a particular module to a new version.
 
 ## Features
