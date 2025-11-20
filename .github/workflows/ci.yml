@@ -20,15 +20,15 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v5.0.1
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
     - name: Set up Go
-      uses: actions/setup-go@v6.1.0
+      uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c
       with:
         go-version: ${{ matrix.go-version }}
 
     - name: Cache Go modules
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: |
           ~/.cache/go-build
@@ -48,7 +48,7 @@ jobs:
 
     - name: Upload coverage to Codecov
       if: matrix.go-version == '1.25'
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7
       with:
         files: ./coverage.out
         flags: unittests
@@ -62,10 +62,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v5.0.1
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
     - name: Set up Go
-      uses: actions/setup-go@v6.1.0
+      uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c
       with:
         go-version: '1.25'
 
@@ -85,7 +85,7 @@ jobs:
         GOOS=windows GOARCH=arm64 go build -o tf-version-bump-windows-arm64.exe .
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: binaries
         path: |
