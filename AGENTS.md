@@ -59,9 +59,9 @@ tf-version-bump/
 ├── README.md                    # User-facing documentation
 ├── AGENTS.md                    # This file - AI agent guide
 │
-├── main.go                      # Main application code (119 lines)
-├── main_test.go                 # Main tests (300+ lines)
-├── config_test.go               # Configuration tests (150+ lines)
+├── main.go                      # Main application code
+├── main_test.go                 # Main tests
+├── config_test.go               # Configuration tests
 │
 └── dist/                        # Build artifacts (gitignored)
 ```
