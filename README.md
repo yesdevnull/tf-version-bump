@@ -316,7 +316,7 @@ FILE_PATTERN="**/*.tf"
 ORIGINAL_BRANCH=$(git branch --show-current)
 
 # Loop through branches matching the pattern
-for branch in $(git branch -a --list "*${BRANCH_PATTERN}" --format='%(refname:short)'); do
+for branch in $(git branch --list "${BRANCH_PATTERN}" --format='%(refname:short)'); do
     echo "Processing branch: $branch"
 
     # Checkout the branch
@@ -389,8 +389,13 @@ ORIGINAL_BRANCH=$(git branch --show-current)
 for branch in $(git branch -r --list "origin/${BRANCH_PATTERN}" --format='%(refname:short)' | sed 's|origin/||'); do
     echo "Processing branch: $branch"
 
-    # Checkout and track the remote branch
-    git checkout -B "$branch" "origin/$branch" || continue
+    # Checkout the branch (create if it doesn't exist locally)
+    if git show-ref --verify --quiet "refs/heads/$branch"; then
+        git checkout "$branch" || continue
+        git pull origin "$branch" || continue
+    else
+        git checkout -b "$branch" "origin/$branch" || continue
+    fi
 
     tf-version-bump -pattern "**/*.tf" -module "$MODULE_SOURCE" -to "$TARGET_VERSION"
 
@@ -432,7 +437,9 @@ git checkout "$ORIGINAL_BRANCH"
 
 #### Filtering by Recent Activity
 
-Process only branches with recent commits:
+Process only branches with recent commits.
+
+**Note:** This script uses GNU `date` syntax and requires Linux. For macOS/BSD, you'll need to modify the date commands.
 
 ```bash
 #!/bin/bash
@@ -473,7 +480,6 @@ Production-ready script with comprehensive error handling:
 
 ```bash
 #!/bin/bash
-set -e
 
 BRANCH_PATTERN="${1:-feature/*}"
 MODULE_SOURCE="${2:-terraform-aws-modules/vpc/aws}"
