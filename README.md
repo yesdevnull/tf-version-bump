@@ -284,3 +284,234 @@ Run the tests:
 ```bash
 go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 ```
+
+## Advanced Usage
+
+### Looping Through Git Branches
+
+You can use shell scripts to run `tf-version-bump` across multiple branches matching a filter. This is useful for updating module versions across feature branches, release branches, or any set of branches matching a pattern.
+
+#### Basic Branch Loop
+
+Loop through all branches matching a pattern and update modules:
+
+```bash
+#!/bin/bash
+
+# Configuration
+BRANCH_PATTERN="feature/*"
+MODULE_SOURCE="terraform-aws-modules/vpc/aws"
+TARGET_VERSION="5.0.0"
+FILE_PATTERN="**/*.tf"
+
+# Get current branch to return to later
+ORIGINAL_BRANCH=$(git branch --show-current)
+
+# Loop through branches matching the pattern
+for branch in $(git branch -a --list "*${BRANCH_PATTERN}" --format='%(refname:short)'); do
+    echo "Processing branch: $branch"
+
+    # Checkout the branch
+    git checkout "$branch" || continue
+
+    # Run tf-version-bump
+    tf-version-bump -pattern "$FILE_PATTERN" -module "$MODULE_SOURCE" -to "$TARGET_VERSION"
+
+    # Check if there are changes to commit
+    if [[ -n $(git status --porcelain) ]]; then
+        git add -A
+        git commit -m "chore: bump $MODULE_SOURCE to $TARGET_VERSION"
+        echo "  Committed changes on $branch"
+    else
+        echo "  No changes needed on $branch"
+    fi
+done
+
+# Return to original branch
+git checkout "$ORIGINAL_BRANCH"
+echo "Done! Returned to $ORIGINAL_BRANCH"
+```
+
+#### Using Config Files Across Branches
+
+For batch updates with a config file:
+
+```bash
+#!/bin/bash
+
+BRANCH_PATTERN="release/*"
+CONFIG_FILE="module-updates.yml"
+FILE_PATTERN="**/*.tf"
+
+ORIGINAL_BRANCH=$(git branch --show-current)
+
+for branch in $(git branch --list "$BRANCH_PATTERN" --format='%(refname:short)'); do
+    echo "Processing branch: $branch"
+
+    git checkout "$branch" || continue
+
+    tf-version-bump -pattern "$FILE_PATTERN" -config "$CONFIG_FILE"
+
+    if [[ -n $(git status --porcelain) ]]; then
+        git add -A
+        git commit -m "chore: batch update module versions"
+    fi
+done
+
+git checkout "$ORIGINAL_BRANCH"
+```
+
+#### Including Remote Branches
+
+To include remote branches that haven't been checked out locally:
+
+```bash
+#!/bin/bash
+
+BRANCH_PATTERN="feature/*"
+MODULE_SOURCE="terraform-aws-modules/vpc/aws"
+TARGET_VERSION="5.0.0"
+
+# Fetch all remote branches first
+git fetch --all
+
+ORIGINAL_BRANCH=$(git branch --show-current)
+
+# List remote branches matching pattern (strip 'origin/' prefix)
+for branch in $(git branch -r --list "origin/${BRANCH_PATTERN}" --format='%(refname:short)' | sed 's|origin/||'); do
+    echo "Processing branch: $branch"
+
+    # Checkout and track the remote branch
+    git checkout -B "$branch" "origin/$branch" || continue
+
+    tf-version-bump -pattern "**/*.tf" -module "$MODULE_SOURCE" -to "$TARGET_VERSION"
+
+    if [[ -n $(git status --porcelain) ]]; then
+        git add -A
+        git commit -m "chore: bump $MODULE_SOURCE to $TARGET_VERSION"
+
+        # Optionally push changes
+        # git push origin "$branch"
+    fi
+done
+
+git checkout "$ORIGINAL_BRANCH"
+```
+
+#### Dry Run Mode
+
+Preview which branches would be affected without making changes:
+
+```bash
+#!/bin/bash
+
+BRANCH_PATTERN="feature/*"
+
+echo "Branches that would be processed:"
+git branch --list "$BRANCH_PATTERN" --format='%(refname:short)' | while read branch; do
+    echo "  - $branch"
+done
+
+echo ""
+echo "To run the update, remove the dry-run flag from your script."
+```
+
+#### Filtering by Recent Activity
+
+Process only branches with recent commits:
+
+```bash
+#!/bin/bash
+
+BRANCH_PATTERN="feature/*"
+DAYS_AGO=30
+
+ORIGINAL_BRANCH=$(git branch --show-current)
+
+# Get branches with commits in the last N days
+for branch in $(git branch --list "$BRANCH_PATTERN" --format='%(refname:short)'); do
+    # Check if branch has commits within the time window
+    last_commit=$(git log -1 --format="%ci" "$branch" 2>/dev/null)
+    if [[ -n "$last_commit" ]]; then
+        commit_date=$(date -d "$last_commit" +%s)
+        cutoff_date=$(date -d "$DAYS_AGO days ago" +%s)
+
+        if [[ $commit_date -gt $cutoff_date ]]; then
+            echo "Processing recent branch: $branch"
+            git checkout "$branch" || continue
+
+            tf-version-bump -pattern "**/*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0"
+
+            if [[ -n $(git status --porcelain) ]]; then
+                git add -A
+                git commit -m "chore: bump module versions"
+            fi
+        fi
+    fi
+done
+
+git checkout "$ORIGINAL_BRANCH"
+```
+
+#### Error Handling and Logging
+
+Production-ready script with comprehensive error handling:
+
+```bash
+#!/bin/bash
+set -e
+
+BRANCH_PATTERN="${1:-feature/*}"
+MODULE_SOURCE="${2:-terraform-aws-modules/vpc/aws}"
+TARGET_VERSION="${3:-5.0.0}"
+LOG_FILE="version-bump-$(date +%Y%m%d-%H%M%S).log"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+ORIGINAL_BRANCH=$(git branch --show-current)
+PROCESSED=0
+UPDATED=0
+FAILED=0
+
+log "Starting branch loop for pattern: $BRANCH_PATTERN"
+log "Module: $MODULE_SOURCE -> $TARGET_VERSION"
+
+for branch in $(git branch --list "$BRANCH_PATTERN" --format='%(refname:short)'); do
+    ((PROCESSED++))
+    log "Processing: $branch"
+
+    if ! git checkout "$branch" 2>>"$LOG_FILE"; then
+        log "  ERROR: Failed to checkout $branch"
+        ((FAILED++))
+        continue
+    fi
+
+    if ! tf-version-bump -pattern "**/*.tf" -module "$MODULE_SOURCE" -to "$TARGET_VERSION" 2>>"$LOG_FILE"; then
+        log "  ERROR: tf-version-bump failed on $branch"
+        ((FAILED++))
+        git checkout "$ORIGINAL_BRANCH" 2>/dev/null
+        continue
+    fi
+
+    if [[ -n $(git status --porcelain) ]]; then
+        git add -A
+        git commit -m "chore: bump $MODULE_SOURCE to $TARGET_VERSION"
+        ((UPDATED++))
+        log "  SUCCESS: Committed changes"
+    else
+        log "  SKIPPED: No changes needed"
+    fi
+done
+
+git checkout "$ORIGINAL_BRANCH"
+
+log "Complete! Processed: $PROCESSED, Updated: $UPDATED, Failed: $FAILED"
+log "Log saved to: $LOG_FILE"
+```
+
+Usage:
+```bash
+./update-branches.sh "feature/*" "terraform-aws-modules/vpc/aws" "5.0.0"
+```
