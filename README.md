@@ -16,35 +16,66 @@ A CLI tool written in Go that updates Terraform module versions across multiple 
 
 ## Installation
 
-### Prerequisites
-
-- Go 1.24 or later
-
 ### Option 1: Install with go install
 
-Install the latest version using `go install`:
+The easiest method if you have Go installed:
 
 ```bash
 go install github.com/yesdevnull/tf-version-bump@latest
 ```
 
-This will install the `tf-version-bump` binary to your `$GOPATH/bin` directory (usually `~/go/bin`). Make sure this directory is in your `PATH`.
+This installs the binary to your `$GOPATH/bin` directory (usually `~/go/bin`). Ensure this directory is in your `PATH`.
 
-**Verify the installation:**
+### Option 2: Download pre-built binary (recommended for CI/production)
+
+Download a pre-built binary from the [GitHub Releases](https://github.com/yesdevnull/tf-version-bump/releases) page with verification:
 
 ```bash
-# Check if the binary is accessible
-tf-version-bump --help
+# Set the version you want to install
+VERSION="1.0.0"
 
-# If not in PATH, you can run it directly
-$GOPATH/bin/tf-version-bump --help
-# or typically
-~/go/bin/tf-version-bump --help
+# Download the binary and verification files
+curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump_Linux_x86_64.tar.gz"
+curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/checksums.txt"
+
+# Verify the checksum
+sha256sum -c checksums.txt --ignore-missing
+
+# Extract and install
+tar -xzf tf-version-bump_Linux_x86_64.tar.gz
+sudo mv tf-version-bump /usr/local/bin/
 ```
 
-### Option 2: Build from source
+#### Verify SLSA provenance (optional but recommended)
 
-Alternatively, you can build from source:
+For enhanced supply chain security, verify the SLSA Level 3 provenance:
+
+```bash
+# Install slsa-verifier
+go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@latest
+
+# Download provenance
+curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump-v${VERSION}.intoto.jsonl"
+
+# Verify
+slsa-verifier verify-artifact tf-version-bump_Linux_x86_64.tar.gz \
+  --provenance-path "tf-version-bump-v${VERSION}.intoto.jsonl" \
+  --source-uri github.com/yesdevnull/tf-version-bump \
+  --source-tag "v${VERSION}"
+```
+
+#### Platform-specific downloads
+
+| Platform | Architecture | Filename |
+|----------|-------------|----------|
+| Linux | x86_64 | `tf-version-bump_Linux_x86_64.tar.gz` |
+| Linux | arm64 | `tf-version-bump_Linux_arm64.tar.gz` |
+| macOS | x86_64 | `tf-version-bump_Darwin_x86_64.tar.gz` |
+| macOS | arm64 (Apple Silicon) | `tf-version-bump_Darwin_arm64.tar.gz` |
+| Windows | x86_64 | `tf-version-bump_Windows_x86_64.zip` |
+| Windows | arm64 | `tf-version-bump_Windows_arm64.zip` |
+
+### Option 3: Build from source
 
 ```bash
 git clone https://github.com/yesdevnull/tf-version-bump.git
