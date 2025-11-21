@@ -295,6 +295,18 @@ Run the tests:
 go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 ```
 
+## Releases
+
+Pre-built binaries are available on the [GitHub Releases](https://github.com/yesdevnull/tf-version-bump/releases) page.
+
+Each release includes:
+- Binaries for Linux, macOS, and Windows (amd64/arm64)
+- Linux packages (deb, rpm, apk)
+- SHA256 checksums
+- SLSA Level 3 provenance attestations
+
+For verification instructions and detailed release information, see [docs/RELEASING.md](docs/RELEASING.md).
+
 ## Advanced Usage
 
 ### Looping Through Git Branches
