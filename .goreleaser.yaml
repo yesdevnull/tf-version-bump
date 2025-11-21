@@ -38,7 +38,7 @@ archives:
           - zip
 
 checksum:
-  name_template: "checksums.txt"
+  name_template: "{{ .ProjectName }}-v{{ .Version }}.checksums.txt"
   algorithm: sha256
 
 changelog:
@@ -69,15 +69,3 @@ nfpms:
     formats:
       - deb
       - rpm
-
-signs:
-  - cmd: cosign
-    certificate: "${artifact}.pem"
-    args:
-      - sign-blob
-      - "--output-certificate=${certificate}"
-      - "--output-signature=${signature}"
-      - "${artifact}"
-      - --yes
-    artifacts: checksum
-    output: true
