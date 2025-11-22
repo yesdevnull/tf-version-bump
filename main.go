@@ -21,6 +21,13 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
+// Build information set by ldflags
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	// Define CLI flags
 	pattern := flag.String("pattern", "", "Glob pattern for Terraform files (e.g., '*.tf' or 'modules/**/*.tf')")
@@ -30,7 +37,16 @@ func main() {
 	configFile := flag.String("config", "", "Path to YAML config file with multiple module updates")
 	forceAdd := flag.Bool("force-add", false, "Add version attribute to modules that don't have one (default: skip with warning)")
 	dryRun := flag.Bool("dry-run", false, "Show what changes would be made without actually modifying files")
+	showVersion := flag.Bool("version", false, "Print version information and exit")
 	flag.Parse()
+
+	// Handle version flag
+	if *showVersion {
+		fmt.Printf("tf-version-bump %s\n", version)
+		fmt.Printf("  commit: %s\n", commit)
+		fmt.Printf("  built:  %s\n", date)
+		os.Exit(0)
+	}
 
 	// Determine operation mode
 	var updates []ModuleUpdate
