@@ -7,7 +7,7 @@ This document describes the release process for tf-version-bump, including how r
 Releases are automated via GitHub Actions using [GoReleaser](https://goreleaser.com/). Each release includes:
 
 - Binary builds for multiple platforms (Linux, macOS, Windows) and architectures (amd64, arm64)
-- Linux packages (deb, rpm, apk)
+- Linux packages (deb, rpm)
 - SHA256 checksums
 - SLSA Level 3 provenance attestations for supply chain security
 - Cosign signatures via Sigstore
@@ -41,8 +41,7 @@ Each release includes:
 | `tf-version-bump_Windows_arm64.zip` | Windows ARM64 binary |
 | `tf-version-bump_*.deb` | Debian/Ubuntu packages |
 | `tf-version-bump_*.rpm` | RHEL/Fedora packages |
-| `tf-version-bump_*.apk` | Alpine Linux packages |
-| `checksums.txt` | SHA256 checksums for all artifacts |
+| `tf-version-bump-v*.checksums.txt` | SHA256 checksums for all artifacts |
 | `tf-version-bump-v*.intoto.jsonl` | SLSA provenance attestation |
 
 ## Verifying Releases
@@ -54,10 +53,10 @@ Download the checksums file and verify your download:
 ```bash
 # Download the binary and checksums
 curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/tf-version-bump_Linux_x86_64.tar.gz
-curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/checksums.txt
+curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/tf-version-bump-v1.0.0.checksums.txt
 
 # Verify the checksum
-sha256sum -c checksums.txt --ignore-missing
+sha256sum -c tf-version-bump-v1.0.0.checksums.txt --ignore-missing
 ```
 
 ### Verify SLSA Provenance

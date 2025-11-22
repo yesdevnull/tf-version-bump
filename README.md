@@ -36,10 +36,10 @@ VERSION="1.0.0"
 
 # Download the binary and verification files
 curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump_Linux_x86_64.tar.gz"
-curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/checksums.txt"
+curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump-v${VERSION}.checksums.txt"
 
 # Verify the checksum
-sha256sum -c checksums.txt --ignore-missing
+sha256sum -c "tf-version-bump-v${VERSION}.checksums.txt" --ignore-missing
 
 # Extract and install
 tar -xzf tf-version-bump_Linux_x86_64.tar.gz
@@ -332,7 +332,7 @@ Pre-built binaries are available on the [GitHub Releases](https://github.com/yes
 
 Each release includes:
 - Binaries for Linux, macOS, and Windows (amd64/arm64)
-- Linux packages (deb, rpm, apk)
+- Linux packages (deb, rpm)
 - SHA256 checksums
 - SLSA Level 3 provenance attestations
 
