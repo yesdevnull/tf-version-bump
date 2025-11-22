@@ -18,6 +18,9 @@ go.work
 tf-version-bump
 tf-version-bump-*
 
+# GoReleaser output
+dist/
+
 # IDE files
 .idea/
 .vscode/
