@@ -10,7 +10,6 @@ Releases are automated via GitHub Actions using [GoReleaser](https://goreleaser.
 - Linux packages (deb, rpm)
 - SHA256 checksums
 - SLSA Level 3 provenance attestations for supply chain security
-- Cosign signatures via Sigstore
 
 ## Creating a Release
 
@@ -85,9 +84,8 @@ slsa-verifier verify-artifact tf-version-bump_Linux_x86_64.tar.gz \
 This project uses several measures to ensure supply chain security:
 
 1. **SLSA Level 3 Provenance**: Cryptographically signed attestations that prove where and how artifacts were built
-2. **Sigstore/Cosign**: Keyless signing using OpenID Connect (OIDC) tokens
-3. **Pinned Dependencies**: All GitHub Actions are pinned to specific commit SHAs
-4. **Minimal Permissions**: Workflows use least-privilege permission model
+2. **Pinned Dependencies**: All GitHub Actions are pinned to specific commit SHAs
+3. **Minimal Permissions**: Workflows use least-privilege permission model
 
 ### Reporting Vulnerabilities
 
