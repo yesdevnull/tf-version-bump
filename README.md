@@ -31,7 +31,7 @@ This installs the binary to your `$GOPATH/bin` directory (usually `~/go/bin`). E
 Download a pre-built binary from the [GitHub Releases](https://github.com/yesdevnull/tf-version-bump/releases) page with verification:
 
 ```bash
-# Set the version you want to install
+# Set the version you want to install (replace with desired version)
 VERSION="1.0.0"
 
 # Download the binary and verification files
