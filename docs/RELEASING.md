@@ -49,6 +49,8 @@ Each release includes:
 
 Download the checksums file and verify your download:
 
+> **Note:** Replace `1.0.0` in the examples below with your desired version.
+
 ```bash
 # Download the binary and checksums
 curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/tf-version-bump_Linux_x86_64.tar.gz
