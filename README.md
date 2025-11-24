@@ -35,14 +35,14 @@ Download a pre-built binary from the [GitHub Releases](https://github.com/yesdev
 VERSION="1.0.0"
 
 # Download the binary and verification files
-curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump_Linux_x86_64.tar.gz"
+curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump_${VERSION}_linux_x86_64.tar.gz"
 curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump-v${VERSION}.checksums.txt"
 
 # Verify the checksum
 sha256sum -c "tf-version-bump-v${VERSION}.checksums.txt" --ignore-missing
 
 # Extract and install
-tar -xzf tf-version-bump_Linux_x86_64.tar.gz
+tar -xzf "tf-version-bump_${VERSION}_linux_x86_64.tar.gz"
 sudo mv tf-version-bump /usr/local/bin/
 ```
 
@@ -58,7 +58,7 @@ go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@latest
 curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump-v${VERSION}.intoto.jsonl"
 
 # Verify
-slsa-verifier verify-artifact tf-version-bump_Linux_x86_64.tar.gz \
+slsa-verifier verify-artifact "tf-version-bump_${VERSION}_linux_x86_64.tar.gz" \
   --provenance-path "tf-version-bump-v${VERSION}.intoto.jsonl" \
   --source-uri github.com/yesdevnull/tf-version-bump \
   --source-tag "v${VERSION}"
@@ -68,12 +68,12 @@ slsa-verifier verify-artifact tf-version-bump_Linux_x86_64.tar.gz \
 
 | Platform | Architecture | Filename |
 |----------|-------------|----------|
-| Linux | x86_64 | `tf-version-bump_Linux_x86_64.tar.gz` |
-| Linux | arm64 | `tf-version-bump_Linux_arm64.tar.gz` |
-| macOS | x86_64 | `tf-version-bump_Darwin_x86_64.tar.gz` |
-| macOS | arm64 (Apple Silicon) | `tf-version-bump_Darwin_arm64.tar.gz` |
-| Windows | x86_64 | `tf-version-bump_Windows_x86_64.zip` |
-| Windows | arm64 | `tf-version-bump_Windows_arm64.zip` |
+| Linux | x86_64 | `tf-version-bump_<version>_linux_x86_64.tar.gz` |
+| Linux | arm64 | `tf-version-bump_<version>_linux_arm64.tar.gz` |
+| macOS | x86_64 | `tf-version-bump_<version>_darwin_x86_64.tar.gz` |
+| macOS | arm64 (Apple Silicon) | `tf-version-bump_<version>_darwin_arm64.tar.gz` |
+| Windows | x86_64 | `tf-version-bump_<version>_windows_x86_64.zip` |
+| Windows | arm64 | `tf-version-bump_<version>_windows_arm64.zip` |
 
 ### Option 3: Build from source
 
