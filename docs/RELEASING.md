@@ -32,12 +32,12 @@ Each release includes:
 
 | Artifact | Description |
 |----------|-------------|
-| `tf-version-bump_Linux_x86_64.tar.gz` | Linux AMD64 binary |
-| `tf-version-bump_Linux_arm64.tar.gz` | Linux ARM64 binary |
-| `tf-version-bump_Darwin_x86_64.tar.gz` | macOS AMD64 binary |
-| `tf-version-bump_Darwin_arm64.tar.gz` | macOS ARM64 (Apple Silicon) binary |
-| `tf-version-bump_Windows_x86_64.zip` | Windows AMD64 binary |
-| `tf-version-bump_Windows_arm64.zip` | Windows ARM64 binary |
+| `tf-version-bump_<version>_linux_x86_64.tar.gz` | Linux AMD64 binary |
+| `tf-version-bump_<version>_linux_arm64.tar.gz` | Linux ARM64 binary |
+| `tf-version-bump_<version>_darwin_x86_64.tar.gz` | macOS AMD64 binary |
+| `tf-version-bump_<version>_darwin_arm64.tar.gz` | macOS ARM64 (Apple Silicon) binary |
+| `tf-version-bump_<version>_windows_x86_64.zip` | Windows AMD64 binary |
+| `tf-version-bump_<version>_windows_arm64.zip` | Windows ARM64 binary |
 | `tf-version-bump_*.deb` | Debian/Ubuntu packages |
 | `tf-version-bump_*.rpm` | RHEL/Fedora packages |
 | `tf-version-bump-v*.checksums.txt` | SHA256 checksums for all artifacts |
@@ -53,7 +53,7 @@ Download the checksums file and verify your download:
 
 ```bash
 # Download the binary and checksums
-curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/tf-version-bump_Linux_x86_64.tar.gz
+curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/tf-version-bump_1.0.0_linux_x86_64.tar.gz
 curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/tf-version-bump-v1.0.0.checksums.txt
 
 # Verify the checksum
@@ -69,11 +69,11 @@ The release includes SLSA Level 3 provenance attestations that can be verified u
 go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@latest
 
 # Download the artifact and provenance
-curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/tf-version-bump_Linux_x86_64.tar.gz
+curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/tf-version-bump_1.0.0_linux_x86_64.tar.gz
 curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/tf-version-bump-v1.0.0.intoto.jsonl
 
 # Verify provenance
-slsa-verifier verify-artifact tf-version-bump_Linux_x86_64.tar.gz \
+slsa-verifier verify-artifact tf-version-bump_1.0.0_linux_x86_64.tar.gz \
   --provenance-path tf-version-bump-v1.0.0.intoto.jsonl \
   --source-uri github.com/yesdevnull/tf-version-bump \
   --source-tag v1.0.0
