@@ -119,9 +119,9 @@ jobs:
           if [ -n "$PACKAGE_SUBJECTS" ]; then
             package_subjects=$(echo "$PACKAGE_SUBJECTS" | base64 -d)
             if [ -n "$all_subjects" ]; then
-              all_subjects=$(printf '%s\n%s' "$all_subjects" "$package_subjects")
+              all_subjects=$(printf '%s\n%s' "$all_subjects" "$package_subjects" | sed '/^$/d')
             else
-              all_subjects="$package_subjects"
+              all_subjects=$(echo "$package_subjects" | sed '/^$/d')
             fi
           fi
 
