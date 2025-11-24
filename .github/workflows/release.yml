@@ -112,20 +112,20 @@ jobs:
           all_subjects=""
 
           if [ -n "$ARTIFACT_SUBJECTS" ]; then
-            artifact_subjects=$(echo "$ARTIFACT_SUBJECTS" | base64 -d)
+            artifact_subjects=$(echo "$ARTIFACT_SUBJECTS" | base64 -d | sed '/^$/d')
             all_subjects="$artifact_subjects"
           fi
 
           if [ -n "$PACKAGE_SUBJECTS" ]; then
-            package_subjects=$(echo "$PACKAGE_SUBJECTS" | base64 -d)
+            package_subjects=$(echo "$PACKAGE_SUBJECTS" | base64 -d | sed '/^$/d')
             if [ -n "$all_subjects" ]; then
-              all_subjects=$(printf '%s\n%s' "$all_subjects" "$package_subjects" | sed '/^$/d')
+              all_subjects=$(printf '%s\n%s' "$all_subjects" "$package_subjects")
             else
-              all_subjects=$(echo "$package_subjects" | sed '/^$/d')
+              all_subjects="$package_subjects"
             fi
           fi
 
-          if [ -z "$all_subjects" ]; then
+          if [ -z "$all_subjects" ] || [ -z "$(echo "$all_subjects" | tr -d '[:space:]')" ]; then
             echo "Error: No subjects found for provenance generation"
             exit 1
           fi
