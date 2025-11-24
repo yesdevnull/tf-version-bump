@@ -109,10 +109,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          artifact_subjects=$(echo "$ARTIFACT_SUBJECTS" | base64 -d)
-          package_subjects=$(echo "$PACKAGE_SUBJECTS" | base64 -d)
+          all_subjects=""
 
-          all_subjects=$(echo -e "${artifact_subjects}\n${package_subjects}\n" | sed '/^$/d')
+          if [ -n "$ARTIFACT_SUBJECTS" ]; then
+            artifact_subjects=$(echo "$ARTIFACT_SUBJECTS" | base64 -d)
+            all_subjects="$artifact_subjects"
+          fi
+
+          if [ -n "$PACKAGE_SUBJECTS" ]; then
+            package_subjects=$(echo "$PACKAGE_SUBJECTS" | base64 -d)
+            if [ -n "$all_subjects" ]; then
+              all_subjects=$(printf '%s\n%s' "$all_subjects" "$package_subjects")
+            else
+              all_subjects="$package_subjects"
+            fi
+          fi
+
+          if [ -z "$all_subjects" ]; then
+            echo "Error: No subjects found for provenance generation"
+            exit 1
+          fi
 
           echo "subjects=$(echo "$all_subjects" | base64 -w0)" >> "$GITHUB_OUTPUT"
 
