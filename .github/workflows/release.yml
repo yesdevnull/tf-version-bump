@@ -58,7 +58,7 @@ jobs:
           ARTIFACTS: "${{ steps.goreleaser.outputs.artifacts }}"
         run: |
           set -euo pipefail
-          sum_file=$(echo -E "$ARTIFACTS" | jq -r '.[] | {name, "digest": (.extra.Digest // .extra.Checksum)} | select(.digest) | "\(.digest | sub("^[^:]+:";""))  \(.name)"')
+          sum_file=$(echo -E "$ARTIFACTS" | jq -r '.[] | select(.type != "Linux Package") | {name, "digest": (.extra.Digest // .extra.Checksum)} | select(.digest) | "\(.digest | sub("^[^:]+:";""))  \(.name)"')
           if [ -z "$sum_file" ]; then
             echo "Warning: No artifact digests found"
             echo "subjects=" >> "$GITHUB_OUTPUT"
