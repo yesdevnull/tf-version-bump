@@ -852,3 +852,87 @@ func TestLoadConfigWhitespaceInValues(t *testing.T) {
 		t.Errorf("From = %q, want %q (whitespace should be trimmed)", updates[0].From, "4.0.0")
 	}
 }
+
+// TestLoadConfigVersionConstraintsWithWhitespace tests version constraints with whitespace
+func TestLoadConfigVersionConstraintsWithWhitespace(t *testing.T) {
+	tests := []struct {
+		name            string
+		versionInput    string
+		expectedVersion string
+		fromInput       string
+		expectedFrom    string
+	}{
+		{
+			name:            "pessimistic constraint with trailing space",
+			versionInput:    "~> 1.0 ",
+			expectedVersion: "~> 1.0",
+			fromInput:       "~> 0.9 ",
+			expectedFrom:    "~> 0.9",
+		},
+		{
+			name:            "greater than or equal with leading space",
+			versionInput:    " >= 2.0.0",
+			expectedVersion: ">= 2.0.0",
+			fromInput:       " >= 1.0.0",
+			expectedFrom:    ">= 1.0.0",
+		},
+		{
+			name:            "exact version with surrounding spaces",
+			versionInput:    "  = 3.5.0  ",
+			expectedVersion: "= 3.5.0",
+			fromInput:       "  = 3.4.0  ",
+			expectedFrom:    "= 3.4.0",
+		},
+		{
+			name:            "range constraint with spaces",
+			versionInput:    " >= 1.0, < 2.0 ",
+			expectedVersion: ">= 1.0, < 2.0",
+			fromInput:       " >= 0.9, < 1.0 ",
+			expectedFrom:    ">= 0.9, < 1.0",
+		},
+		{
+			name:            "less than constraint with whitespace",
+			versionInput:    "< 5.0.0  ",
+			expectedVersion: "< 5.0.0",
+			fromInput:       "< 4.0.0  ",
+			expectedFrom:    "< 4.0.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configYAML := fmt.Sprintf(`modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "%s"
+    from: "%s"
+`, tt.versionInput, tt.fromInput)
+
+			tmpDir := t.TempDir()
+			configFile := filepath.Join(tmpDir, "config.yml")
+
+			err := os.WriteFile(configFile, []byte(configYAML), 0644)
+			if err != nil {
+				t.Fatalf("Failed to create temp config file: %v", err)
+			}
+
+			updates, err := loadConfig(configFile)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if len(updates) != 1 {
+				t.Errorf("Expected 1 update, got %d", len(updates))
+			}
+
+			// Version constraints should have whitespace trimmed while preserving the constraint operators
+			if updates[0].Version != tt.expectedVersion {
+				t.Errorf("Version = %q, want %q (whitespace should be trimmed, constraint preserved)", updates[0].Version, tt.expectedVersion)
+			}
+
+			if updates[0].From != tt.expectedFrom {
+				t.Errorf("From = %q, want %q (whitespace should be trimmed, constraint preserved)", updates[0].From, tt.expectedFrom)
+			}
+		})
+	}
+}
+
