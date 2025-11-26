@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -51,12 +52,17 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
-	// Validate config
+	// Validate and sanitize config
 	for i, module := range config.Modules {
-		if module.Source == "" {
+		// Trim whitespace from source and version fields
+		config.Modules[i].Source = strings.TrimSpace(module.Source)
+		config.Modules[i].Version = strings.TrimSpace(module.Version)
+		config.Modules[i].From = strings.TrimSpace(module.From)
+
+		if config.Modules[i].Source == "" {
 			return nil, fmt.Errorf("module at index %d is missing 'source' field", i)
 		}
-		if module.Version == "" {
+		if config.Modules[i].Version == "" {
 			return nil, fmt.Errorf("module at index %d is missing 'version' field", i)
 		}
 	}

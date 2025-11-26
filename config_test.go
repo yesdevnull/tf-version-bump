@@ -822,6 +822,7 @@ func TestLoadConfigWhitespaceInValues(t *testing.T) {
 	configYAML := `modules:
   - source:  "  terraform-aws-modules/vpc/aws  "
     version:  "  5.0.0  "
+    from:  "  4.0.0  "
 `
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
@@ -840,8 +841,14 @@ func TestLoadConfigWhitespaceInValues(t *testing.T) {
 		t.Errorf("Expected 1 update, got %d", len(updates))
 	}
 
-	// YAML parser should preserve the whitespace as it's inside quotes
-	if updates[0].Source != "  terraform-aws-modules/vpc/aws  " {
-		t.Errorf("Source = %q, whitespace should be preserved", updates[0].Source)
+	// Source and Version should have whitespace trimmed by loadConfig
+	if updates[0].Source != "terraform-aws-modules/vpc/aws" {
+		t.Errorf("Source = %q, want %q (whitespace should be trimmed)", updates[0].Source, "terraform-aws-modules/vpc/aws")
+	}
+	if updates[0].Version != "5.0.0" {
+		t.Errorf("Version = %q, want %q (whitespace should be trimmed)", updates[0].Version, "5.0.0")
+	}
+	if updates[0].From != "4.0.0" {
+		t.Errorf("From = %q, want %q (whitespace should be trimmed)", updates[0].From, "4.0.0")
 	}
 }
