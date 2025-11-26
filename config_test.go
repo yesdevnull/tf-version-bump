@@ -632,3 +632,216 @@ module "iam" {
 		t.Error("IAM module should be updated to 5.2.0")
 	}
 }
+
+// TestLoadConfigEmptyFile tests loading an empty config file
+func TestLoadConfigEmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "empty.yml")
+
+	err := os.WriteFile(configFile, []byte(""), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 0 {
+		t.Errorf("Expected 0 updates from empty file, got %d", len(updates))
+	}
+}
+
+// TestLoadConfigOnlyComments tests loading a config file with only comments
+func TestLoadConfigOnlyComments(t *testing.T) {
+	configYAML := `# This is a comment
+# Another comment
+# No actual modules here
+`
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "comments.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 0 {
+		t.Errorf("Expected 0 updates from comment-only file, got %d", len(updates))
+	}
+}
+
+// TestLoadConfigSpecialCharacters tests modules with special characters in source
+func TestLoadConfigSpecialCharacters(t *testing.T) {
+	configYAML := `modules:
+  - source: "terraform-aws-modules/vpc_test-123/aws"
+    version: "1.0.0"
+  - source: "registry.example.com/org/module-name/provider"
+    version: "2.0.0"
+`
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 2 {
+		t.Errorf("Expected 2 updates, got %d", len(updates))
+	}
+
+	if updates[0].Source != "terraform-aws-modules/vpc_test-123/aws" {
+		t.Errorf("First module source incorrect: %s", updates[0].Source)
+	}
+
+	if updates[1].Source != "registry.example.com/org/module-name/provider" {
+		t.Errorf("Second module source incorrect: %s", updates[1].Source)
+	}
+}
+
+// TestLoadConfigDuplicateModules tests config with duplicate module sources
+func TestLoadConfigDuplicateModules(t *testing.T) {
+	configYAML := `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.1.0"
+`
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Should parse both entries even if they're duplicates
+	if len(updates) != 2 {
+		t.Errorf("Expected 2 updates, got %d", len(updates))
+	}
+
+	if updates[0].Version != "5.0.0" {
+		t.Errorf("First module version = %q, want %q", updates[0].Version, "5.0.0")
+	}
+
+	if updates[1].Version != "5.1.0" {
+		t.Errorf("Second module version = %q, want %q", updates[1].Version, "5.1.0")
+	}
+}
+
+// TestLoadConfigMixedQuotes tests config with various YAML quoting styles
+func TestLoadConfigMixedQuotes(t *testing.T) {
+	configYAML := `modules:
+  - source: 'terraform-aws-modules/vpc/aws'
+    version: '5.0.0'
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+  - source: terraform-aws-modules/iam/aws
+    version: 3.0.0
+`
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 3 {
+		t.Errorf("Expected 3 updates, got %d", len(updates))
+	}
+
+	// All should be parsed correctly regardless of quote style
+	expectedSources := []string{
+		"terraform-aws-modules/vpc/aws",
+		"terraform-aws-modules/s3-bucket/aws",
+		"terraform-aws-modules/iam/aws",
+	}
+
+	for i, expected := range expectedSources {
+		if updates[i].Source != expected {
+			t.Errorf("Module %d source = %q, want %q", i, updates[i].Source, expected)
+		}
+	}
+}
+
+// TestLoadConfigVeryLongVersionString tests handling of very long version strings in config
+func TestLoadConfigVeryLongVersionString(t *testing.T) {
+	longVersion := "5.0.0-alpha.1.2.3.4.5.6.7.8.9.10+build.metadata.with.lots.of.segments.2024.01.15.abc123def456.and.more.segments"
+	configYAML := fmt.Sprintf(`modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "%s"
+`, longVersion)
+
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Errorf("Expected 1 update, got %d", len(updates))
+	}
+
+	if updates[0].Version != longVersion {
+		t.Errorf("Version = %q, want %q", updates[0].Version, longVersion)
+	}
+}
+
+// TestLoadConfigWhitespaceInValues tests handling of extra whitespace in YAML values
+func TestLoadConfigWhitespaceInValues(t *testing.T) {
+	configYAML := `modules:
+  - source:  "  terraform-aws-modules/vpc/aws  "
+    version:  "  5.0.0  "
+`
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Errorf("Expected 1 update, got %d", len(updates))
+	}
+
+	// YAML parser should preserve the whitespace as it's inside quotes
+	if updates[0].Source != "  terraform-aws-modules/vpc/aws  " {
+		t.Errorf("Source = %q, whitespace should be preserved", updates[0].Source)
+	}
+}

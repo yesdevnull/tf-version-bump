@@ -1001,3 +1001,427 @@ module "vpc" {
 		t.Error("File contains new version in dry-run mode, but should not")
 	}
 }
+
+// TestIsLocalModule tests the isLocalModule function with various path formats
+func TestIsLocalModule(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected bool
+	}{
+		{
+			name:     "relative path with ./",
+			source:   "./modules/vpc",
+			expected: true,
+		},
+		{
+			name:     "relative path with ../",
+			source:   "../shared/modules",
+			expected: true,
+		},
+		{
+			name:     "absolute path",
+			source:   "/absolute/path/to/module",
+			expected: true,
+		},
+		{
+			name:     "registry module",
+			source:   "terraform-aws-modules/vpc/aws",
+			expected: false,
+		},
+		{
+			name:     "git source",
+			source:   "git::https://github.com/example/module.git",
+			expected: false,
+		},
+		{
+			name:     "empty string",
+			source:   "",
+			expected: false,
+		},
+		{
+			name:     "just a dot",
+			source:   ".",
+			expected: false,
+		},
+		{
+			name:     "module name starting with dot but not path",
+			source:   ".module-name",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isLocalModule(tt.source)
+			if result != tt.expected {
+				t.Errorf("isLocalModule(%q) = %v, want %v", tt.source, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestUpdateModuleVersionModuleWithoutSource tests handling of modules without source attribute
+func TestUpdateModuleVersionModuleWithoutSource(t *testing.T) {
+	input := `module "broken" {
+  version = "1.0.0"
+  name    = "test"
+}
+
+module "valid" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.0.0"
+}`
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.tf")
+
+	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	// Try to update - should skip the module without source and update the valid one
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false, false)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !updated {
+		t.Error("Expected file to be updated")
+	}
+
+	content, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, `version = "5.0.0"`) {
+		t.Error("Valid module was not updated")
+	}
+
+	// The broken module should still be present
+	if !strings.Contains(contentStr, `module "broken"`) {
+		t.Error("Module without source should still be in file")
+	}
+}
+
+// TestUpdateModuleVersionSpecialCharactersInSource tests modules with special characters
+func TestUpdateModuleVersionSpecialCharactersInSource(t *testing.T) {
+	tests := []struct {
+		name         string
+		moduleSource string
+		version      string
+	}{
+		{
+			name:         "module with underscores",
+			moduleSource: "terraform-aws-modules/vpc_example/aws",
+			version:      "1.0.0",
+		},
+		{
+			name:         "module with hyphens",
+			moduleSource: "terraform-aws-modules/vpc-example-test/aws",
+			version:      "2.0.0",
+		},
+		{
+			name:         "module with numbers",
+			moduleSource: "terraform-aws-modules/s3-bucket-v2/aws",
+			version:      "3.0.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := fmt.Sprintf(`module "test" {
+  source  = "%s"
+  version = "0.1.0"
+}`, tt.moduleSource)
+
+			tmpDir := t.TempDir()
+			tmpFile := filepath.Join(tmpDir, "test.tf")
+
+			err := os.WriteFile(tmpFile, []byte(input), 0644)
+			if err != nil {
+				t.Fatalf("Failed to create temp file: %v", err)
+			}
+
+			updated, err := updateModuleVersion(tmpFile, tt.moduleSource, tt.version, "", false, false)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if !updated {
+				t.Error("Expected file to be updated")
+			}
+
+			content, err := os.ReadFile(tmpFile)
+			if err != nil {
+				t.Fatalf("Failed to read file: %v", err)
+			}
+
+			expectedVersion := fmt.Sprintf(`version = "%s"`, tt.version)
+			if !strings.Contains(string(content), expectedVersion) {
+				t.Errorf("Expected version %q not found in content", expectedVersion)
+			}
+		})
+	}
+}
+
+// TestUpdateModuleVersionLongVersionString tests handling of very long version strings
+func TestUpdateModuleVersionLongVersionString(t *testing.T) {
+	input := `module "test" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "1.0.0"
+}`
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.tf")
+
+	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	// Very long version string (e.g., commit SHA or complex prerelease version)
+	longVersion := "5.0.0-alpha.1.2.3.4.5.6.7.8.9.10+build.metadata.with.lots.of.segments.2024.01.15.abc123def456"
+
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", longVersion, "", false, false)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !updated {
+		t.Error("Expected file to be updated")
+	}
+
+	content, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+
+	expectedVersion := fmt.Sprintf(`version = "%s"`, longVersion)
+	if !strings.Contains(string(content), expectedVersion) {
+		t.Error("Long version string was not set correctly")
+	}
+}
+
+// TestUpdateModuleVersionAbsolutePathLocalModule tests local modules with absolute paths
+func TestUpdateModuleVersionAbsolutePathLocalModule(t *testing.T) {
+	input := `module "local" {
+  source  = "/absolute/path/to/module"
+  version = "1.0.0"
+}`
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.tf")
+
+	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	// Should be skipped as it's a local module (absolute path)
+	updated, err := updateModuleVersion(tmpFile, "/absolute/path/to/module", "2.0.0", "", false, false)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if updated {
+		t.Error("Local module with absolute path should not be updated")
+	}
+
+	content, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+
+	// Original version should remain
+	if !strings.Contains(string(content), `version = "1.0.0"`) {
+		t.Error("Local module version should not have been changed")
+	}
+}
+
+// TestUpdateModuleVersionModuleWithNoLabels tests module blocks without labels
+func TestUpdateModuleVersionModuleWithNoLabels(t *testing.T) {
+	// This is technically invalid HCL but we should handle it gracefully
+	input := `module {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.0.0"
+}`
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.tf")
+
+	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	// Should still update even without labels (though this is unusual)
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false, false)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !updated {
+		t.Error("Module without labels should still be updated")
+	}
+
+	content, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+
+	if !strings.Contains(string(content), `version = "5.0.0"`) {
+		t.Error("Module without labels was not updated")
+	}
+}
+
+// TestUpdateModuleVersionWhitespaceVariations tests modules with various whitespace
+func TestUpdateModuleVersionWhitespaceVariations(t *testing.T) {
+	tests := []struct {
+		name         string
+		inputContent string
+		expectUpdate bool
+	}{
+		{
+			name: "extra spaces in source",
+			inputContent: `module "test" {
+  source  =    "terraform-aws-modules/vpc/aws"
+  version = "3.0.0"
+}`,
+			expectUpdate: true,
+		},
+		{
+			name: "tabs in source",
+			inputContent: `module "test" {
+  source	=	"terraform-aws-modules/vpc/aws"
+  version = "3.0.0"
+}`,
+			expectUpdate: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			tmpFile := filepath.Join(tmpDir, "test.tf")
+
+			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0644)
+			if err != nil {
+				t.Fatalf("Failed to create temp file: %v", err)
+			}
+
+			updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", false, false)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if updated != tt.expectUpdate {
+				t.Errorf("Expected updated=%v, got %v", tt.expectUpdate, updated)
+			}
+
+			if tt.expectUpdate {
+				content, err := os.ReadFile(tmpFile)
+				if err != nil {
+					t.Fatalf("Failed to read file: %v", err)
+				}
+
+				if !strings.Contains(string(content), `version = "5.0.0"`) {
+					t.Error("Version was not updated correctly")
+				}
+			}
+		})
+	}
+}
+
+// TestUpdateModuleVersionRegistryModuleWithoutVersionNoForceAdd tests behavior when registry module lacks version
+func TestUpdateModuleVersionRegistryModuleWithoutVersionNoForceAdd(t *testing.T) {
+	input := `module "s3" {
+  source = "terraform-aws-modules/s3-bucket/aws"
+  bucket = "my-bucket"
+}`
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.tf")
+
+	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	// With forceAdd=false, should skip and print warning
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/s3-bucket/aws", "4.0.0", "", false, false)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if updated {
+		t.Error("Module without version should not be updated when forceAdd=false")
+	}
+
+	content, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+
+	// Should NOT have version added
+	if strings.Contains(string(content), "version") {
+		t.Error("Version attribute should not have been added")
+	}
+}
+
+// TestTrimQuotesEdgeCases tests additional edge cases for trimQuotes
+func TestTrimQuotesEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "only opening double quote",
+			input:    `"test`,
+			expected: `"test`,
+		},
+		{
+			name:     "only closing double quote",
+			input:    `test"`,
+			expected: `test"`,
+		},
+		{
+			name:     "quoted string with internal quotes",
+			input:    `"test "quoted" value"`,
+			expected: `test "quoted" value`,
+		},
+		{
+			name:     "single quoted string with internal quotes",
+			input:    `'test 'quoted' value'`,
+			expected: `test 'quoted' value`,
+		},
+		{
+			name:     "two character string with quotes",
+			input:    `""`,
+			expected: ``,
+		},
+		{
+			name:     "two character string with single quotes",
+			input:    `''`,
+			expected: ``,
+		},
+		{
+			name:     "string with only double quote",
+			input:    `"`,
+			expected: `"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := trimQuotes(tt.input)
+			if result != tt.expected {
+				t.Errorf("trimQuotes(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
