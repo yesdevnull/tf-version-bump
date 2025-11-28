@@ -1518,6 +1518,24 @@ func TestMatchPattern(t *testing.T) {
 			pattern:  "aws-*-vpc-*",
 			expected: false,
 		},
+		{
+			name:     "overlapping prefix and suffix - too short",
+			input:    "abc",
+			pattern:  "abc*abc",
+			expected: false,
+		},
+		{
+			name:     "overlapping prefix and suffix - minimum valid",
+			input:    "abcabc",
+			pattern:  "abc*abc",
+			expected: true,
+		},
+		{
+			name:     "overlapping prefix and suffix - with wildcard content",
+			input:    "abcXabc",
+			pattern:  "abc*abc",
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
