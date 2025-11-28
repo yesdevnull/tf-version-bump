@@ -357,6 +357,14 @@ func matchPattern(name, pattern string) bool {
 		return false
 	}
 
+	// Ensure there's enough length for both prefix and suffix when both are present
+	if parts[0] != "" && parts[len(parts)-1] != "" {
+		minLength := len(parts[0]) + len(parts[len(parts)-1])
+		if len(name) < minLength {
+			return false
+		}
+	}
+
 	// For middle parts, check they appear in order
 	pos := 0
 	for i, part := range parts {
