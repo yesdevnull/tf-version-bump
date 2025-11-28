@@ -53,6 +53,19 @@
               "1.5.0-rc.1",
               "2.0.0-beta.2+exp.sha.5114f85"
             ]
+          },
+          "ignore": {
+            "type": "array",
+            "description": "Optional: List of module names or patterns to ignore. Supports wildcard matching using '*' for zero or more characters",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "examples": [
+              ["vpc", "legacy-*"],
+              ["test-*", "*-deprecated"],
+              ["prod-vpc", "staging-*", "*-old"]
+            ]
           }
         },
         "additionalProperties": false
@@ -79,6 +92,21 @@
         {
           "source": "terraform-aws-modules/s3-bucket/aws",
           "version": "4.0.0"
+        }
+      ]
+    },
+    {
+      "modules": [
+        {
+          "source": "terraform-aws-modules/vpc/aws",
+          "version": "5.0.0",
+          "ignore": ["legacy-vpc", "test-*"]
+        },
+        {
+          "source": "terraform-aws-modules/s3-bucket/aws",
+          "version": "4.0.0",
+          "from": "3.0.0",
+          "ignore": ["*-deprecated"]
         }
       ]
     }

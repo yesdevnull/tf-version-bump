@@ -204,11 +204,11 @@ module "s3" {
 
 	// Apply updates
 	for _, update := range updates {
-		_, err := updateModuleVersion(tf1File, update.Source, update.Version, update.From, false, false)
+		_, err := updateModuleVersion(tf1File, update.Source, update.Version, update.From, nil, false, false)
 		if err != nil {
 			t.Errorf("Failed to update %s: %v", tf1File, err)
 		}
-		_, err = updateModuleVersion(tf2File, update.Source, update.Version, update.From, false, false)
+		_, err = updateModuleVersion(tf2File, update.Source, update.Version, update.From, nil, false, false)
 		if err != nil {
 			t.Errorf("Failed to update %s: %v", tf2File, err)
 		}
@@ -603,7 +603,7 @@ module "iam" {
 
 	// Apply updates
 	for _, update := range updates {
-		_, err := updateModuleVersion(tfFile, update.Source, update.Version, update.From, false, false)
+		_, err := updateModuleVersion(tfFile, update.Source, update.Version, update.From, nil, false, false)
 		if err != nil {
 			t.Fatalf("Failed to update module: %v", err)
 		}
@@ -936,3 +936,168 @@ func TestLoadConfigVersionConstraintsWithWhitespace(t *testing.T) {
 	}
 }
 
+
+func TestLoadConfigWithIgnoreField(t *testing.T) {
+	configYAML := `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    ignore:
+      - "legacy-vpc"
+      - "test-*"
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+    from: "3.0.0"
+    ignore:
+      - "*-deprecated"
+`
+
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 2 {
+		t.Errorf("Expected 2 updates, got %d", len(updates))
+	}
+
+	// Check first module
+	if updates[0].Source != "terraform-aws-modules/vpc/aws" {
+		t.Errorf("First module source = %q, want %q", updates[0].Source, "terraform-aws-modules/vpc/aws")
+	}
+	if updates[0].Version != "5.0.0" {
+		t.Errorf("First module version = %q, want %q", updates[0].Version, "5.0.0")
+	}
+	if len(updates[0].Ignore) != 2 {
+		t.Fatalf("First module ignore patterns count = %d, want 2", len(updates[0].Ignore))
+	}
+	if updates[0].Ignore[0] != "legacy-vpc" {
+		t.Errorf("First module ignore[0] = %q, want %q", updates[0].Ignore[0], "legacy-vpc")
+	}
+	if updates[0].Ignore[1] != "test-*" {
+		t.Errorf("First module ignore[1] = %q, want %q", updates[0].Ignore[1], "test-*")
+	}
+
+	// Check second module
+	if updates[1].Source != "terraform-aws-modules/s3-bucket/aws" {
+		t.Errorf("Second module source = %q, want %q", updates[1].Source, "terraform-aws-modules/s3-bucket/aws")
+	}
+	if updates[1].Version != "4.0.0" {
+		t.Errorf("Second module version = %q, want %q", updates[1].Version, "4.0.0")
+	}
+	if updates[1].From != "3.0.0" {
+		t.Errorf("Second module from = %q, want %q", updates[1].From, "3.0.0")
+	}
+	if len(updates[1].Ignore) != 1 {
+		t.Fatalf("Second module ignore patterns count = %d, want 1", len(updates[1].Ignore))
+	}
+	if updates[1].Ignore[0] != "*-deprecated" {
+		t.Errorf("Second module ignore[0] = %q, want %q", updates[1].Ignore[0], "*-deprecated")
+	}
+}
+
+func TestLoadConfigWithIgnoreFieldWhitespace(t *testing.T) {
+	configYAML := `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    ignore:
+      - "  legacy-vpc  "
+      - "  test-*  "
+`
+
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Errorf("Expected 1 update, got %d", len(updates))
+	}
+
+	// Whitespace should be trimmed from ignore patterns
+	if len(updates[0].Ignore) != 2 {
+		t.Fatalf("Ignore patterns count = %d, want 2", len(updates[0].Ignore))
+	}
+	if updates[0].Ignore[0] != "legacy-vpc" {
+		t.Errorf("Ignore[0] = %q, want %q (whitespace should be trimmed)", updates[0].Ignore[0], "legacy-vpc")
+	}
+	if updates[0].Ignore[1] != "test-*" {
+		t.Errorf("Ignore[1] = %q, want %q (whitespace should be trimmed)", updates[0].Ignore[1], "test-*")
+	}
+}
+
+func TestLoadConfigWithEmptyIgnoreField(t *testing.T) {
+	configYAML := `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    ignore: []
+`
+
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Errorf("Expected 1 update, got %d", len(updates))
+	}
+
+	// Empty ignore array should be allowed
+	if len(updates[0].Ignore) != 0 {
+		t.Errorf("Ignore patterns count = %d, want 0", len(updates[0].Ignore))
+	}
+}
+
+func TestLoadConfigWithoutIgnoreField(t *testing.T) {
+	configYAML := `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+`
+
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Errorf("Expected 1 update, got %d", len(updates))
+	}
+
+	// Modules without ignore field should have nil/empty slice
+	if updates[0].Ignore == nil || len(updates[0].Ignore) == 0 {
+		// This is expected behavior
+	} else {
+		t.Errorf("Ignore patterns should be nil or empty, got %v", updates[0].Ignore)
+	}
+}

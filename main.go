@@ -34,6 +34,7 @@ func main() {
 	moduleSource := flag.String("module", "", "Source of the module to update (e.g., 'terraform-aws-modules/vpc/aws')")
 	toVersion := flag.String("to", "", "Desired version number")
 	from := flag.String("from", "", "Optional: only update modules with this current version (e.g., '4.0.0')")
+	ignore := flag.String("ignore", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
 	configFile := flag.String("config", "", "Path to YAML config file with multiple module updates")
 	forceAdd := flag.Bool("force-add", false, "Add version attribute to modules that don't have one (default: skip with warning)")
 	dryRun := flag.Bool("dry-run", false, "Show what changes would be made without actually modifying files")
@@ -54,8 +55,8 @@ func main() {
 
 	if *configFile != "" {
 		// Config file mode
-		if *moduleSource != "" || *toVersion != "" || *from != "" {
-			log.Fatal("Error: Cannot use -config with -module, -to, or -from flags")
+		if *moduleSource != "" || *toVersion != "" || *from != "" || *ignore != "" {
+			log.Fatal("Error: Cannot use -config with -module, -to, -from, or -ignore flags")
 		}
 		if *pattern == "" {
 			log.Fatal("Error: -pattern flag is required")
@@ -71,13 +72,22 @@ func main() {
 		// Single module mode
 		if *pattern == "" || *moduleSource == "" || *toVersion == "" {
 			fmt.Println("Usage:")
-			fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -to <version> [-from <version>]")
+			fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -to <version> [-from <version>] [-ignore <patterns>]")
 			fmt.Println("  Config file:    tf-version-bump -pattern <glob> -config <config-file>")
 			flag.PrintDefaults()
 			os.Exit(1)
 		}
+		// Parse ignore patterns from comma-separated list
+		var ignorePatterns []string
+		if *ignore != "" {
+			for _, p := range strings.Split(*ignore, ",") {
+				if trimmed := strings.TrimSpace(p); trimmed != "" {
+					ignorePatterns = append(ignorePatterns, trimmed)
+				}
+			}
+		}
 		updates = []ModuleUpdate{
-			{Source: *moduleSource, Version: *toVersion, From: *from},
+			{Source: *moduleSource, Version: *toVersion, From: *from, Ignore: ignorePatterns},
 		}
 	}
 
@@ -102,7 +112,7 @@ func main() {
 	for _, file := range files {
 		fileUpdates := 0
 		for _, update := range updates {
-			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, *forceAdd, *dryRun)
+			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, update.Ignore, *forceAdd, *dryRun)
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				continue
@@ -150,19 +160,21 @@ func main() {
 //
 // All modules with the same source attribute will be updated to the same version.
 // If fromVersion is specified, only modules with that current version will be updated.
+// If ignorePatterns is specified, modules with names matching any pattern will be skipped.
 //
 // Parameters:
 //   - filename: Path to the Terraform file to process
 //   - moduleSource: The module source to match (e.g., "terraform-aws-modules/vpc/aws")
 //   - version: The target version to set (e.g., "5.0.0")
 //   - fromVersion: Optional: only update if current version matches this (e.g., "4.0.0")
+//   - ignorePatterns: Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
 //   - forceAdd: If true, add version attribute to modules that don't have one
 //   - dryRun: If true, show what would be changed without modifying files
 //
 // Returns:
 //   - bool: true if at least one module was updated (or would be updated in dry-run mode), false otherwise
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateModuleVersion(filename, moduleSource, version, fromVersion string, forceAdd bool, dryRun bool) (bool, error) {
+func updateModuleVersion(filename, moduleSource, version, fromVersion string, ignorePatterns []string, forceAdd bool, dryRun bool) (bool, error) {
 	// Read the file
 	src, err := os.ReadFile(filename)
 	if err != nil {
@@ -182,6 +194,17 @@ func updateModuleVersion(filename, moduleSource, version, fromVersion string, fo
 	for _, block := range file.Body().Blocks() {
 		// Look for module blocks with matching source
 		if block.Type() == "module" {
+			// Get the module name from block labels
+			moduleName := ""
+			if len(block.Labels()) > 0 {
+				moduleName = block.Labels()[0]
+			}
+
+			// Check if module name matches any ignore pattern
+			if shouldIgnoreModule(moduleName, ignorePatterns) {
+				continue
+			}
+
 			// Get the source attribute
 			sourceAttr := block.Body().GetAttribute("source")
 			if sourceAttr != nil {
@@ -194,10 +217,6 @@ func updateModuleVersion(filename, moduleSource, version, fromVersion string, fo
 
 				// Skip local modules - they don't have versions
 				if isLocalModule(sourceValue) && sourceValue == moduleSource {
-					moduleName := ""
-					if len(block.Labels()) > 0 {
-						moduleName = block.Labels()[0]
-					}
 					fmt.Fprintf(os.Stderr, "Warning: Module %q in %s (source: %q) is a local module and cannot be version-bumped, skipping\n",
 						moduleName, filename, moduleSource)
 					continue
@@ -210,10 +229,6 @@ func updateModuleVersion(filename, moduleSource, version, fromVersion string, fo
 					if versionAttr == nil {
 						if !forceAdd {
 							// Module doesn't have a version attribute - print warning and skip
-							moduleName := ""
-							if len(block.Labels()) > 0 {
-								moduleName = block.Labels()[0]
-							}
 							fmt.Fprintf(os.Stderr, "Warning: Module %q in %s (source: %q) has no version attribute, skipping\n",
 								moduleName, filename, moduleSource)
 							continue
@@ -268,6 +283,92 @@ func isLocalModule(source string) bool {
 	return strings.HasPrefix(source, "./") ||
 		strings.HasPrefix(source, "../") ||
 		strings.HasPrefix(source, "/")
+}
+
+// shouldIgnoreModule checks if a module name matches any of the ignore patterns.
+// Patterns support wildcard matching using '*' for zero or more characters.
+//
+// Parameters:
+//   - moduleName: The name of the module to check
+//   - patterns: List of patterns to match against (e.g., ["vpc", "legacy-*", "*-test"])
+//
+// Returns:
+//   - bool: true if the module name matches any pattern, false otherwise
+//
+// Examples:
+//   - shouldIgnoreModule("vpc", ["vpc"]) returns true (exact match)
+//   - shouldIgnoreModule("legacy-vpc", ["legacy-*"]) returns true (wildcard prefix)
+//   - shouldIgnoreModule("vpc-test", ["*-test"]) returns true (wildcard suffix)
+//   - shouldIgnoreModule("prod-vpc-test", ["*-vpc-*"]) returns true (wildcard both sides)
+//   - shouldIgnoreModule("vpc", ["s3"]) returns false (no match)
+func shouldIgnoreModule(moduleName string, patterns []string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+
+	for _, pattern := range patterns {
+		if matchPattern(moduleName, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchPattern performs wildcard pattern matching.
+// Supports '*' as a wildcard that matches zero or more characters.
+//
+// Parameters:
+//   - name: The string to match
+//   - pattern: The pattern to match against (may contain '*' wildcards)
+//
+// Returns:
+//   - bool: true if the name matches the pattern, false otherwise
+//
+// Examples:
+//   - matchPattern("vpc", "vpc") returns true
+//   - matchPattern("legacy-vpc", "legacy-*") returns true
+//   - matchPattern("vpc-test", "*-test") returns true
+//   - matchPattern("prod-vpc-test", "*-vpc-*") returns true
+//   - matchPattern("vpc", "s3") returns false
+func matchPattern(name, pattern string) bool {
+	// If pattern has no wildcards, do exact match
+	if !strings.Contains(pattern, "*") {
+		return name == pattern
+	}
+
+	// Split pattern by '*' to get the literal parts
+	parts := strings.Split(pattern, "*")
+
+	// Check if name starts with first part (if not empty)
+	if parts[0] != "" && !strings.HasPrefix(name, parts[0]) {
+		return false
+	}
+
+	// Check if name ends with last part (if not empty)
+	if parts[len(parts)-1] != "" && !strings.HasSuffix(name, parts[len(parts)-1]) {
+		return false
+	}
+
+	// For middle parts, check they appear in order
+	pos := 0
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		// Skip the first part check (already done above)
+		if i == 0 {
+			pos = len(part)
+			continue
+		}
+		// Find the part in the remaining string
+		idx := strings.Index(name[pos:], part)
+		if idx == -1 {
+			return false
+		}
+		pos += idx + len(part)
+	}
+
+	return true
 }
 
 // trimQuotes removes surrounding single or double quotes from a string.

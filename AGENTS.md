@@ -22,6 +22,7 @@ This document provides comprehensive information for AI agents and developers wo
 - **Modules with subpaths**: `terraform-aws-modules/iam/aws//modules/iam-user`
 - **Git-based modules**: `git::https://github.com/example/terraform-module.git`
 - **Local modules**: Detected and skipped with warnings (by design)
+- **Selective updates**: Ignore specific modules by name or pattern using wildcard matching
 
 ### License
 
@@ -242,9 +243,10 @@ package main
 
 // ModuleUpdate struct - represents a single module update
 type ModuleUpdate struct {
-    Source  string // Module source (YAML: "source")
-    Version string // Target version (YAML: "version")
-    From    string // Optional: current version filter (YAML: "from")
+    Source  string   // Module source (YAML: "source")
+    Version string   // Target version (YAML: "version")
+    From    string   // Optional: current version filter (YAML: "from")
+    Ignore  []string // Optional: module names/patterns to ignore (YAML: "ignore")
 }
 
 // Config struct - represents YAML configuration file structure
@@ -256,6 +258,8 @@ type Config struct {
 // - main()                  - CLI argument parsing, orchestration
 // - loadConfig()            - Load and validate YAML configuration
 // - updateModuleVersion()   - Core: parse HCL, update versions, write file
+// - shouldIgnoreModule()    - Check if module name matches ignore patterns
+// - matchPattern()          - Wildcard pattern matching (supports *)
 // - isLocalModule()         - Detect local vs remote modules
 // - trimQuotes()            - Remove surrounding quotes from strings
 ```
@@ -331,6 +335,7 @@ tf-version-bump \
     -module "terraform-aws-modules/vpc/aws" \
     -to "5.0.0" \
     [-from "4.0.0"] \
+    [-ignore "legacy-*,test-*"] \
     [-force-add]
 ```
 
@@ -371,11 +376,13 @@ Output: Updated file, Update count, Warnings
 
 ### Module Matching Strategy
 
-1. **Source extraction**: Get source attribute from module block
-2. **Quote trimming**: Remove surrounding quotes
-3. **Local module detection**: Skip if source starts with `./`, `../`, or `/`
-4. **Version filtering**: If `-from` specified, only update if current version matches
-5. **Version attribute handling**: 
+1. **Module name extraction**: Get module name from block labels
+2. **Ignore pattern matching**: Skip if module name matches any ignore pattern (exact or wildcard)
+3. **Source extraction**: Get source attribute from module block
+4. **Quote trimming**: Remove surrounding quotes
+5. **Local module detection**: Skip if source starts with `./`, `../`, or `/`
+6. **Version filtering**: If `-from` specified, only update if current version matches
+7. **Version attribute handling**:
    - If exists: update value
    - If missing: warn (or add with `-force-add`)
 
@@ -526,6 +533,7 @@ Detailed instructions for developers covering:
 - Git source modules
 
 **config-production.yml**: Production-ready config with 10 AWS modules
+**config-with-ignore.yml**: Examples demonstrating the ignore feature with various wildcard patterns
 
 ### Example Terraform Files
 
@@ -704,6 +712,25 @@ done
 
 # Force-add versions
 ./tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -force-add
+
+# Ignore specific modules using patterns
+./tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -ignore "legacy-vpc,test-*"
+```
+
+### Ignore Pattern Matching
+
+The tool supports wildcard pattern matching for ignoring specific modules:
+
+- **Exact match**: `"vpc"` matches only module named "vpc"
+- **Prefix wildcard**: `"legacy-*"` matches "legacy-vpc", "legacy-network", etc.
+- **Suffix wildcard**: `"*-test"` matches "vpc-test", "network-test", etc.
+- **Both sides**: `"*-vpc-*"` matches "prod-vpc-test", "staging-vpc-1", etc.
+- **Match all**: `"*"` matches all modules
+
+Pattern matching is implemented in the `matchPattern()` function which:
+- Handles exact matches when no wildcards present
+- Checks prefix/suffix for single wildcard
+- Processes multiple wildcards by splitting and matching parts in order
 ```
 
 ### Key Files to Know
