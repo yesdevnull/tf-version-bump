@@ -1608,6 +1608,80 @@ func TestShouldIgnoreModule(t *testing.T) {
 	}
 }
 
+// Helper functions for TestUpdateModuleVersionWithIgnore
+
+// checkModuleVersions checks if specific modules have been updated to the expected version
+func checkModuleVersions(content string, modules map[string]bool) bool {
+	lines := strings.Split(content, "\n")
+	moduleStates := make(map[string]bool)
+	currentModule := ""
+
+	for _, line := range lines {
+		// Detect which module we're in
+		for moduleName := range modules {
+			if strings.Contains(line, fmt.Sprintf(`module "%s"`, moduleName)) {
+				currentModule = moduleName
+				break
+			}
+		}
+
+		// Check version lines
+		if currentModule != "" && strings.Contains(line, "version") && strings.Contains(line, "5.0.0") {
+			moduleStates[currentModule] = true
+		}
+	}
+
+	// Verify expectations match reality
+	for moduleName, shouldBeUpdated := range modules {
+		wasUpdated := moduleStates[moduleName]
+		if shouldBeUpdated != wasUpdated {
+			return false
+		}
+	}
+	return true
+}
+
+// checkTwoModuleUpdate checks if one module was updated and another was not
+func checkTwoModuleUpdate(content, updatedModule, notUpdatedModule string) bool {
+	lines := strings.Split(content, "\n")
+	updatedFound := false
+	notUpdatedFound := false
+	inUpdated := false
+	inNotUpdated := false
+
+	for _, line := range lines {
+		if strings.Contains(line, fmt.Sprintf(`module "%s"`, updatedModule)) {
+			inUpdated = true
+			inNotUpdated = false
+		} else if strings.Contains(line, fmt.Sprintf(`module "%s"`, notUpdatedModule)) {
+			inNotUpdated = true
+			inUpdated = false
+		}
+
+		if strings.Contains(line, "version") {
+			if inUpdated && strings.Contains(line, "5.0.0") {
+				updatedFound = true
+			}
+			if inNotUpdated && strings.Contains(line, "5.0.0") {
+				notUpdatedFound = true
+			}
+		}
+	}
+
+	return updatedFound && !notUpdatedFound
+}
+
+// checkNoVersion checks that a specific version string does not appear in content
+func checkNoVersion(content, version string) bool {
+	return !strings.Contains(content, fmt.Sprintf(`version = "%s"`, version))
+}
+
+// checkVersionCount counts occurrences of a specific version
+func checkVersionCount(content, version string, expectedCount int) bool {
+	count := strings.Count(content, fmt.Sprintf(`version = "%s"`, version))
+	return count == expectedCount
+}
+
 func TestUpdateModuleVersionWithIgnore(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -1636,36 +1710,7 @@ module "vpc-prod" {
 			expectUpdate:   true,
 			expectError:    false,
 			checkContent: func(content string) bool {
-				// vpc should still have old version, vpc-prod should be updated
-				lines := strings.Split(content, "\n")
-				vpcUpdated := false
-				vpcProdUpdated := false
-				inVpc := false
-				inVpcProd := false
-
-				for _, line := range lines {
-					if strings.Contains(line, `module "vpc"`) && !strings.Contains(line, "vpc-prod") {
-						inVpc = true
-						inVpcProd = false
-					} else if strings.Contains(line, `module "vpc-prod"`) {
-						inVpcProd = true
-						inVpc = false
-					}
-
-					if strings.Contains(line, "version") {
-						if inVpc && strings.Contains(line, "3.14.0") {
-							vpcUpdated = false
-						} else if inVpc && strings.Contains(line, "5.0.0") {
-							vpcUpdated = true
-						}
-
-						if inVpcProd && strings.Contains(line, "5.0.0") {
-							vpcProdUpdated = true
-						}
-					}
-				}
-
-				return !vpcUpdated && vpcProdUpdated
+				return checkTwoModuleUpdate(content, "vpc-prod", "vpc")
 			},
 		},
 		{
@@ -1685,33 +1730,7 @@ module "vpc-prod" {
 			expectUpdate:   true,
 			expectError:    false,
 			checkContent: func(content string) bool {
-				// legacy-vpc should not be updated, vpc-prod should be updated
-				lines := strings.Split(content, "\n")
-				legacyUpdated := false
-				vpcProdUpdated := false
-				inLegacy := false
-				inVpcProd := false
-
-				for _, line := range lines {
-					if strings.Contains(line, `module "legacy-vpc"`) {
-						inLegacy = true
-						inVpcProd = false
-					} else if strings.Contains(line, `module "vpc-prod"`) {
-						inVpcProd = true
-						inLegacy = false
-					}
-
-					if strings.Contains(line, "version") {
-						if inLegacy && strings.Contains(line, "5.0.0") {
-							legacyUpdated = true
-						}
-						if inVpcProd && strings.Contains(line, "5.0.0") {
-							vpcProdUpdated = true
-						}
-					}
-				}
-
-				return !legacyUpdated && vpcProdUpdated
+				return checkTwoModuleUpdate(content, "vpc-prod", "legacy-vpc")
 			},
 		},
 		{
@@ -1731,33 +1750,7 @@ module "vpc-prod" {
 			expectUpdate:   true,
 			expectError:    false,
 			checkContent: func(content string) bool {
-				// vpc-test should not be updated, vpc-prod should be updated
-				lines := strings.Split(content, "\n")
-				testUpdated := false
-				prodUpdated := false
-				inTest := false
-				inProd := false
-
-				for _, line := range lines {
-					if strings.Contains(line, `module "vpc-test"`) {
-						inTest = true
-						inProd = false
-					} else if strings.Contains(line, `module "vpc-prod"`) {
-						inProd = true
-						inTest = false
-					}
-
-					if strings.Contains(line, "version") {
-						if inTest && strings.Contains(line, "5.0.0") {
-							testUpdated = true
-						}
-						if inProd && strings.Contains(line, "5.0.0") {
-							prodUpdated = true
-						}
-					}
-				}
-
-				return !testUpdated && prodUpdated
+				return checkTwoModuleUpdate(content, "vpc-prod", "vpc-test")
 			},
 		},
 		{
@@ -1777,7 +1770,7 @@ module "vpc2" {
 			expectUpdate:   false,
 			expectError:    false,
 			checkContent: func(content string) bool {
-				return !strings.Contains(content, `version = "5.0.0"`)
+				return checkNoVersion(content, "5.0.0")
 			},
 		},
 		{
@@ -1803,43 +1796,11 @@ module "vpc-prod" {
 			expectError:    false,
 			checkContent: func(content string) bool {
 				// Only vpc-prod should be updated
-				lines := strings.Split(content, "\n")
-				legacyUpdated := false
-				testUpdated := false
-				prodUpdated := false
-				inLegacy := false
-				inTest := false
-				inProd := false
-
-				for _, line := range lines {
-					if strings.Contains(line, `module "legacy-vpc"`) {
-						inLegacy = true
-						inTest = false
-						inProd = false
-					} else if strings.Contains(line, `module "vpc-test"`) {
-						inTest = true
-						inLegacy = false
-						inProd = false
-					} else if strings.Contains(line, `module "vpc-prod"`) {
-						inProd = true
-						inLegacy = false
-						inTest = false
-					}
-
-					if strings.Contains(line, "version") {
-						if inLegacy && strings.Contains(line, "5.0.0") {
-							legacyUpdated = true
-						}
-						if inTest && strings.Contains(line, "5.0.0") {
-							testUpdated = true
-						}
-						if inProd && strings.Contains(line, "5.0.0") {
-							prodUpdated = true
-						}
-					}
-				}
-
-				return !legacyUpdated && !testUpdated && prodUpdated
+				return checkModuleVersions(content, map[string]bool{
+					"legacy-vpc": false,
+					"vpc-test":   false,
+					"vpc-prod":   true,
+				})
 			},
 		},
 		{
@@ -1859,15 +1820,7 @@ module "vpc2" {
 			expectUpdate:   true,
 			expectError:    false,
 			checkContent: func(content string) bool {
-				// Both should be updated
-				lines := strings.Split(content, "\n")
-				count := 0
-				for _, line := range lines {
-					if strings.Contains(line, `version = "5.0.0"`) {
-						count++
-					}
-				}
-				return count == 2
+				return checkVersionCount(content, "5.0.0", 2)
 			},
 		},
 	}
@@ -1879,12 +1832,18 @@ module "vpc2" {
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
-			defer os.Remove(tmpfile.Name())
+			defer func() {
+				if err := os.Remove(tmpfile.Name()); err != nil {
+					t.Logf("Warning: failed to remove temp file: %v", err)
+				}
+			}()
 
 			if _, err := tmpfile.WriteString(tt.inputContent); err != nil {
 				t.Fatalf("Failed to write to temp file: %v", err)
 			}
-			tmpfile.Close()
+			if err := tmpfile.Close(); err != nil {
+				t.Fatalf("Failed to close temp file: %v", err)
+			}
 
 			// Run updateModuleVersion
 			updated, err := updateModuleVersion(tmpfile.Name(), tt.moduleSource, tt.version, "", tt.ignorePatterns, false, false)

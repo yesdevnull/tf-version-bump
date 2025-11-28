@@ -1094,10 +1094,8 @@ func TestLoadConfigWithoutIgnoreField(t *testing.T) {
 		t.Errorf("Expected 1 update, got %d", len(updates))
 	}
 
-	// Modules without ignore field should have nil/empty slice
-	if updates[0].Ignore == nil || len(updates[0].Ignore) == 0 {
-		// This is expected behavior
-	} else {
-		t.Errorf("Ignore patterns should be nil or empty, got %v", updates[0].Ignore)
+	// Modules without ignore field should have empty slice
+	if len(updates[0].Ignore) != 0 {
+		t.Errorf("Ignore patterns should be empty, got %v", updates[0].Ignore)
 	}
 }
