@@ -204,11 +204,11 @@ module "s3" {
 
 	// Apply updates
 	for _, update := range updates {
-		_, err := updateModuleVersion(tf1File, update.Source, update.Version, update.From, nil, false, false)
+		_, err := updateModuleVersion(tf1File, update.Source, update.Version, update.From, update.Ignore, false, false)
 		if err != nil {
 			t.Errorf("Failed to update %s: %v", tf1File, err)
 		}
-		_, err = updateModuleVersion(tf2File, update.Source, update.Version, update.From, nil, false, false)
+		_, err = updateModuleVersion(tf2File, update.Source, update.Version, update.From, update.Ignore, false, false)
 		if err != nil {
 			t.Errorf("Failed to update %s: %v", tf2File, err)
 		}
@@ -603,7 +603,7 @@ module "iam" {
 
 	// Apply updates
 	for _, update := range updates {
-		_, err := updateModuleVersion(tfFile, update.Source, update.Version, update.From, nil, false, false)
+		_, err := updateModuleVersion(tfFile, update.Source, update.Version, update.From, update.Ignore, false, false)
 		if err != nil {
 			t.Fatalf("Failed to update module: %v", err)
 		}
