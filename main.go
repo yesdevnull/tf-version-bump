@@ -360,6 +360,10 @@ func matchPattern(name, pattern string) bool {
 			pos = len(part)
 			continue
 		}
+		// Skip the last part check (already done above)
+		if i == len(parts)-1 {
+			break
+		}
 		// Find the part in the remaining string
 		idx := strings.Index(name[pos:], part)
 		if idx == -1 {
