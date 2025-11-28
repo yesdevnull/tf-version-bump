@@ -205,7 +205,7 @@ func updateModuleVersion(filename, moduleSource, version, fromVersion string, ig
 			// Check if module name matches any ignore pattern
 			if shouldIgnoreModule(moduleName, ignorePatterns) {
 				if verbose {
-					fmt.Printf("  ⊗ Skipped module %q in %s (matches ignore pattern, source: %q)\n", moduleName, filename, moduleSource)
+					fmt.Printf("  ⊗ Skipped module %q in %s (matches ignore pattern)\n", moduleName, filename)
 				}
 				continue
 			}
