@@ -12,9 +12,10 @@ import (
 // It is used both for single module updates via CLI flags and for batch
 // updates from YAML configuration files.
 type ModuleUpdate struct {
-	Source  string `yaml:"source"`  // Module source (e.g., "terraform-aws-modules/vpc/aws")
-	Version string `yaml:"version"` // Target version (e.g., "5.0.0")
-	From    string `yaml:"from"`    // Optional: only update if current version matches this (e.g., "4.0.0")
+	Source  string   `yaml:"source"`  // Module source (e.g., "terraform-aws-modules/vpc/aws")
+	Version string   `yaml:"version"` // Target version (e.g., "5.0.0")
+	From    string   `yaml:"from"`    // Optional: only update if current version matches this (e.g., "4.0.0")
+	Ignore  []string `yaml:"ignore"`  // Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
 }
 
 // Config represents the structure of a YAML configuration file for batch updates.
@@ -26,6 +27,9 @@ type ModuleUpdate struct {
 //	  - source: "terraform-aws-modules/vpc/aws"
 //	    version: "5.0.0"
 //	    from: "4.0.0"  # Optional: only update if current version is 4.0.0
+//	    ignore:        # Optional: module names or patterns to ignore
+//	      - "legacy-vpc"
+//	      - "test-*"
 //	  - source: "terraform-aws-modules/s3-bucket/aws"
 //	    version: "4.0.0"
 type Config struct {
@@ -58,6 +62,11 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 		config.Modules[i].Source = strings.TrimSpace(module.Source)
 		config.Modules[i].Version = strings.TrimSpace(module.Version)
 		config.Modules[i].From = strings.TrimSpace(module.From)
+
+		// Trim whitespace from ignore patterns
+		for j, pattern := range module.Ignore {
+			config.Modules[i].Ignore[j] = strings.TrimSpace(pattern)
+		}
 
 		if config.Modules[i].Source == "" {
 			return nil, fmt.Errorf("module at index %d is missing 'source' field", i)

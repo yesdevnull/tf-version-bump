@@ -10,6 +10,7 @@ A CLI tool written in Go that updates Terraform module versions across multiple 
 - Update module versions by matching on module source
 - Process multiple files using glob patterns
 - **Batch updates** via YAML configuration files
+- **Selective updates** with ignore patterns (wildcard support)
 - Preserves formatting and comments in Terraform files
 - Safe and reliable HCL parsing and writing
 - Comprehensive test suite
@@ -109,6 +110,7 @@ tf-version-bump -pattern <glob-pattern> -module <module-source> -to <version>
 - `-module`: Source of the module to update (e.g., `terraform-aws-modules/vpc/aws`)
 - `-to`: Desired version number
 - `-from`: (Optional) Only update modules with this current version (e.g., `4.0.0`)
+- `-ignore`: (Optional) Comma-separated list of module names or patterns to ignore (e.g., `vpc,legacy-*,*-test`)
 - `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
 - `-dry-run`: (Optional) Show what changes would be made without actually modifying files
 
@@ -143,6 +145,16 @@ Update only modules currently at version `3.14.0` to version `5.0.0`:
 ```bash
 tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -from "3.14.0"
 ```
+
+Update all VPC modules except specific ones using ignore patterns:
+
+```bash
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -ignore "legacy-vpc,test-*"
+```
+
+This will update all VPC modules to version 5.0.0 except:
+- The module named exactly `legacy-vpc`
+- Any modules starting with `test-` (like `test-vpc`, `test-network`, etc.)
 
 Update Git-based modules:
 
@@ -184,17 +196,29 @@ modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
     from: "3.14.0"  # Optional: only update if current version is 3.14.0
+    ignore:         # Optional: module names or patterns to ignore
+      - "legacy-vpc"
+      - "test-*"
   - source: "terraform-aws-modules/s3-bucket/aws"
     version: "4.0.0"
   - source: "terraform-aws-modules/security-group/aws"
     version: "5.1.0"
     from: "4.0.0"   # Optional: only update from version 4.0.0
+    ignore:
+      - "*-deprecated"
 ```
 
 Each module entry supports the following fields:
 - `source` (required): Module source identifier
 - `version` (required): Target version to update to
 - `from` (optional): Only update modules currently at this version
+- `ignore` (optional): List of module names or wildcard patterns to skip
+  - Supports exact matches: `"vpc"` matches only a module named "vpc"
+  - Supports wildcards with `*`:
+    - Prefix: `"legacy-*"` matches `legacy-vpc`, `legacy-network`, etc.
+    - Suffix: `"*-test"` matches `vpc-test`, `network-test`, etc.
+    - Both: `"*-vpc-*"` matches `prod-vpc-test`, `staging-vpc-1`, etc.
+    - Any: `"*"` matches all modules (effectively disables updates for this source)
 
 **Note about local modules:** Local modules (sources starting with `./`, `../`, or `/`) are not supported and will be skipped with a warning. The tool only updates registry modules and remote sources.
 
@@ -225,6 +249,7 @@ See the `examples/` directory for sample configuration files:
 - `config-basic.yml` - Simple configuration with a few modules
 - `config-advanced.yml` - Advanced configuration showing various module types (subpaths, Git sources)
 - `config-production.yml` - Production-ready configuration with common AWS modules
+- `config-with-ignore.yml` - Examples of using the ignore feature with various patterns
 
 ## How it Works
 
@@ -232,6 +257,7 @@ See the `examples/` directory for sample configuration files:
 2. For each file, it:
    - Parses the HCL structure using `hashicorp/hcl/v2`
    - Searches for `module` blocks with the specified source attribute
+   - Checks if the module name matches any ignore patterns and skips if matched
    - Skips local modules (sources starting with `./`, `../`, or `/`) with a warning
    - If the `-from` flag is specified, only updates modules with matching current version
    - Updates the `version` attribute to the desired version
