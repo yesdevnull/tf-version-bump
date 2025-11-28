@@ -38,6 +38,7 @@ func main() {
 	configFile := flag.String("config", "", "Path to YAML config file with multiple module updates")
 	forceAdd := flag.Bool("force-add", false, "Add version attribute to modules that don't have one (default: skip with warning)")
 	dryRun := flag.Bool("dry-run", false, "Show what changes would be made without actually modifying files")
+	verbose := flag.Bool("verbose", false, "Show verbose output including skipped modules")
 	showVersion := flag.Bool("version", false, "Print version information and exit")
 	flag.Parse()
 
@@ -112,7 +113,7 @@ func main() {
 	for _, file := range files {
 		fileUpdates := 0
 		for _, update := range updates {
-			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, update.Ignore, *forceAdd, *dryRun)
+			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, update.Ignore, *forceAdd, *dryRun, *verbose)
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				continue
@@ -170,11 +171,12 @@ func main() {
 //   - ignorePatterns: Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
 //   - forceAdd: If true, add version attribute to modules that don't have one
 //   - dryRun: If true, show what would be changed without modifying files
+//   - verbose: If true, print informational messages about skipped modules
 //
 // Returns:
 //   - bool: true if at least one module was updated (or would be updated in dry-run mode), false otherwise
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateModuleVersion(filename, moduleSource, version, fromVersion string, ignorePatterns []string, forceAdd bool, dryRun bool) (bool, error) {
+func updateModuleVersion(filename, moduleSource, version, fromVersion string, ignorePatterns []string, forceAdd bool, dryRun bool, verbose bool) (bool, error) {
 	// Read the file
 	src, err := os.ReadFile(filename)
 	if err != nil {
@@ -202,6 +204,9 @@ func updateModuleVersion(filename, moduleSource, version, fromVersion string, ig
 
 			// Check if module name matches any ignore pattern
 			if shouldIgnoreModule(moduleName, ignorePatterns) {
+				if verbose {
+					fmt.Printf("  ⊗ Skipped module %q in %s (matches ignore pattern, source: %q)\n", moduleName, filename, moduleSource)
+				}
 				continue
 			}
 
@@ -242,6 +247,9 @@ func updateModuleVersion(filename, moduleSource, version, fromVersion string, ig
 
 						if currentVersion != fromVersion {
 							// Current version doesn't match fromVersion, skip this module
+							if verbose {
+								fmt.Printf("  ⊗ Skipped module %q in %s (current version %q does not match 'from' filter %q)\n", moduleName, filename, currentVersion, fromVersion)
+							}
 							continue
 						}
 					}
