@@ -63,10 +63,14 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 		config.Modules[i].Version = strings.TrimSpace(module.Version)
 		config.Modules[i].From = strings.TrimSpace(module.From)
 
-		// Trim whitespace from ignore patterns
-		for j, pattern := range module.Ignore {
-			config.Modules[i].Ignore[j] = strings.TrimSpace(pattern)
+		// Trim whitespace from ignore patterns and filter out empty ones
+		var filteredIgnore []string
+		for _, pattern := range module.Ignore {
+			if trimmed := strings.TrimSpace(pattern); trimmed != "" {
+				filteredIgnore = append(filteredIgnore, trimmed)
+			}
 		}
+		config.Modules[i].Ignore = filteredIgnore
 
 		if config.Modules[i].Source == "" {
 			return nil, fmt.Errorf("module at index %d is missing 'source' field", i)

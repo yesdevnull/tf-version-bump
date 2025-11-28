@@ -1041,6 +1041,47 @@ func TestLoadConfigWithIgnoreFieldWhitespace(t *testing.T) {
 	}
 }
 
+func TestLoadConfigWithWhitespaceOnlyIgnorePatterns(t *testing.T) {
+	configYAML := `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    ignore:
+      - "legacy-vpc"
+      - "   "
+      - "test-*"
+      - ""
+      - "  	"
+`
+
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Errorf("Expected 1 update, got %d", len(updates))
+	}
+
+	// Whitespace-only and empty patterns should be filtered out
+	if len(updates[0].Ignore) != 2 {
+		t.Fatalf("Ignore patterns count = %d, want 2 (empty patterns should be filtered out)", len(updates[0].Ignore))
+	}
+	if updates[0].Ignore[0] != "legacy-vpc" {
+		t.Errorf("Ignore[0] = %q, want %q", updates[0].Ignore[0], "legacy-vpc")
+	}
+	if updates[0].Ignore[1] != "test-*" {
+		t.Errorf("Ignore[1] = %q, want %q", updates[0].Ignore[1], "test-*")
+	}
+}
+
 func TestLoadConfigWithEmptyIgnoreField(t *testing.T) {
 	configYAML := `modules:
   - source: "terraform-aws-modules/vpc/aws"
