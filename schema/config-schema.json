@@ -56,10 +56,9 @@
           },
           "ignore": {
             "type": "array",
-            "description": "Optional: List of module names or patterns to ignore. Supports wildcard matching using '*' for zero or more characters",
+            "description": "Optional: List of module names or patterns to ignore. Supports wildcard matching using '*' for one or more characters",
             "items": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             },
             "examples": [
               ["vpc", "legacy-*"],

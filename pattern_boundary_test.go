@@ -57,18 +57,12 @@ func TestPatternMatchingBoundaryConditions(t *testing.T) {
 		{"middle parts order matters", "a-x-y-z", "a-*-y-*", true},
 	}
 
-	failed := 0
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := matchPattern(tt.input, tt.pattern)
 			if result != tt.expected {
 				t.Errorf("matchPattern(%q, %q) = %v, want %v", tt.input, tt.pattern, result, tt.expected)
-				failed++
 			}
 		})
-	}
-
-	if failed == 0 {
-		t.Logf("All %d boundary condition tests passed!", len(tests))
 	}
 }
