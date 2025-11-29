@@ -58,6 +58,68 @@ release:
   draft: false
   prerelease: auto
   name_template: "{{ .ProjectName }} v{{ .Version }}"
+  header: |
+    ## Installation
+
+    Pre-built binaries are provided for Linux, macOS, and Windows (amd64 and arm64 architectures).
+
+    ### Quick Install (Linux amd64)
+
+    ```bash
+    # Download the binary
+    curl -LO https://github.com/yesdevnull/{{ .ProjectName }}/releases/download/v{{ .Version }}/{{ .ProjectName }}_{{ .Version }}_linux_x86_64.tar.gz
+
+    # Extract
+    tar -xzf {{ .ProjectName }}_{{ .Version }}_linux_x86_64.tar.gz
+
+    # Move to PATH
+    sudo mv {{ .ProjectName }} /usr/local/bin/
+
+    # Make executable
+    sudo chmod +x /usr/local/bin/{{ .ProjectName }}
+    ```
+
+    ### Verify Checksums
+
+    ```bash
+    # Download checksums
+    curl -LO https://github.com/yesdevnull/{{ .ProjectName }}/releases/download/v{{ .Version }}/{{ .ProjectName }}-v{{ .Version }}.checksums.txt
+
+    # Verify
+    sha256sum -c {{ .ProjectName }}-v{{ .Version }}.checksums.txt --ignore-missing
+    ```
+
+    ### Verify SLSA Provenance (Recommended)
+
+    This release includes SLSA Level 3 provenance attestations for supply chain security.
+
+    ```bash
+    # Install slsa-verifier
+    go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@latest
+
+    # Download provenance
+    curl -LO https://github.com/yesdevnull/{{ .ProjectName }}/releases/download/v{{ .Version }}/{{ .ProjectName }}-v{{ .Version }}.intoto.jsonl
+
+    # Verify artifact
+    slsa-verifier verify-artifact {{ .ProjectName }}_{{ .Version }}_linux_x86_64.tar.gz \
+      --provenance-path {{ .ProjectName }}-v{{ .Version }}.intoto.jsonl \
+      --source-uri github.com/yesdevnull/{{ .ProjectName }} \
+      --source-tag v{{ .Version }}
+    ```
+
+    ### All Available Binaries
+
+    See the **Assets** section below for binaries for all supported platforms:
+    - **Linux**: `{{ .ProjectName }}_{{ .Version }}_linux_x86_64.tar.gz`, `{{ .ProjectName }}_{{ .Version }}_linux_arm64.tar.gz`
+    - **macOS**: `{{ .ProjectName }}_{{ .Version }}_darwin_x86_64.tar.gz`, `{{ .ProjectName }}_{{ .Version }}_darwin_arm64.tar.gz`
+    - **Windows**: `{{ .ProjectName }}_{{ .Version }}_windows_x86_64.zip`, `{{ .ProjectName }}_{{ .Version }}_windows_arm64.zip`
+    - **Linux Packages**: `.deb` and `.rpm` packages for Debian/Ubuntu and RHEL/Fedora
+
+    ### Alternative: Install via Go
+
+    ```bash
+    go install github.com/yesdevnull/{{ .ProjectName }}@v{{ .Version }}
+    ```
 
 nfpms:
   - package_name: tf-version-bump
