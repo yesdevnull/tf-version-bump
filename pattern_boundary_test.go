@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPatternMatchingBoundaryConditions(t *testing.T) {
 	tests := []struct {
@@ -15,7 +18,7 @@ func TestPatternMatchingBoundaryConditions(t *testing.T) {
 		{"many wildcards", "abc", "a*****c", true},
 
 		// Very long inputs
-		{"long string match", string(make([]byte, 1000)), "*", true},
+		{"long string match", strings.Repeat("a", 1000), "*", true},
 
 		// All wildcards
 		{"just wildcard", "anything", "*", true},

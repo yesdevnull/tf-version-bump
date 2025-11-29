@@ -209,14 +209,6 @@ func updateModuleVersion(filename, moduleSource, version, fromVersion string, ig
 				moduleName = block.Labels()[0]
 			}
 
-			// Check if module name matches any ignore pattern
-			if shouldIgnoreModule(moduleName, ignorePatterns) {
-				if verbose {
-					fmt.Printf("  ⊗ Skipped module %q in %s (matches ignore pattern)\n", moduleName, filename)
-				}
-				continue
-			}
-
 			// Get the source attribute
 			sourceAttr := block.Body().GetAttribute("source")
 			if sourceAttr != nil {
@@ -236,6 +228,14 @@ func updateModuleVersion(filename, moduleSource, version, fromVersion string, ig
 
 				// Check if this module's source matches
 				if sourceValue == moduleSource {
+					// Check if module name matches any ignore pattern
+					if shouldIgnoreModule(moduleName, ignorePatterns) {
+						if verbose {
+							fmt.Printf("  ⊗ Skipped module %q in %s (matches ignore pattern)\n", moduleName, filename)
+						}
+						continue
+					}
+
 					// Check if the module has a version attribute
 					versionAttr := block.Body().GetAttribute("version")
 					if versionAttr == nil {
