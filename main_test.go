@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclwrite"
 )
 
 func TestTrimQuotes(t *testing.T) {
@@ -1631,27 +1634,40 @@ func TestShouldIgnoreModule(t *testing.T) {
 
 // checkModuleVersions checks if specific modules have been updated to the expected version
 func checkModuleVersions(content string, modules map[string]bool) bool {
-	lines := strings.Split(content, "\n")
+	// Parse HCL content using the same parser as production code
+	file, diags := hclwrite.ParseConfig([]byte(content), "", hcl.InitialPos)
+	if diags.HasErrors() {
+		return false
+	}
+
 	moduleStates := make(map[string]bool)
-	currentModule := ""
 
-	for _, line := range lines {
-		// Reset when we see a closing brace at the start
-		if strings.HasPrefix(strings.TrimSpace(line), "}") {
-			currentModule = ""
+	// Iterate through all blocks in the file
+	for _, block := range file.Body().Blocks() {
+		if block.Type() != "module" {
+			continue
 		}
 
-		// Detect which module we're in
-		for moduleName := range modules {
-			if strings.Contains(line, fmt.Sprintf(`module "%s"`, moduleName)) {
-				currentModule = moduleName
-				break
+		// Get module name from labels
+		labels := block.Labels()
+		if len(labels) == 0 {
+			continue
+		}
+		moduleName := labels[0]
+
+		// Check if this module is in our expected set
+		if _, exists := modules[moduleName]; !exists {
+			continue
+		}
+
+		// Check if version attribute is set to "5.0.0"
+		versionAttr := block.Body().GetAttribute("version")
+		if versionAttr != nil {
+			raw := string(versionAttr.Expr().BuildTokens(nil).Bytes())
+			versionValue := trimQuotes(strings.TrimSpace(raw))
+			if versionValue == "5.0.0" {
+				moduleStates[moduleName] = true
 			}
-		}
-
-		// Check version lines
-		if currentModule != "" && strings.Contains(line, "version") && strings.Contains(line, "5.0.0") {
-			moduleStates[currentModule] = true
 		}
 	}
 
@@ -1667,32 +1683,37 @@ func checkModuleVersions(content string, modules map[string]bool) bool {
 
 // checkTwoModuleUpdate checks if one module was updated and another was not
 func checkTwoModuleUpdate(content, updatedModule, notUpdatedModule string) bool {
-	lines := strings.Split(content, "\n")
+	// Parse HCL content using the same parser as production code
+	file, diags := hclwrite.ParseConfig([]byte(content), "", hcl.InitialPos)
+	if diags.HasErrors() {
+		return false
+	}
+
 	updatedFound := false
 	notUpdatedFound := false
-	inUpdated := false
-	inNotUpdated := false
 
-	for _, line := range lines {
-		// Reset when we see a closing brace at the start
-		if strings.HasPrefix(strings.TrimSpace(line), "}") {
-			inUpdated = false
-			inNotUpdated = false
+	// Iterate through all blocks in the file
+	for _, block := range file.Body().Blocks() {
+		if block.Type() != "module" {
+			continue
 		}
 
-		if strings.Contains(line, fmt.Sprintf(`module "%s"`, updatedModule)) {
-			inUpdated = true
-			inNotUpdated = false
-		} else if strings.Contains(line, fmt.Sprintf(`module "%s"`, notUpdatedModule)) {
-			inNotUpdated = true
-			inUpdated = false
+		// Get module name from labels
+		labels := block.Labels()
+		if len(labels) == 0 {
+			continue
 		}
+		moduleName := labels[0]
 
-		if strings.Contains(line, "version") {
-			if inUpdated && strings.Contains(line, "5.0.0") {
+		// Check version attribute
+		versionAttr := block.Body().GetAttribute("version")
+		if versionAttr != nil {
+			raw := string(versionAttr.Expr().BuildTokens(nil).Bytes())
+			versionValue := trimQuotes(strings.TrimSpace(raw))
+			if moduleName == updatedModule && versionValue == "5.0.0" {
 				updatedFound = true
 			}
-			if inNotUpdated && strings.Contains(line, "5.0.0") {
+			if moduleName == notUpdatedModule && versionValue == "5.0.0" {
 				notUpdatedFound = true
 			}
 		}
@@ -1703,12 +1724,59 @@ func checkTwoModuleUpdate(content, updatedModule, notUpdatedModule string) bool 
 
 // checkNoVersion checks that a specific version string does not appear in content
 func checkNoVersion(content, version string) bool {
-	return !strings.Contains(content, fmt.Sprintf(`version = "%s"`, version))
+	// Parse HCL content using the same parser as production code
+	file, diags := hclwrite.ParseConfig([]byte(content), "", hcl.InitialPos)
+	if diags.HasErrors() {
+		return false
+	}
+
+	// Iterate through all blocks in the file
+	for _, block := range file.Body().Blocks() {
+		if block.Type() != "module" {
+			continue
+		}
+
+		// Check version attribute
+		versionAttr := block.Body().GetAttribute("version")
+		if versionAttr != nil {
+			raw := string(versionAttr.Expr().BuildTokens(nil).Bytes())
+			versionValue := trimQuotes(strings.TrimSpace(raw))
+			if versionValue == version {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 // checkVersionCount counts occurrences of a specific version
 func checkVersionCount(content, version string, expectedCount int) bool {
-	count := strings.Count(content, fmt.Sprintf(`version = "%s"`, version))
+	// Parse HCL content using the same parser as production code
+	file, diags := hclwrite.ParseConfig([]byte(content), "", hcl.InitialPos)
+	if diags.HasErrors() {
+		return false
+	}
+
+	count := 0
+
+	// Iterate through all blocks in the file
+	for _, block := range file.Body().Blocks() {
+		if block.Type() != "module" {
+			continue
+		}
+
+		// Check version attribute
+		versionAttr := block.Body().GetAttribute("version")
+		if versionAttr != nil {
+			raw := string(versionAttr.Expr().BuildTokens(nil).Bytes())
+			versionValue := trimQuotes(strings.TrimSpace(raw))
+			if versionValue == version {
+				count++
+			}
+		}
+	}
+
 	return count == expectedCount
 }
 
