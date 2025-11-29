@@ -113,6 +113,7 @@ tf-version-bump -pattern <glob-pattern> -module <module-source> -to <version>
 - `-ignore`: (Optional) Comma-separated list of module names or patterns to ignore (e.g., `vpc,legacy-*,*-test`)
 - `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
 - `-dry-run`: (Optional) Show what changes would be made without actually modifying files
+- `-verbose`: (Optional) Show verbose output including skipped modules
 
 #### Examples
 

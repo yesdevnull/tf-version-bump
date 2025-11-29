@@ -336,7 +336,9 @@ tf-version-bump \
     -to "5.0.0" \
     [-from "4.0.0"] \
     [-ignore "legacy-*,test-*"] \
-    [-force-add]
+    [-force-add] \
+    [-dry-run] \
+    [-verbose]
 ```
 
 **Mode 2: Batch Configuration** (YAML file)
