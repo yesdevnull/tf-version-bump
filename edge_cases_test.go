@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -493,7 +494,7 @@ func TestMultipleFilesSimultaneously(t *testing.T) {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }`
-		filename := filepath.Join(tmpDir, "test"+string(rune('0'+i))+".tf")
+		filename := filepath.Join(tmpDir, fmt.Sprintf("test%d.tf", i))
 		err := os.WriteFile(filename, []byte(content), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create file %s: %v", filename, err)

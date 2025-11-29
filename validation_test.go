@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -150,6 +153,13 @@ func TestValidationOfModuleUpdates(t *testing.T) {
 				t.Errorf("Did not expect error but got: %v", err)
 				return
 			}
+
+			// Validate error message contains expected text
+			if tt.expectError && err != nil && tt.errorMatch != "" {
+				if !strings.Contains(err.Error(), tt.errorMatch) {
+					t.Errorf("Expected error to contain %q, got: %v", tt.errorMatch, err)
+				}
+			}
 		})
 	}
 }
@@ -224,7 +234,7 @@ func TestConcurrentSafetyConsiderations(t *testing.T) {
 
 		// Multiple sequential updates should work fine
 		for i := 2; i <= 5; i++ {
-			version := "1.0." + string(rune('0'+i-1))
+			version := fmt.Sprintf("1.0.%d", i-1)
 			_, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", version, "", nil, false, false, false)
 			if err != nil {
 				t.Errorf("Sequential update %d failed: %v", i, err)
@@ -243,10 +253,10 @@ func TestLargeFileHandling(t *testing.T) {
 	content += "# Large Terraform configuration file\n\n"
 
 	for i := 0; i < 100; i++ {
-		content += "module \"vpc_" + itoa(i) + "\" {\n"
+		content += "module \"vpc_" + strconv.Itoa(i) + "\" {\n"
 		content += "  source  = \"terraform-aws-modules/vpc/aws\"\n"
 		content += "  version = \"3.0.0\"\n"
-		content += "  name    = \"vpc-" + itoa(i) + "\"\n"
+		content += "  name    = \"vpc-" + strconv.Itoa(i) + "\"\n"
 		content += "}\n\n"
 	}
 
@@ -272,8 +282,8 @@ func TestLargeFileHandling(t *testing.T) {
 	}
 
 	// Should have no 3.0.0 versions left
-	oldCount := countOccurrences(string(resultContent), `version = "3.0.0"`)
-	newCount := countOccurrences(string(resultContent), `version = "5.0.0"`)
+	oldCount := strings.Count(string(resultContent), `version = "3.0.0"`)
+	newCount := strings.Count(string(resultContent), `version = "5.0.0"`)
 
 	if oldCount != 0 {
 		t.Errorf("Expected 0 old versions, found %d", oldCount)
@@ -281,43 +291,6 @@ func TestLargeFileHandling(t *testing.T) {
 	if newCount != 100 {
 		t.Errorf("Expected 100 new versions, found %d", newCount)
 	}
-}
-
-// Helper function to convert int to string
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	var result string
-	for i > 0 {
-		result = string(rune('0'+(i%10))) + result
-		i /= 10
-	}
-	return result
-}
-
-// Helper function to count occurrences
-func countOccurrences(s, substr string) int {
-	count := 0
-	offset := 0
-	for {
-		idx := indexOf(s[offset:], substr)
-		if idx == -1 {
-			break
-		}
-		count++
-		offset += idx + len(substr)
-	}
-	return count
-}
-
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
 }
 
 // TestErrorMessageQuality tests that error messages are helpful
