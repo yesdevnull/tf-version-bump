@@ -1636,6 +1636,11 @@ func checkModuleVersions(content string, modules map[string]bool) bool {
 	currentModule := ""
 
 	for _, line := range lines {
+		// Reset when we see a closing brace at the start
+		if strings.HasPrefix(strings.TrimSpace(line), "}") {
+			currentModule = ""
+		}
+
 		// Detect which module we're in
 		for moduleName := range modules {
 			if strings.Contains(line, fmt.Sprintf(`module "%s"`, moduleName)) {
@@ -1669,6 +1674,12 @@ func checkTwoModuleUpdate(content, updatedModule, notUpdatedModule string) bool 
 	inNotUpdated := false
 
 	for _, line := range lines {
+		// Reset when we see a closing brace at the start
+		if strings.HasPrefix(strings.TrimSpace(line), "}") {
+			inUpdated = false
+			inNotUpdated = false
+		}
+
 		if strings.Contains(line, fmt.Sprintf(`module "%s"`, updatedModule)) {
 			inUpdated = true
 			inNotUpdated = false
@@ -1892,7 +1903,10 @@ module "vpc2" {
 func TestUpdateModuleVersionVerboseOutput(t *testing.T) {
 	// Capture stdout
 	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
 	os.Stdout = w
 
 	inputContent := `module "legacy-vpc" {
