@@ -1525,10 +1525,10 @@ func TestMatchPattern(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "overlapping prefix and suffix - minimum valid",
+			name:     "overlapping prefix and suffix - no wildcard content",
 			input:    "abcabc",
 			pattern:  "abc*abc",
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "overlapping prefix and suffix - with wildcard content",

@@ -318,6 +318,11 @@ func isLocalModule(source string) bool {
 //   - shouldIgnoreModule("prod-vpc-test", ["*-vpc-*"]) returns true (wildcard both sides)
 //   - shouldIgnoreModule("vpc", ["s3"]) returns false (no match)
 func shouldIgnoreModule(moduleName string, patterns []string) bool {
+	// Empty module names should never be ignored
+	if moduleName == "" {
+		return false
+	}
+
 	if len(patterns) == 0 {
 		return false
 	}
@@ -331,7 +336,11 @@ func shouldIgnoreModule(moduleName string, patterns []string) bool {
 }
 
 // matchPattern performs wildcard pattern matching.
-// Supports '*' as a wildcard that matches zero or more characters.
+// Supports '*' as a wildcard that matches one or more characters.
+//
+// Note: When both prefix and suffix are present in the pattern, the wildcard must
+// match at least one character to prevent overlapping. For example, "test*test"
+// matches "test-something-test" but NOT "testtest".
 //
 // Parameters:
 //   - name: The string to match
@@ -366,9 +375,10 @@ func matchPattern(name, pattern string) bool {
 	}
 
 	// Ensure there's enough length for both prefix and suffix when both are present
+	// Require at least one character for the wildcard to prevent overlapping
 	if parts[0] != "" && parts[len(parts)-1] != "" {
 		minLength := len(parts[0]) + len(parts[len(parts)-1])
-		if len(name) < minLength {
+		if len(name) <= minLength {
 			return false
 		}
 	}
