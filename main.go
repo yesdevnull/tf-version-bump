@@ -318,7 +318,9 @@ func isLocalModule(source string) bool {
 //   - shouldIgnoreModule("prod-vpc-test", ["*-vpc-*"]) returns true (wildcard both sides)
 //   - shouldIgnoreModule("vpc", ["s3"]) returns false (no match)
 func shouldIgnoreModule(moduleName string, patterns []string) bool {
-	// Empty module names should never be ignored
+	// Defensive: According to HCL/Terraform syntax, module blocks must have labels ("module" "name"),
+	// so moduleName should never be empty in practice. This check handles malformed HCL or unexpected
+	// parsing results. If moduleName is empty, do not ignore the module.
 	if moduleName == "" {
 		return false
 	}
@@ -338,6 +340,13 @@ func shouldIgnoreModule(moduleName string, patterns []string) bool {
 // matchPattern performs wildcard pattern matching.
 // Supports '*' as a wildcard that matches zero or more characters.
 //
+// Matching behavior:
+//   - Uses greedy matching for middle parts (finds first occurrence of each part in order)
+//   - Consecutive wildcards (**, ***, etc.) are treated as a single wildcard
+//   - For patterns with multiple wildcards and repeated literal parts (e.g., "a*c*c"),
+//     the algorithm ensures all parts fit without overlapping by checking that middle
+//     parts don't extend past where the suffix begins
+//
 // Parameters:
 //   - name: The string to match
 //   - pattern: The pattern to match against (may contain '*' wildcards)
@@ -346,11 +355,13 @@ func shouldIgnoreModule(moduleName string, patterns []string) bool {
 //   - bool: true if the name matches the pattern, false otherwise
 //
 // Examples:
-//   - matchPattern("vpc", "vpc") returns true
-//   - matchPattern("legacy-vpc", "legacy-*") returns true
-//   - matchPattern("vpc-test", "*-test") returns true
-//   - matchPattern("prod-vpc-test", "*-vpc-*") returns true
-//   - matchPattern("vpc", "s3") returns false
+//   - matchPattern("vpc", "vpc") returns true (exact match)
+//   - matchPattern("legacy-vpc", "legacy-*") returns true (wildcard suffix)
+//   - matchPattern("vpc-test", "*-test") returns true (wildcard prefix)
+//   - matchPattern("prod-vpc-test", "*-vpc-*") returns true (wildcard both sides)
+//   - matchPattern("abc", "a**c") returns true (consecutive wildcards)
+//   - matchPattern("acc", "a*c*c") returns true (repeated parts, wildcards match zero chars)
+//   - matchPattern("vpc", "s3") returns false (no match)
 func matchPattern(name, pattern string) bool {
 	// If pattern has no wildcards, do exact match
 	if !strings.Contains(pattern, "*") {
