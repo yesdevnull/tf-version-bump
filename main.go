@@ -177,6 +177,13 @@ func main() {
 //   - bool: true if at least one module was updated (or would be updated in dry-run mode), false otherwise
 //   - error: Any error encountered during file reading, parsing, or writing
 func updateModuleVersion(filename, moduleSource, version, fromVersion string, ignorePatterns []string, forceAdd bool, dryRun bool, verbose bool) (bool, error) {
+	// Get original file permissions to preserve them when writing
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		return false, fmt.Errorf("failed to stat file: %w", err)
+	}
+	originalMode := fileInfo.Mode()
+
 	// Read the file
 	src, err := os.ReadFile(filename)
 	if err != nil {
@@ -265,7 +272,8 @@ func updateModuleVersion(filename, moduleSource, version, fromVersion string, ig
 	// If we made changes, write the file back (unless in dry-run mode)
 	if updated && !dryRun {
 		output := hclwrite.Format(file.Bytes())
-		if err := os.WriteFile(filename, output, 0644); err != nil {
+		// Preserve original file permissions
+		if err := os.WriteFile(filename, output, originalMode.Perm()); err != nil {
 			return false, fmt.Errorf("failed to write file: %w", err)
 		}
 	}
