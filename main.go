@@ -401,6 +401,15 @@ func matchPattern(name, pattern string) bool {
 		pos += idx + len(part)
 	}
 
+	// Ensure middle parts don't overlap with the suffix
+	// The suffix must start at or after the current position
+	if parts[len(parts)-1] != "" {
+		suffixStart := len(name) - len(parts[len(parts)-1])
+		if pos > suffixStart {
+			return false
+		}
+	}
+
 	return true
 }
 
