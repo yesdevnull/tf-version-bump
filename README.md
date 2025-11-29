@@ -365,6 +365,32 @@ Each release includes:
 
 For verification instructions and detailed release information, see [docs/RELEASING.md](docs/RELEASING.md).
 
+## Security Considerations
+
+### Best Practices
+
+- **Always use version control**: This tool modifies files in place. Ensure your Terraform files are committed to Git before running updates.
+- **Test before production**: Always test updates in a development environment first, especially when using config files with multiple module updates.
+- **Review changes**: Use `git diff` after running the tool to review all modifications before committing.
+- **Use dry-run mode**: Run with `-dry-run` flag first to preview changes: `tf-version-bump -pattern "*.tf" -module "..." -to "..." -dry-run`
+
+### Known Limitations
+
+- **Concurrent execution**: This tool does not implement file locking. Running multiple instances simultaneously on the same files may cause corruption. Use external coordination (e.g., CI/CD job locks) if needed.
+- **Config file trust**: YAML configuration files should come from trusted sources only. While the tool validates required fields, extremely large or malicious YAML files could cause resource exhaustion.
+- **File size**: The tool loads entire files into memory for parsing. Very large Terraform files (> 100MB) may cause performance issues, though typical Terraform files are much smaller.
+
+### Unicode Support
+
+The tool fully supports Unicode characters in:
+- Module names (e.g., `module "vpc-主要"`)
+- Module sources (e.g., `source = "registry.example.com/組織/module"`)
+- Ignore patterns (e.g., `ignore: ["vpc-主要", "test-🚀-*"]`)
+
+### Permissions
+
+The tool preserves original file permissions when updating files. It runs with the same permissions as the user executing it and does not require elevated privileges.
+
 ## Advanced Usage
 
 ### Looping Through Git Branches
