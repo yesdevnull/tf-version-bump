@@ -54,12 +54,13 @@ func TestChaosUTF8BOM(t *testing.T) {
 	testFile := filepath.Join(tmpDir, "test.tf")
 
 	// Create file with UTF-8 BOM
-	bom := []byte{0xEF, 0xBB, 0xBF}
 	content := `module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }`
-	fullContent := append(bom, []byte(content)...)
+	// Prepend UTF-8 BOM to content
+	fullContent := []byte{0xEF, 0xBB, 0xBF}
+	fullContent = append(fullContent, []byte(content)...)
 	err := os.WriteFile(testFile, fullContent, 0644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
