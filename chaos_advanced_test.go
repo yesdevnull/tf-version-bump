@@ -113,7 +113,10 @@ module "vpc-prod-legacy" {
 		t.Error("File should be updated (other modules should be updated)")
 	}
 
-	resultContent, _ := os.ReadFile(testFile)
+	resultContent, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read result: %v", err)
+	}
 	newCount := strings.Count(string(resultContent), `version = "5.0.0"`)
 	oldCount := strings.Count(string(resultContent), `version = "3.0.0"`)
 
@@ -150,7 +153,10 @@ func TestChaosHugeVersionString(t *testing.T) {
 	}
 
 	// Verify the huge version was set
-	resultContent, _ := os.ReadFile(testFile)
+	resultContent, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read result: %v", err)
+	}
 	if !strings.Contains(string(resultContent), hugeVersion) {
 		t.Error("Huge version should be set")
 	}
@@ -212,7 +218,10 @@ func TestChaosMultilineAttributes(t *testing.T) {
 	}
 
 	// Verify heredoc is preserved
-	resultContent, _ := os.ReadFile(testFile)
+	resultContent, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read result: %v", err)
+	}
 	if !strings.Contains(string(resultContent), "description") {
 		t.Error("Heredoc description should be preserved")
 	}
@@ -254,7 +263,10 @@ func TestChaosIgnorePatternPerformance(t *testing.T) {
 		t.Error("File should be updated")
 	}
 
-	resultContent, _ := os.ReadFile(testFile)
+	resultContent, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read result: %v", err)
+	}
 	newCount := strings.Count(string(resultContent), `version = "5.0.0"`)
 	oldCount := strings.Count(string(resultContent), `version = "3.0.0"`)
 
@@ -300,7 +312,10 @@ module       "vpc"        {
 		t.Error("Weirdly formatted file should be updated")
 	}
 
-	resultContent, _ := os.ReadFile(testFile)
+	resultContent, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read result: %v", err)
+	}
 	if !strings.Contains(string(resultContent), `version = "5.0.0"`) {
 		t.Error("Version should be updated despite weird formatting")
 	}
@@ -422,7 +437,10 @@ func TestChaosFromVersionNotMatching(t *testing.T) {
 	}
 
 	// Verify original version remains
-	resultContent, _ := os.ReadFile(testFile)
+	resultContent, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read result: %v", err)
+	}
 	if !strings.Contains(string(resultContent), `version = "3.0.0"`) {
 		t.Error("Original version should be preserved when from filter doesn't match")
 	}

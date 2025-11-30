@@ -74,7 +74,10 @@ func TestChaosUTF8BOM(t *testing.T) {
 
 	// If it succeeds, verify the update worked
 	if updated {
-		resultContent, _ := os.ReadFile(testFile)
+		resultContent, err := os.ReadFile(testFile)
+		if err != nil {
+			t.Fatalf("Failed to read result: %v", err)
+		}
 		if !strings.Contains(string(resultContent), `version = "5.0.0"`) {
 			t.Error("BOM file was marked updated but version not changed")
 		}
