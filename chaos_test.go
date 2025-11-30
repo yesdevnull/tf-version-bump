@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -392,7 +393,7 @@ func TestChaosVeryLargeIgnoreList(t *testing.T) {
 	// Create a very large ignore list
 	var ignorePatterns []string
 	for i := 0; i < 10000; i++ {
-		ignorePatterns = append(ignorePatterns, "pattern-"+string(rune(i)))
+		ignorePatterns = append(ignorePatterns, fmt.Sprintf("pattern-%d", i))
 	}
 
 	// Should still work, just slower
