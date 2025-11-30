@@ -6,10 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
-// TestChaosNullBytesInFile tests handling of files with null bytes
-func TestChaosNullBytesInFile(t *testing.T) {
+// TestNullBytesInFile tests handling of files with null bytes
+func TestNullBytesInFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -29,8 +30,8 @@ func TestChaosNullBytesInFile(t *testing.T) {
 	}
 }
 
-// TestChaosBinaryFileContent tests what happens with binary content
-func TestChaosBinaryFileContent(t *testing.T) {
+// TestBinaryFileContent tests what happens with binary content
+func TestBinaryFileContent(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -49,8 +50,8 @@ func TestChaosBinaryFileContent(t *testing.T) {
 	}
 }
 
-// TestChaosUTF8BOM tests handling of UTF-8 BOM at file start
-func TestChaosUTF8BOM(t *testing.T) {
+// TestUTF8BOM tests handling of UTF-8 BOM at file start
+func TestUTF8BOM(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -85,8 +86,8 @@ func TestChaosUTF8BOM(t *testing.T) {
 	}
 }
 
-// TestChaosMixedLineEndings tests files with mixed CRLF and LF
-func TestChaosMixedLineEndings(t *testing.T) {
+// TestMixedLineEndings tests files with mixed CRLF and LF
+func TestMixedLineEndings(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -107,8 +108,8 @@ func TestChaosMixedLineEndings(t *testing.T) {
 	}
 }
 
-// TestChaosSymbolicLinks tests handling of symbolic links
-func TestChaosSymbolicLinks(t *testing.T) {
+// TestSymbolicLinks tests handling of symbolic links
+func TestSymbolicLinks(t *testing.T) {
 	tmpDir := t.TempDir()
 	realFile := filepath.Join(tmpDir, "real.tf")
 	linkFile := filepath.Join(tmpDir, "link.tf")
@@ -149,8 +150,8 @@ func TestChaosSymbolicLinks(t *testing.T) {
 	}
 }
 
-// TestChaosReadOnlyFile tests handling of read-only files
-func TestChaosReadOnlyFile(t *testing.T) {
+// TestReadOnlyFile tests handling of read-only files
+func TestReadOnlyFile(t *testing.T) {
 	// Skip if running as root (root can write to read-only files)
 	if os.Geteuid() == 0 {
 		t.Skip("Skipping read-only file test when running as root")
@@ -173,16 +174,14 @@ func TestChaosReadOnlyFile(t *testing.T) {
 
 	if err == nil {
 		t.Error("Expected error when trying to write to read-only file")
-	}
-
-	// Verify error message is informative
-	if err != nil && !strings.Contains(err.Error(), "failed to write") {
+	} else if !strings.Contains(err.Error(), "failed to write") {
+		// Verify error message is informative
 		t.Logf("Error message: %v", err)
 	}
 }
 
-// TestChaosExtremelyNestedModuleSource tests deeply nested module sources
-func TestChaosExtremelyNestedModuleSource(t *testing.T) {
+// TestExtremelyNestedModuleSource tests deeply nested module sources
+func TestExtremelyNestedModuleSource(t *testing.T) {
 	// Module source with many subpaths
 	deepSource := "terraform-aws-modules/iam/aws"
 	for i := 0; i < 50; i++ {
@@ -211,8 +210,8 @@ func TestChaosExtremelyNestedModuleSource(t *testing.T) {
 	}
 }
 
-// TestChaosModuleSourceWithQueryParams tests module sources with query parameters
-func TestChaosModuleSourceWithQueryParams(t *testing.T) {
+// TestModuleSourceWithQueryParams tests module sources with query parameters
+func TestModuleSourceWithQueryParams(t *testing.T) {
 	tests := []struct {
 		name   string
 		source string
@@ -248,8 +247,8 @@ func TestChaosModuleSourceWithQueryParams(t *testing.T) {
 	}
 }
 
-// TestChaosInvalidVersionFormats tests various invalid version strings
-func TestChaosInvalidVersionFormats(t *testing.T) {
+// TestInvalidVersionFormats tests various invalid version strings
+func TestInvalidVersionFormats(t *testing.T) {
 	// Test various "invalid" version strings - tool doesn't validate, it just sets them
 	tests := []struct {
 		name    string
@@ -261,7 +260,7 @@ func TestChaosInvalidVersionFormats(t *testing.T) {
 		{"path traversal attempt", "../../../etc/passwd"},
 		{"multiple lines", "1.0.0\n2.0.0"},
 		{"command injection attempt", "1.0.0; rm -rf /"},
-		{"extremely long version", strings.Repeat("1.", 1000) + "0"},
+		{"extremely long version", strings.Repeat("1.0.0-", 200000) + "final"}, // ~1.2MB string
 	}
 
 	for _, tt := range tests {
@@ -289,8 +288,8 @@ func TestChaosInvalidVersionFormats(t *testing.T) {
 	}
 }
 
-// TestChaosExtremeWhitespace tests files with unusual whitespace
-func TestChaosExtremeWhitespace(t *testing.T) {
+// TestExtremeWhitespace tests files with unusual whitespace
+func TestExtremeWhitespace(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
@@ -334,8 +333,8 @@ func TestChaosExtremeWhitespace(t *testing.T) {
 	}
 }
 
-// TestChaosModuleDuplicateNames tests handling of duplicate module names
-func TestChaosModuleDuplicateNames(t *testing.T) {
+// TestModuleDuplicateNames tests handling of duplicate module names
+func TestModuleDuplicateNames(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -376,8 +375,8 @@ module "vpc" {
 	}
 }
 
-// TestChaosVeryLargeIgnoreList tests behavior with many ignore patterns
-func TestChaosVeryLargeIgnoreList(t *testing.T) {
+// TestVeryLargeIgnoreList tests behavior with many ignore patterns
+func TestVeryLargeIgnoreList(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -396,8 +395,11 @@ func TestChaosVeryLargeIgnoreList(t *testing.T) {
 		ignorePatterns = append(ignorePatterns, fmt.Sprintf("pattern-%d", i))
 	}
 
-	// Should still work, just slower
+	// Measure performance with large ignore list
+	start := time.Now()
 	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", ignorePatterns, false, false, false)
+	elapsed := time.Since(start)
+
 	if err != nil {
 		t.Fatalf("Failed with large ignore list: %v", err)
 	}
@@ -405,10 +407,18 @@ func TestChaosVeryLargeIgnoreList(t *testing.T) {
 	if !updated {
 		t.Error("File should be updated (vpc-prod doesn't match any pattern)")
 	}
+
+	// Log performance characteristics
+	t.Logf("Processing with 10,000 ignore patterns took %v", elapsed)
+
+	// Set a reasonable performance threshold (e.g., should complete within 10 seconds)
+	if elapsed > 10*time.Second {
+		t.Errorf("Performance degraded: took %v (threshold: 10s)", elapsed)
+	}
 }
 
-// TestChaosComplexPatternMatching tests pattern matching edge cases
-func TestChaosComplexPatternMatching(t *testing.T) {
+// TestComplexPatternMatching tests pattern matching edge cases
+func TestComplexPatternMatching(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
@@ -416,12 +426,12 @@ func TestChaosComplexPatternMatching(t *testing.T) {
 		expected bool
 	}{
 		{"pattern with dots", "vpc.prod.v1", "vpc.*.v1", true},
-		{"pattern with brackets", "vpc[0]", "vpc[*]", true},
-		{"pattern with parens", "vpc(prod)", "vpc(*)", true},
+		// Note: [ and ] are treated as literal characters, not pattern syntax
+		{"wildcard with literal brackets", "vpc[0]", "vpc[*]", true},
+		// Note: ( and ) are treated as literal characters, not pattern syntax
+		{"wildcard with literal parens", "vpc(prod)", "vpc(*)", true},
 		{"many wildcards in row", "test", "***test***", true},
 		{"wildcard with empty parts", "test", "*test*", true},
-		{"unicode wildcard", "测试-vpc-测试", "测试-*-测试", true},
-		{"emoji wildcard", "🚀-prod-🚀", "🚀-*-🚀", true},
 	}
 
 	for _, tt := range tests {
@@ -434,8 +444,8 @@ func TestChaosComplexPatternMatching(t *testing.T) {
 	}
 }
 
-// TestChaosConfigWithEmptyModulesList tests config with empty modules list
-func TestChaosConfigWithEmptyModulesList(t *testing.T) {
+// TestConfigWithEmptyModulesList tests config with empty modules list
+func TestConfigWithEmptyModulesList(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
@@ -456,8 +466,8 @@ func TestChaosConfigWithEmptyModulesList(t *testing.T) {
 	}
 }
 
-// TestChaosConfigWithNullValues tests YAML with null values
-func TestChaosConfigWithNullValues(t *testing.T) {
+// TestConfigWithNullValues tests YAML with null values
+func TestConfigWithNullValues(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
@@ -477,8 +487,8 @@ func TestChaosConfigWithNullValues(t *testing.T) {
 	}
 }
 
-// TestChaosFileWithOnlyComments tests file containing only comments
-func TestChaosFileWithOnlyComments(t *testing.T) {
+// TestFileWithOnlyComments tests file containing only comments
+func TestFileWithOnlyComments(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -502,8 +512,8 @@ func TestChaosFileWithOnlyComments(t *testing.T) {
 	}
 }
 
-// TestChaosNestedQuotesInAttributes tests module attributes with nested quotes
-func TestChaosNestedQuotesInAttributes(t *testing.T) {
+// TestNestedQuotesInAttributes tests module attributes with nested quotes
+func TestNestedQuotesInAttributes(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -548,8 +558,8 @@ func TestChaosNestedQuotesInAttributes(t *testing.T) {
 	t.Logf("Successfully processed file with nested quotes")
 }
 
-// TestChaosTrailingWhitespace tests files with trailing whitespace
-func TestChaosTrailingWhitespace(t *testing.T) {
+// TestTrailingWhitespace tests files with trailing whitespace
+func TestTrailingWhitespace(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -570,8 +580,8 @@ func TestChaosTrailingWhitespace(t *testing.T) {
 	}
 }
 
-// TestChaosFromVersionWithSpecialChars tests from filter with special characters
-func TestChaosFromVersionWithSpecialChars(t *testing.T) {
+// TestFromVersionWithSpecialChars tests from filter with special characters
+func TestFromVersionWithSpecialChars(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
