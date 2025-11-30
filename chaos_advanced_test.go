@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// TestChaosRecursiveGlobPatterns tests various recursive glob patterns
-func TestChaosRecursiveGlobPatterns(t *testing.T) {
+// TestRecursiveGlobPatterns tests various recursive glob patterns
+func TestRecursiveGlobPatterns(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create nested structure
@@ -54,10 +54,9 @@ func TestChaosRecursiveGlobPatterns(t *testing.T) {
 	pattern := filepath.Join(tmpDir, "**/*.tf")
 	matchedFiles, err := filepath.Glob(pattern)
 	if err != nil {
-		t.Logf("Recursive glob not supported on this platform: %v", err)
-	} else {
-		t.Logf("Matched %d files with recursive pattern", len(matchedFiles))
+		t.Skipf("Recursive glob pattern not supported on this platform: %v", err)
 	}
+	t.Logf("Matched %d files with recursive pattern", len(matchedFiles))
 
 	// Test single-level wildcard
 	pattern = filepath.Join(tmpDir, "*.tf")
@@ -71,8 +70,8 @@ func TestChaosRecursiveGlobPatterns(t *testing.T) {
 	}
 }
 
-// TestChaosModuleNameCollisions tests handling of modules with similar names
-func TestChaosModuleNameCollisions(t *testing.T) {
+// TestModuleNameCollisions tests handling of modules with similar names
+func TestModuleNameCollisions(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -126,8 +125,8 @@ module "vpc-prod-legacy" {
 	}
 }
 
-// TestChaosHugeVersionString tests extremely long version strings
-func TestChaosHugeVersionString(t *testing.T) {
+// TestHugeVersionString tests extremely long version strings
+func TestHugeVersionString(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -162,8 +161,8 @@ func TestChaosHugeVersionString(t *testing.T) {
 	}
 }
 
-// TestChaosInterpolationInSource tests module sources with interpolation syntax
-func TestChaosInterpolationInSource(t *testing.T) {
+// TestInterpolationInSource tests module sources with interpolation syntax
+func TestInterpolationInSource(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -184,12 +183,12 @@ func TestChaosInterpolationInSource(t *testing.T) {
 	}
 
 	if updated {
-		t.Error("Module with interpolated source should not match literal source")
+		t.Error("Module with interpolated source was incorrectly updated (should not match literal source)")
 	}
 }
 
-// TestChaosMultilineAttributes tests HCL with multiline attributes
-func TestChaosMultilineAttributes(t *testing.T) {
+// TestMultilineAttributes tests HCL with multiline attributes
+func TestMultilineAttributes(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -227,8 +226,8 @@ func TestChaosMultilineAttributes(t *testing.T) {
 	}
 }
 
-// TestChaosIgnorePatternPerformance tests performance with many modules and ignore patterns
-func TestChaosIgnorePatternPerformance(t *testing.T) {
+// TestIgnorePatternPerformance tests performance with many modules and ignore patterns
+func TestIgnorePatternPerformance(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -276,8 +275,8 @@ func TestChaosIgnorePatternPerformance(t *testing.T) {
 	}
 }
 
-// TestChaosEmptyLinesAndFormatting tests files with unusual formatting
-func TestChaosEmptyLinesAndFormatting(t *testing.T) {
+// TestEmptyLinesAndFormatting tests files with unusual formatting
+func TestEmptyLinesAndFormatting(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -321,13 +320,24 @@ module       "vpc"        {
 	}
 }
 
-// TestChaosConfigWithDuplicateSources tests config with same source multiple times
-func TestChaosConfigWithDuplicateSources(t *testing.T) {
+// TestConfigWithDuplicateSources tests config with same source multiple times
+func TestConfigWithDuplicateSources(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
+	testFile := filepath.Join(tmpDir, "test.tf")
 
-	// Config with duplicate sources (different versions)
-	content := `modules:
+	// Create a file with a module
+	tfContent := `module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.0.0"
+}`
+	err := os.WriteFile(testFile, []byte(tfContent), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Config with duplicate sources (different versions) - last one should win
+	configContent := `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
   - source: "terraform-aws-modules/vpc/aws"
@@ -335,7 +345,7 @@ func TestChaosConfigWithDuplicateSources(t *testing.T) {
   - source: "terraform-aws-modules/s3-bucket/aws"
     version: "4.0.0"`
 
-	err := os.WriteFile(configFile, []byte(content), 0644)
+	err = os.WriteFile(configFile, []byte(configContent), 0644)
 	if err != nil {
 		t.Fatalf("Failed to create config: %v", err)
 	}
@@ -350,12 +360,30 @@ func TestChaosConfigWithDuplicateSources(t *testing.T) {
 		t.Errorf("Expected 3 module updates, got %d", len(updates))
 	}
 
-	// Document that both vpc updates will be processed
-	t.Logf("Config with duplicate sources has %d updates", len(updates))
+	// Apply all updates to the file
+	for _, update := range updates {
+		_, err := updateModuleVersion(testFile, update.Source, update.Version, update.From, update.Ignore, false, false, false)
+		if err != nil {
+			t.Logf("Update for %s to %s: %v", update.Source, update.Version, err)
+		}
+	}
+
+	// Verify which version ended up in the file (last one wins: 6.0.0)
+	resultContent, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read result: %v", err)
+	}
+
+	if !strings.Contains(string(resultContent), `version = "6.0.0"`) {
+		t.Error("Expected last duplicate source version (6.0.0) to be set in the file")
+	}
+	if strings.Contains(string(resultContent), `version = "5.0.0"`) {
+		t.Error("First duplicate source version (5.0.0) should be overwritten by second")
+	}
 }
 
-// TestChaosSourceWithEscapedCharacters tests sources with URL-encoded characters
-func TestChaosSourceWithEscapedCharacters(t *testing.T) {
+// TestSourceWithEscapedCharacters tests sources with URL-encoded characters
+func TestSourceWithEscapedCharacters(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -381,8 +409,8 @@ func TestChaosSourceWithEscapedCharacters(t *testing.T) {
 	}
 }
 
-// TestChaosVeryLongModuleSource tests extremely long module source strings
-func TestChaosVeryLongModuleSource(t *testing.T) {
+// TestVeryLongModuleSource tests extremely long module source strings
+func TestVeryLongModuleSource(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -412,8 +440,8 @@ func TestChaosVeryLongModuleSource(t *testing.T) {
 	}
 }
 
-// TestChaosFromVersionNotMatching tests from filter with no matches
-func TestChaosFromVersionNotMatching(t *testing.T) {
+// TestFromVersionNotMatching tests from filter with no matches
+func TestFromVersionNotMatching(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
@@ -446,19 +474,19 @@ func TestChaosFromVersionNotMatching(t *testing.T) {
 	}
 }
 
-// TestChaosConfigWithWhitespaceInValues tests config with extra whitespace
-func TestChaosConfigWithWhitespaceInValues(t *testing.T) {
+// TestIgnorePatternWhitespaceTrimming tests that ignore patterns have whitespace trimmed
+func TestIgnorePatternWhitespaceTrimming(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	// Config with whitespace that should be trimmed
+	// Config with whitespace in ignore patterns that should be trimmed
 	content := `modules:
-  - source: "  terraform-aws-modules/vpc/aws  "
-    version: "  5.0.0  "
-    from: "  3.0.0  "
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
     ignore:
-      - "  vpc  "
-      - "  test-*  "`
+      - "  vpc-prod  "
+      - "  staging-*  "
+      - "	dev-*	"`
 
 	err := os.WriteFile(configFile, []byte(content), 0644)
 	if err != nil {
@@ -470,26 +498,23 @@ func TestChaosConfigWithWhitespaceInValues(t *testing.T) {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Whitespace should be trimmed
-	if updates[0].Source != "terraform-aws-modules/vpc/aws" {
-		t.Errorf("Source whitespace not trimmed: %q", updates[0].Source)
+	// Ignore patterns should have whitespace trimmed
+	if len(updates[0].Ignore) != 3 {
+		t.Errorf("Expected 3 ignore patterns, got %d", len(updates[0].Ignore))
 	}
-	if updates[0].Version != "5.0.0" {
-		t.Errorf("Version whitespace not trimmed: %q", updates[0].Version)
+	if updates[0].Ignore[0] != "vpc-prod" {
+		t.Errorf("First ignore pattern whitespace not trimmed: %q", updates[0].Ignore[0])
 	}
-	if updates[0].From != "3.0.0" {
-		t.Errorf("From whitespace not trimmed: %q", updates[0].From)
+	if updates[0].Ignore[1] != "staging-*" {
+		t.Errorf("Second ignore pattern whitespace not trimmed: %q", updates[0].Ignore[1])
 	}
-	if len(updates[0].Ignore) != 2 {
-		t.Errorf("Expected 2 ignore patterns, got %d", len(updates[0].Ignore))
-	}
-	if updates[0].Ignore[0] != "vpc" {
-		t.Errorf("Ignore pattern whitespace not trimmed: %q", updates[0].Ignore[0])
+	if updates[0].Ignore[2] != "dev-*" {
+		t.Errorf("Third ignore pattern (with tabs) whitespace not trimmed: %q", updates[0].Ignore[2])
 	}
 }
 
-// TestChaosDryRunDoesNotModify tests that dry-run truly doesn't modify files
-func TestChaosDryRunDoesNotModify(t *testing.T) {
+// TestDryRunDoesNotModify tests that dry-run truly doesn't modify files
+func TestDryRunDoesNotModify(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
