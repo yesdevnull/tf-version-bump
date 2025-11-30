@@ -249,43 +249,40 @@ func TestChaosModuleSourceWithQueryParams(t *testing.T) {
 
 // TestChaosInvalidVersionFormats tests various invalid version strings
 func TestChaosInvalidVersionFormats(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.tf")
+	// Test various "invalid" version strings - tool doesn't validate, it just sets them
+	tests := []struct {
+		name    string
+		version string
+	}{
+		{"empty string", ""},
+		{"whitespace only", "   "},
+		{"non-semantic version", "not-a-version"},
+		{"path traversal attempt", "../../../etc/passwd"},
+		{"multiple lines", "1.0.0\n2.0.0"},
+		{"command injection attempt", "1.0.0; rm -rf /"},
+		{"extremely long version", strings.Repeat("1.", 1000) + "0"},
+	}
 
-	content := `module "vpc" {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			testFile := filepath.Join(tmpDir, "test.tf")
+
+			content := `module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }`
-	err := os.WriteFile(testFile, []byte(content), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	// Test various "invalid" version strings - tool doesn't validate, it just sets them
-	invalidVersions := []string{
-		"",                    // Empty
-		"   ",                 // Whitespace only
-		"not-a-version",       // Non-semantic
-		"../../../etc/passwd", // Path traversal attempt
-		"1.0.0\n2.0.0",        // Multiple lines
-		"1.0.0; rm -rf /",     // Command injection attempt
-		strings.Repeat("1.", 1000) + "0", // Extremely long
-	}
-
-	for _, version := range invalidVersions {
-		t.Run("version_"+version, func(t *testing.T) {
-			// Reset file
 			err := os.WriteFile(testFile, []byte(content), 0644)
 			if err != nil {
-				t.Fatalf("Failed to reset test file: %v", err)
+				t.Fatalf("Failed to create test file: %v", err)
 			}
 
 			// Tool doesn't validate version format, it will just set whatever is given
-			_, err = updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", version, "", nil, false, false, false)
+			_, err = updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", tt.version, "", nil, false, false, false)
 
 			// Document behavior - no validation means any string is accepted
 			if err != nil {
-				t.Logf("Version %q caused error: %v", version, err)
+				t.Logf("Version %q caused error: %v", tt.version, err)
 			}
 		})
 	}
