@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestRecursiveGlobPatterns tests various recursive glob patterns
@@ -139,8 +140,8 @@ func TestHugeVersionString(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	// Create a version string that's 10KB
-	hugeVersion := strings.Repeat("1.0.0-", 1000) + "final"
+	// Create a version string that's exactly 10KB
+	hugeVersion := strings.Repeat("X", 10*1024)
 
 	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", hugeVersion, "", nil, false, false, false)
 	if err != nil {
@@ -253,13 +254,25 @@ func TestIgnorePatternPerformance(t *testing.T) {
 		ignorePatterns = append(ignorePatterns, fmt.Sprintf("vpc-%d", i))
 	}
 
+	// Measure performance
+	start := time.Now()
 	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", ignorePatterns, false, false, false)
+	elapsed := time.Since(start)
+
 	if err != nil {
 		t.Fatalf("Failed to process: %v", err)
 	}
 
 	if !updated {
 		t.Error("File should be updated")
+	}
+
+	// Log performance characteristics
+	t.Logf("Processing 100 modules with 50 ignore patterns took %v", elapsed)
+
+	// Set a reasonable performance threshold (e.g., should complete within 5 seconds)
+	if elapsed > 5*time.Second {
+		t.Errorf("Performance degraded: took %v (threshold: 5s)", elapsed)
 	}
 
 	resultContent, err := os.ReadFile(testFile)
@@ -513,21 +526,22 @@ func TestIgnorePatternWhitespaceTrimming(t *testing.T) {
 	}
 }
 
-// TestDryRunDoesNotModify tests that dry-run truly doesn't modify files
-func TestDryRunDoesNotModify(t *testing.T) {
+// TestDryRunModificationTime tests that dry-run doesn't change file modification time
+// Note: Content verification is already tested in main_test.go
+func TestDryRunModificationTime(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
-	originalContent := `module "vpc" {
+	content := `module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }`
-	err := os.WriteFile(testFile, []byte(originalContent), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	// Get original file info
+	// Get original file modification time
 	originalInfo, err := os.Stat(testFile)
 	if err != nil {
 		t.Fatalf("Failed to stat file: %v", err)
@@ -535,26 +549,12 @@ func TestDryRunDoesNotModify(t *testing.T) {
 	originalModTime := originalInfo.ModTime()
 
 	// Run in dry-run mode
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", nil, false, true, false)
+	_, err = updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", nil, false, true, false)
 	if err != nil {
 		t.Fatalf("Dry-run failed: %v", err)
 	}
 
-	if !updated {
-		t.Error("Dry-run should report what would be updated")
-	}
-
-	// Verify file was NOT modified
-	resultContent, err := os.ReadFile(testFile)
-	if err != nil {
-		t.Fatalf("Failed to read file: %v", err)
-	}
-
-	if string(resultContent) != originalContent {
-		t.Error("Dry-run should not modify file content")
-	}
-
-	// Check modification time didn't change
+	// Verify modification time didn't change
 	newInfo, err := os.Stat(testFile)
 	if err != nil {
 		t.Fatalf("Failed to stat file: %v", err)
