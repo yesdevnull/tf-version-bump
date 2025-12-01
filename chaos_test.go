@@ -183,11 +183,15 @@ func TestReadOnlyFile(t *testing.T) {
 
 	if err == nil {
 		t.Error("Expected error when trying to write to read-only file")
-	} else if !strings.Contains(err.Error(), "failed to write") {
-		t.Errorf("Expected error about write failure, got: %v", err)
-	} else {
-		t.Logf("Got expected error: %v", err)
+		return
 	}
+
+	if !strings.Contains(err.Error(), "failed to write") {
+		t.Errorf("Expected error about write failure, got: %v", err)
+		return
+	}
+
+	t.Logf("Got expected error: %v", err)
 }
 
 // TestExtremelyNestedModuleSource tests deeply nested module sources
