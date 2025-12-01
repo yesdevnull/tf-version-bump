@@ -21,13 +21,14 @@ func TestNullBytesInFile(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	// The HCL parser should handle this - let's see what happens
+	// Parsing should fail with null bytes in file
 	_, err = updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", nil, false, false, false)
 
-	// Document the behavior - null bytes might cause parsing errors
-	if err != nil {
-		t.Logf("Null bytes in file cause expected error: %v", err)
+	// Assert that null bytes cause an error
+	if err == nil {
+		t.Fatal("Expected error when parsing file with null bytes, but got none")
 	}
+	t.Logf("Null bytes correctly caused parse error: %v", err)
 }
 
 // TestBinaryFileContent tests what happens with binary content
@@ -46,7 +47,13 @@ func TestBinaryFileContent(t *testing.T) {
 	_, err = updateModuleVersion(testFile, "test", "1.0.0", "", nil, false, false, false)
 
 	if err == nil {
-		t.Error("Expected error when parsing binary content as HCL")
+		t.Fatal("Expected error when parsing binary content as HCL")
+	}
+
+	// Optionally verify error message contains expected keywords
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "parse") && !strings.Contains(errMsg, "invalid") {
+		t.Logf("Error message: %v", errMsg)
 	}
 }
 
@@ -278,10 +285,21 @@ func TestInvalidVersionFormats(t *testing.T) {
 			}
 
 			// Tool doesn't validate version format, it will just set whatever is given
-			_, err = updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", tt.version, "", nil, false, false, false)
+			updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", tt.version, "", nil, false, false, false)
 
-			// Document behavior - no validation means any string is accepted
-			if err != nil {
+			// Verify behavior - if no error, file should contain the version string
+			if err == nil && updated {
+				resultContent, err := os.ReadFile(testFile)
+				if err != nil {
+					t.Fatalf("Failed to read result file: %v", err)
+				}
+				// Verify file contains the expected version string
+				// Note: HCL formatter may escape special characters (e.g., \n becomes \\n)
+				contentStr := string(resultContent)
+				if !strings.Contains(contentStr, tt.version) && !strings.Contains(contentStr, strings.ReplaceAll(tt.version, "\n", "\\n")) {
+					t.Errorf("Expected file to contain version %q (or escaped form), but it doesn't", tt.version)
+				}
+			} else if err != nil {
 				t.Logf("Version %q caused error: %v", tt.version, err)
 			}
 		})
