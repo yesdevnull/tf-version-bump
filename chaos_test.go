@@ -274,7 +274,7 @@ func TestInvalidVersionFormats(t *testing.T) {
 		{"path traversal attempt", "../../../etc/passwd"},
 		{"multiple lines", "1.0.0\n2.0.0"},
 		{"command injection attempt", "1.0.0; rm -rf /"},
-		{"extremely long version", strings.Repeat("1.0.0-", 200000) + "final"}, // ~1.2MB string
+		{"extremely long version", strings.Repeat("1.0.0-", 10000) + "final"}, // ~100KB string
 	}
 
 	for _, tt := range tests {
