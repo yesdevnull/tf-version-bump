@@ -548,6 +548,10 @@ func TestDryRunModificationTime(t *testing.T) {
 	}
 	originalModTime := originalInfo.ModTime()
 
+	// Add a small delay to ensure modification time would change if file were written
+	// This prevents flakiness on filesystems with fine-grained timestamps
+	time.Sleep(10 * time.Millisecond)
+
 	// Run in dry-run mode
 	_, err = updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", nil, false, true, false)
 	if err != nil {
