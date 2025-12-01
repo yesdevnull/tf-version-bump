@@ -436,9 +436,9 @@ func TestVeryLargeIgnoreList(t *testing.T) {
 	// Log performance characteristics
 	t.Logf("Processing with 10,000 ignore patterns took %v", elapsed)
 
-	// Set a stricter performance threshold (should complete within 2 seconds)
-	if elapsed > 2*time.Second {
-		t.Errorf("Performance degraded: took %v (threshold: 2s)", elapsed)
+	// Set a stricter performance threshold (should complete within 1 second)
+	if elapsed > 1*time.Second {
+		t.Errorf("Performance degraded: took %v (threshold: 1s)", elapsed)
 	}
 }
 
