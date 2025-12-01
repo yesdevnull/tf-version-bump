@@ -184,8 +184,9 @@ func TestReadOnlyFile(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when trying to write to read-only file")
 	} else if !strings.Contains(err.Error(), "failed to write") {
-		// Verify error message is informative
-		t.Logf("Error message: %v", err)
+		t.Errorf("Expected error about write failure, got: %v", err)
+	} else {
+		t.Logf("Got expected error: %v", err)
 	}
 }
 
