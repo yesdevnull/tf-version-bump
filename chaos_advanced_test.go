@@ -555,8 +555,10 @@ func TestDryRunModificationTime(t *testing.T) {
 	}
 	originalModTime := originalInfo.ModTime()
 
-	// Add a small delay to ensure modification time would change if file were written
-	// This prevents flakiness on filesystems with fine-grained timestamps
+	// Add a delay to ensure modification time would change if file were written.
+	// Note: This test assumes filesystems with millisecond-precision timestamps (e.g., ext4, NTFS, APFS).
+	// Some filesystems have coarser resolution (FAT32: 2s, network drives: variable) and may cause
+	// this test to be unreliable. The 10ms delay is sufficient for most modern filesystems.
 	time.Sleep(10 * time.Millisecond)
 
 	// Run in dry-run mode
