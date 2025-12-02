@@ -380,15 +380,34 @@ func TestConfigWithDuplicateSources(t *testing.T) {
 		t.Errorf("Expected 3 module updates, got %d", len(updates))
 	}
 
-	// Apply all updates to the file
+	// Apply all updates to the file and track outcomes.
+	// Expected behavior: 2 vpc updates succeed, 1 s3-bucket update finds no matching module (updated=false).
+	// When a module source isn't found, updateModuleVersion returns (false, nil) - not an error.
+	var successCount, failCount, notFoundCount int
 	for _, update := range updates {
-		_, err := updateModuleVersion(testFile, update.Source, update.Version, update.From, update.Ignore, false, false, false)
+		updated, err := updateModuleVersion(testFile, update.Source, update.Version, update.From, update.Ignore, false, false, false)
 		if err != nil {
-			t.Logf("Update for %s to %s: %v", update.Source, update.Version, err)
+			t.Logf("Update for %s to %s failed: %v", update.Source, update.Version, err)
+			failCount++
+			continue
 		}
+		if updated {
+			successCount++
+			continue
+		}
+		notFoundCount++
 	}
 
-	// Verify which version ended up in the file (last one wins: 6.0.0)
+	// Verify we got expected counts
+	if successCount != 2 {
+		t.Errorf("Expected 2 successful updates (vpc entries), got %d", successCount)
+	}
+	if notFoundCount != 1 {
+		t.Errorf("Expected 1 not-found (s3-bucket), got %d", notFoundCount)
+	}
+	t.Logf("Update summary: %d succeeded, %d not found, %d failed", successCount, notFoundCount, failCount)
+
+	// Verify which version ended up in the file (last vpc update wins: 6.0.0)
 	resultContent, err := os.ReadFile(testFile)
 	if err != nil {
 		t.Fatalf("Failed to read result: %v", err)
