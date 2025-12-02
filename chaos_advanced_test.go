@@ -169,12 +169,15 @@ func TestHugeVersionString(t *testing.T) {
 	}
 }
 
-// TestInterpolationInSource tests module sources with interpolation syntax
+// TestInterpolationInSource tests module sources with interpolation syntax.
+// This documents that the HCL parser preserves interpolation expressions as-is in string literals,
+// so sources containing "${...}" won't match literal source patterns without interpolation.
+// This is expected behavior: the tool performs literal string matching on the parsed source value.
 func TestInterpolationInSource(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
-	// While interpolation in source is unusual, HCL might allow it
+	// HCL interpolation syntax in source attribute
 	content := `module "vpc" {
   source  = "terraform-aws-modules/${var.module_name}/aws"
   version = "3.0.0"
@@ -184,14 +187,25 @@ func TestInterpolationInSource(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	// This won't match because the source has interpolation
+	// The tool performs literal string matching on the parsed source value.
+	// The HCL parser preserves "terraform-aws-modules/${var.module_name}/aws" as-is,
+	// so it won't match the literal string "terraform-aws-modules/vpc/aws".
 	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", nil, false, false, false)
 	if err != nil {
 		t.Fatalf("Failed to process: %v", err)
 	}
 
 	if updated {
-		t.Error("Module with interpolated source was incorrectly updated (should not match literal source)")
+		t.Error("Module with interpolated source should not match literal source pattern")
+	}
+
+	// Verify the file content remains unchanged
+	resultContent, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read result: %v", err)
+	}
+	if !strings.Contains(string(resultContent), `version = "3.0.0"`) {
+		t.Error("Version should remain unchanged when source doesn't match")
 	}
 }
 
