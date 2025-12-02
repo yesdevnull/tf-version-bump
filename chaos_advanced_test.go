@@ -9,11 +9,14 @@ import (
 	"time"
 )
 
-// TestRecursiveGlobPatterns tests various recursive glob patterns
+// TestRecursiveGlobPatterns documents that Go's filepath.Glob does NOT support
+// recursive glob patterns like "**/*.tf" (a bash/zsh feature).
+// Go's filepath.Glob only supports *, ?, and [...] character classes.
+// The ** pattern is treated as a literal directory name, not recursive wildcard.
 func TestRecursiveGlobPatterns(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create nested structure
+	// Create nested structure with 5 .tf files at different depths
 	dirs := []string{
 		"modules",
 		"modules/vpc",
@@ -29,7 +32,6 @@ func TestRecursiveGlobPatterns(t *testing.T) {
 		}
 	}
 
-	// Create files at different depths
 	content := `module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
@@ -51,15 +53,20 @@ func TestRecursiveGlobPatterns(t *testing.T) {
 		}
 	}
 
-	// Test recursive glob pattern
+	// Demonstrate that ** is NOT supported by filepath.Glob
+	// It treats ** as a literal directory name, not a recursive wildcard
 	pattern := filepath.Join(tmpDir, "**/*.tf")
 	matchedFiles, err := filepath.Glob(pattern)
 	if err != nil {
-		t.Skipf("Recursive glob pattern not supported on this platform: %v", err)
+		t.Fatalf("Unexpected error from filepath.Glob: %v", err)
 	}
-	t.Logf("Matched %d files with recursive pattern", len(matchedFiles))
 
-	// Test single-level wildcard
+	// This should match 0 files because there's no directory named "**"
+	if len(matchedFiles) != 0 {
+		t.Logf("Warning: filepath.Glob matched %d files with ** pattern (expected 0)", len(matchedFiles))
+	}
+
+	// Test single-level wildcard (this DOES work)
 	pattern = filepath.Join(tmpDir, "*.tf")
 	matchedFiles, err = filepath.Glob(pattern)
 	if err != nil {
