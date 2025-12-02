@@ -471,10 +471,10 @@ func TestComplexPatternMatching(t *testing.T) {
 		expected bool
 	}{
 		{"pattern with dots", "vpc.prod.v1", "vpc.*.v1", true},
-		// In custom matchPattern: [ and ] are literal, so "vpc[*]" matches "vpc[" + anything + "]"
-		{"wildcard with literal brackets", "vpc[0]", "vpc[*]", true},
-		// In custom matchPattern: ( and ) are literal, so "vpc(*)" matches "vpc(" + anything + ")"
-		{"wildcard with literal parens", "vpc(prod)", "vpc(*)", true},
+		// In custom matchPattern: only * is a wildcard; [ and ] are always literal, so "vpc[*]" matches "vpc[" + anything + "]"
+		{"star wildcard with literal brackets", "vpc[0]", "vpc[*]", true},
+		// In custom matchPattern: only * is a wildcard; ( and ) are always literal, so "vpc(*)" matches "vpc(" + anything + ")"
+		{"star wildcard with literal parens", "vpc(prod)", "vpc(*)", true},
 		{"many wildcards in row", "test", "***test***", true},
 		{"wildcard with empty parts", "test", "*test*", true},
 	}
