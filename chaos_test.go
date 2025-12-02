@@ -15,6 +15,12 @@ const (
 	// This tests the tool's ability to handle deeply nested Terraform module paths like
 	// "module//sub//sub//sub...". 50 levels is chosen as an extreme but realistic edge case.
 	maxNestedSubmodules = 50
+
+	// stressTestIgnorePatterns defines the number of ignore patterns for stress testing.
+	// 10,000 patterns is chosen to test performance with a very large number of patterns,
+	// representative of enterprise-scale configurations where users might have hundreds
+	// of modules to ignore across multiple environments.
+	stressTestIgnorePatterns = 10000
 )
 
 // TestNullBytesInFile tests handling of files with null bytes
@@ -424,7 +430,7 @@ func TestVeryLargeIgnoreList(t *testing.T) {
 
 	// Create a very large ignore list
 	var ignorePatterns []string
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < stressTestIgnorePatterns; i++ {
 		ignorePatterns = append(ignorePatterns, fmt.Sprintf("pattern-%d", i))
 	}
 
@@ -442,7 +448,7 @@ func TestVeryLargeIgnoreList(t *testing.T) {
 	}
 
 	// Log performance characteristics
-	t.Logf("Processing with 10,000 ignore patterns took %v", elapsed)
+	t.Logf("Processing with %d ignore patterns took %v", stressTestIgnorePatterns, elapsed)
 
 	// Set a stricter performance threshold (should complete within 1 second)
 	if elapsed > 1*time.Second {
