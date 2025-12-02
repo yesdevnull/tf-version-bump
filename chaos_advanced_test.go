@@ -9,6 +9,15 @@ import (
 	"time"
 )
 
+// Test constants for advanced chaos testing edge cases
+const (
+	// veryLongSourcePathSegments defines how many path segments to repeat when creating
+	// an extremely long module source string. 100 segments is chosen to stress test the
+	// tool's ability to handle very long source URLs while remaining realistic for deeply
+	// nested repository structures.
+	veryLongSourcePathSegments = 100
+)
+
 // TestRecursiveGlobPatterns documents that Go's filepath.Glob does NOT support
 // recursive glob patterns like "**/*.tf" (a bash/zsh feature).
 // Go's filepath.Glob only supports *, ?, and [...] character classes.
@@ -469,7 +478,7 @@ func TestVeryLongModuleSource(t *testing.T) {
 
 	// Create a very long module source (e.g., deeply nested path)
 	longSource := "git::https://github.com/org/repo.git//"
-	for i := 0; i < 100; i++ {
+	for i := 0; i < veryLongSourcePathSegments; i++ {
 		longSource += "very/long/path/to/module/"
 	}
 	longSource += "final"
