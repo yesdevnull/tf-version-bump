@@ -356,7 +356,7 @@ func TestConfigWithDuplicateSources(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	// Config with duplicate sources (different versions) - last one should win
+	// Config with duplicate sources - when applied sequentially, the last update wins
 	configContent := `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
