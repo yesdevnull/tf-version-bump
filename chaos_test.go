@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+// Test constants for chaos testing edge cases
+const (
+	// maxNestedSubmodules defines the nesting depth for testing extremely nested module sources.
+	// This tests the tool's ability to handle deeply nested Terraform module paths like
+	// "module//sub//sub//sub...". 50 levels is chosen as an extreme but realistic edge case.
+	maxNestedSubmodules = 50
+)
+
 // TestNullBytesInFile tests handling of files with null bytes
 func TestNullBytesInFile(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -198,7 +206,7 @@ func TestReadOnlyFile(t *testing.T) {
 func TestExtremelyNestedModuleSource(t *testing.T) {
 	// Module source with many subpaths
 	deepSource := "terraform-aws-modules/iam/aws"
-	for i := 0; i < 50; i++ {
+	for i := 0; i < maxNestedSubmodules; i++ {
 		deepSource += "//modules/submodule"
 	}
 
