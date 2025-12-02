@@ -442,7 +442,10 @@ func TestVeryLargeIgnoreList(t *testing.T) {
 	}
 }
 
-// TestComplexPatternMatching tests pattern matching edge cases
+// TestComplexPatternMatching tests edge cases for the custom matchPattern function.
+// Note: This tests the custom matchPattern implementation (not filepath.Match).
+// matchPattern is a simple wildcard matcher that only recognizes * as special;
+// all other characters including [], (), etc. are treated as literals.
 func TestComplexPatternMatching(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -451,9 +454,9 @@ func TestComplexPatternMatching(t *testing.T) {
 		expected bool
 	}{
 		{"pattern with dots", "vpc.prod.v1", "vpc.*.v1", true},
-		// matchPattern only recognizes * as special; [ and ] are literal characters
+		// In custom matchPattern: [ and ] are literal, so "vpc[*]" matches "vpc[" + anything + "]"
 		{"wildcard with literal brackets", "vpc[0]", "vpc[*]", true},
-		// matchPattern only recognizes * as special; ( and ) are literal characters
+		// In custom matchPattern: ( and ) are literal, so "vpc(*)" matches "vpc(" + anything + ")"
 		{"wildcard with literal parens", "vpc(prod)", "vpc(*)", true},
 		{"many wildcards in row", "test", "***test***", true},
 		{"wildcard with empty parts", "test", "*test*", true},
