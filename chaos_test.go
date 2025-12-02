@@ -305,7 +305,9 @@ func TestInvalidVersionFormats(t *testing.T) {
 				t.Fatalf("Failed to create test file: %v", err)
 			}
 
-			// Tool doesn't validate version format, it will just set whatever is given
+			// Tool doesn't validate version format, it will just set whatever is given.
+			// Note: Some edge cases (e.g., multiline strings) may cause HCL parse errors during
+			// file write/format operations, as HCL doesn't support newlines in attribute values.
 			updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", tt.version, "", nil, false, false, false)
 
 			// Verify behavior - if no error, file should contain the version string
@@ -321,6 +323,7 @@ func TestInvalidVersionFormats(t *testing.T) {
 					t.Errorf("Expected file to contain version %q (or escaped form), but it doesn't", tt.version)
 				}
 			} else if err != nil {
+				// Expected for cases like multiline strings which HCL rejects
 				t.Logf("Version %q caused error: %v", tt.version, err)
 			}
 		})
