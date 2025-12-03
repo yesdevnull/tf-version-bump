@@ -531,6 +531,12 @@ func TestConfigWithNullValues(t *testing.T) {
 	// Should error because source is required
 	if err == nil {
 		t.Error("Expected error for null source value")
+	} else {
+		// Check that the error message is about missing or null source
+		errMsg := err.Error()
+		if !strings.Contains(errMsg, "source") && !strings.Contains(errMsg, "missing") {
+			t.Errorf("Error message does not mention 'source' or 'missing': %v", err)
+		}
 	}
 }
 
