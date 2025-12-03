@@ -300,7 +300,9 @@ func TestIgnorePatternPerformanceWithManyModules(t *testing.T) {
 	// Log performance characteristics
 	t.Logf("Processing 100 modules with 50 ignore patterns took %v", elapsed)
 
-	// Set a reasonable performance threshold (e.g., should complete within 5 seconds)
+	// Performance threshold set for typical development environments (5s).
+	// This threshold is intentionally strict to catch meaningful regressions.
+	// If CI environment performance becomes an issue, we can adjust as needed.
 	if elapsed > 5*time.Second {
 		t.Errorf("Performance degraded: took %v (threshold: 5s)", elapsed)
 	}
