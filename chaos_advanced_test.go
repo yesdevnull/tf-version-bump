@@ -257,8 +257,8 @@ func TestMultilineAttributes(t *testing.T) {
 	}
 }
 
-// TestIgnorePatternPerformance tests performance with many modules and ignore patterns
-func TestIgnorePatternPerformance(t *testing.T) {
+// TestIgnorePatternPerformanceWithManyModules tests performance with many modules and ignore patterns
+func TestIgnorePatternPerformanceWithManyModules(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.tf")
 
