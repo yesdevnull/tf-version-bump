@@ -94,18 +94,20 @@ func TestUTF8BOM(t *testing.T) {
 	// HCL parser should handle BOM
 	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", nil, false, false, false)
 	if err != nil {
-		t.Logf("UTF-8 BOM handling: %v", err)
+		t.Fatalf("Expected BOM to be handled, but got error: %v", err)
 	}
 
-	// If it succeeds, verify the update worked
-	if updated {
-		resultContent, err := os.ReadFile(testFile)
-		if err != nil {
-			t.Fatalf("Failed to read result: %v", err)
-		}
-		if !strings.Contains(string(resultContent), `version = "5.0.0"`) {
-			t.Error("BOM file was marked updated but version not changed")
-		}
+	// Verify the update worked
+	if !updated {
+		t.Fatal("Expected module to be updated, but updated=false")
+	}
+
+	resultContent, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read result: %v", err)
+	}
+	if !strings.Contains(string(resultContent), `version = "5.0.0"`) {
+		t.Error("Module was marked updated but version not changed")
 	}
 }
 
