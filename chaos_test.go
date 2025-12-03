@@ -64,12 +64,12 @@ func TestBinaryFileContent(t *testing.T) {
 		t.Fatal("Expected error when parsing binary content as HCL")
 	}
 
-	// Optionally verify error message contains expected keywords
+	// Verify error message contains expected keywords
 	errMsg := err.Error()
 	if strings.Contains(errMsg, "parse") || strings.Contains(errMsg, "invalid") {
 		t.Logf("Error message contains expected keyword: %v", errMsg)
 	} else {
-		t.Logf("Unexpected error message (expected 'parse' or 'invalid'): %v", errMsg)
+		t.Fatalf("Unexpected error message (expected 'parse' or 'invalid'): %v", errMsg)
 	}
 }
 
