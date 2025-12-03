@@ -72,7 +72,7 @@ func TestRecursiveGlobPatterns(t *testing.T) {
 
 	// This should match 0 files because there's no directory named "**"
 	if len(matchedFiles) != 0 {
-		t.Logf("Warning: filepath.Glob matched %d files with ** pattern (expected 0)", len(matchedFiles))
+		t.Errorf("filepath.Glob matched %d files with ** pattern (expected 0)", len(matchedFiles))
 	}
 
 	// Test single-level wildcard (this DOES work)
