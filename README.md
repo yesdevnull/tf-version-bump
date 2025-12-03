@@ -17,9 +17,9 @@ A CLI tool written in Go that updates Terraform module versions across multiple 
 
 ## Installation
 
-### Option 1: Install with go install
+### Install with go install (recommended)
 
-The easiest method if you have Go installed:
+If you have Go installed (version 1.24 or later), this is the easiest and recommended method:
 
 ```bash
 go install github.com/yesdevnull/tf-version-bump@latest
@@ -27,9 +27,9 @@ go install github.com/yesdevnull/tf-version-bump@latest
 
 This installs the binary to your `$GOPATH/bin` directory (usually `~/go/bin`). Ensure this directory is in your `PATH`.
 
-### Option 2: Download pre-built binary (recommended for CI/production)
+### Download pre-built binary with verification
 
-Download a pre-built binary from the [GitHub Releases](https://github.com/yesdevnull/tf-version-bump/releases) page with verification:
+For environments without Go, or when you need supply chain verification (particularly useful for CI/production), download a pre-built binary from the [GitHub Releases](https://github.com/yesdevnull/tf-version-bump/releases) page:
 
 ```bash
 # Set the version you want to install (replace with desired version)
@@ -76,7 +76,7 @@ slsa-verifier verify-artifact "tf-version-bump_${VERSION}_linux_x86_64.tar.gz" \
 | Windows | x86_64 | `tf-version-bump_<version>_windows_x86_64.zip` |
 | Windows | arm64 | `tf-version-bump_<version>_windows_arm64.zip` |
 
-### Option 3: Build from source
+### Build from source
 
 ```bash
 git clone https://github.com/yesdevnull/tf-version-bump.git
