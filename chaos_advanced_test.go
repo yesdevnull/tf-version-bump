@@ -62,17 +62,24 @@ func TestRecursiveGlobPatterns(t *testing.T) {
 		}
 	}
 
-	// Demonstrate that ** is NOT supported by filepath.Glob
-	// It treats ** as a literal directory name, not a recursive wildcard
+	// Demonstrate that ** is NOT supported as recursive wildcard by filepath.Glob
+	// The ** pattern acts like a single-level wildcard (similar to *), not recursive.
+	// So "**/*.tf" matches one directory level down, not all nested levels.
 	pattern := filepath.Join(tmpDir, "**/*.tf")
 	matchedFiles, err := filepath.Glob(pattern)
 	if err != nil {
 		t.Fatalf("Unexpected error from filepath.Glob: %v", err)
 	}
 
-	// This should match 0 files because there's no directory named "**"
-	if len(matchedFiles) != 0 {
-		t.Errorf("filepath.Glob matched %d files with ** pattern (expected 0)", len(matchedFiles))
+	// Should match only first-level subdirectories (e.g., modules/main.tf),
+	// not deeply nested files (e.g., modules/vpc/main.tf)
+	if len(matchedFiles) == 0 {
+		t.Error("Expected ** to match single directory level")
+	}
+
+	// Verify it doesn't match ALL nested files (should be < 5)
+	if len(matchedFiles) >= len(files) {
+		t.Errorf("** pattern matched too many files (%d), expected < %d (not recursive)", len(matchedFiles), len(files))
 	}
 
 	// Test single-level wildcard (this DOES work)
