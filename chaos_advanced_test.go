@@ -431,6 +431,8 @@ func TestConfigWithDuplicateSources(t *testing.T) {
 			successCount++
 			continue
 		}
+		// Note: notFoundCount includes both "not found" and "ignored" cases,
+		// as updateModuleVersion returns (updated=false, err=nil) for both.
 		notFoundCount++
 	}
 
