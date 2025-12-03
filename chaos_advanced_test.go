@@ -404,8 +404,10 @@ func TestConfigWithDuplicateSources(t *testing.T) {
 	}
 
 	// Apply all updates to the file and track outcomes.
-	// Expected behavior: 2 vpc updates succeed, 1 s3-bucket update finds no matching module (updated=false).
-	// When a module source isn't found, updateModuleVersion returns (false, nil) - not an error.
+	// Expected behavior: 2 vpc updates succeed, 1 s3-bucket update finds no matching module.
+	//
+	// Note: When a module source isn't found, updateModuleVersion returns (updated=false, err=nil).
+	// This is the expected contract: not finding a module is not considered an error, just a no-op.
 	var successCount, failCount, notFoundCount int
 	for _, update := range updates {
 		updated, err := updateModuleVersion(testFile, update.Source, update.Version, update.From, update.Ignore, false, false, false)
