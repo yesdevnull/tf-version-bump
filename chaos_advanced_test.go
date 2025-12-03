@@ -428,6 +428,9 @@ func TestConfigWithDuplicateSources(t *testing.T) {
 	if notFoundCount != 1 {
 		t.Errorf("Expected 1 not-found (s3-bucket), got %d", notFoundCount)
 	}
+	if failCount != 0 {
+		t.Errorf("Expected 0 failures, got %d", failCount)
+	}
 	t.Logf("Update summary: %d succeeded, %d not found, %d failed", successCount, notFoundCount, failCount)
 
 	// Verify which version ended up in the file (last vpc update wins: 6.0.0)
