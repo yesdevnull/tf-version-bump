@@ -109,7 +109,7 @@ tf-version-bump -pattern <glob-pattern> -module <module-source> -to <version>
 - `-pattern`: Glob pattern for Terraform files (e.g., `*.tf`, `modules/**/*.tf`)
 - `-module`: Source of the module to update (e.g., `terraform-aws-modules/vpc/aws`)
 - `-to`: Desired version number
-- `-from`: (Optional) Comma-separated list of versions to update from (e.g., `4.0.0` or `3.0.0,~> 3.0`)
+- `-from`: (Optional) Version to update from (can be specified multiple times, e.g., `-from 3.0.0 -from '~> 3.0'`)
 - `-ignore`: (Optional) Comma-separated list of module names or patterns to ignore (e.g., `vpc,legacy-*,*-test`)
 - `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
 - `-dry-run`: (Optional) Show what changes would be made without actually modifying files
@@ -147,10 +147,10 @@ Update only modules currently at version `3.14.0` to version `5.0.0`:
 tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -from "3.14.0"
 ```
 
-Update modules from multiple specific versions (CLI supports comma-separated list):
+Update modules from multiple specific versions (CLI supports multiple -from flags):
 
 ```bash
-tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/s3-bucket/aws" -to "4.0.0" -from "3.0.0,~> 3.0"
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/s3-bucket/aws" -to "4.0.0" -from "3.0.0" -from "~> 3.0"
 ```
 
 This will update S3 bucket modules that are currently at version `3.0.0` OR `~> 3.0` to version `4.0.0`, while leaving modules at other versions (like `3.1.0`) unchanged.
