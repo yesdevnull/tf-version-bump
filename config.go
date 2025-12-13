@@ -89,7 +89,7 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 		config.Modules[i].Version = strings.TrimSpace(module.Version)
 
 		// Trim whitespace from from versions and filter out empty ones
-		var filteredFrom []string
+		filteredFrom := make([]string, 0, len(module.From))
 		for _, fromVer := range module.From {
 			if trimmed := strings.TrimSpace(fromVer); trimmed != "" {
 				filteredFrom = append(filteredFrom, trimmed)
@@ -98,7 +98,7 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 		config.Modules[i].From = filteredFrom
 
 		// Trim whitespace from ignore patterns and filter out empty ones
-		var filteredIgnore []string
+		filteredIgnore := make([]string, 0, len(module.Ignore))
 		for _, pattern := range module.Ignore {
 			if trimmed := strings.TrimSpace(pattern); trimmed != "" {
 				filteredIgnore = append(filteredIgnore, trimmed)
