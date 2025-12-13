@@ -462,8 +462,8 @@ func TestLoadConfigWithFromField(t *testing.T) {
 				if updates[0].Version != "5.0.0" {
 					t.Errorf("Module version = %q, want %q", updates[0].Version, "5.0.0")
 				}
-				if updates[0].From != "3.14.0" {
-					t.Errorf("Module from = %q, want %q", updates[0].From, "3.14.0")
+				if len(updates[0].From) != 1 || updates[0].From[0] != "3.14.0" {
+					t.Errorf("Module from = %v, want [\"3.14.0\"]", updates[0].From)
 				}
 			},
 		},
@@ -479,11 +479,11 @@ func TestLoadConfigWithFromField(t *testing.T) {
 			expectError: false,
 			expectCount: 2,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if updates[0].From != "3.14.0" {
-					t.Errorf("First module from = %q, want %q", updates[0].From, "3.14.0")
+				if len(updates[0].From) != 1 || updates[0].From[0] != "3.14.0" {
+					t.Errorf("First module from = %v, want [\"3.14.0\"]", updates[0].From)
 				}
-				if updates[1].From != "" {
-					t.Errorf("Second module from = %q, want empty string", updates[1].From)
+				if len(updates[1].From) != 0 {
+					t.Errorf("Second module from = %v, want empty slice", updates[1].From)
 				}
 			},
 		},
@@ -503,14 +503,134 @@ func TestLoadConfigWithFromField(t *testing.T) {
 			expectError: false,
 			expectCount: 3,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if updates[0].From != "3.14.0" {
-					t.Errorf("First module from = %q, want %q", updates[0].From, "3.14.0")
+				if len(updates[0].From) != 1 || updates[0].From[0] != "3.14.0" {
+					t.Errorf("First module from = %v, want [\"3.14.0\"]", updates[0].From)
 				}
-				if updates[1].From != "3.0.0" {
-					t.Errorf("Second module from = %q, want %q", updates[1].From, "3.0.0")
+				if len(updates[1].From) != 1 || updates[1].From[0] != "3.0.0" {
+					t.Errorf("Second module from = %v, want [\"3.0.0\"]", updates[1].From)
 				}
-				if updates[2].From != "5.1.0" {
-					t.Errorf("Third module from = %q, want %q", updates[2].From, "5.1.0")
+				if len(updates[2].From) != 1 || updates[2].From[0] != "5.1.0" {
+					t.Errorf("Third module from = %v, want [\"5.1.0\"]", updates[2].From)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configFile := filepath.Join(tmpDir, "config.yml")
+
+			err := os.WriteFile(configFile, []byte(tt.configYAML), 0644)
+			if err != nil {
+				t.Fatalf("Failed to create temp config file: %v", err)
+			}
+
+			updates, err := loadConfig(configFile)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if len(updates) != tt.expectCount {
+				t.Errorf("Got %d modules, want %d", len(updates), tt.expectCount)
+			}
+
+			if tt.validate != nil {
+				tt.validate(t, updates)
+			}
+		})
+	}
+}
+
+// TestLoadConfigWithMultipleFromVersions tests config parsing with multiple from versions
+func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
+	tests := []struct {
+		name        string
+		configYAML  string
+		expectError bool
+		expectCount int
+		validate    func(*testing.T, []ModuleUpdate)
+	}{
+		{
+			name: "config with array of from versions",
+			configYAML: `modules:
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+    from:
+      - "3.0.0"
+      - "~> 3.0"
+`,
+			expectError: false,
+			expectCount: 1,
+			validate: func(t *testing.T, updates []ModuleUpdate) {
+				if updates[0].Source != "terraform-aws-modules/s3-bucket/aws" {
+					t.Errorf("Module source = %q, want %q", updates[0].Source, "terraform-aws-modules/s3-bucket/aws")
+				}
+				if updates[0].Version != "4.0.0" {
+					t.Errorf("Module version = %q, want %q", updates[0].Version, "4.0.0")
+				}
+				if len(updates[0].From) != 2 {
+					t.Fatalf("Module from length = %d, want 2", len(updates[0].From))
+				}
+				if updates[0].From[0] != "3.0.0" {
+					t.Errorf("Module from[0] = %q, want %q", updates[0].From[0], "3.0.0")
+				}
+				if updates[0].From[1] != "~> 3.0" {
+					t.Errorf("Module from[1] = %q, want %q", updates[0].From[1], "~> 3.0")
+				}
+			},
+		},
+		{
+			name: "config with mixed single and array from versions",
+			configYAML: `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    from: "4.0.0"
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+    from:
+      - "3.0.0"
+      - "~> 3.0"
+`,
+			expectError: false,
+			expectCount: 2,
+			validate: func(t *testing.T, updates []ModuleUpdate) {
+				// First module with single from version
+				if len(updates[0].From) != 1 || updates[0].From[0] != "4.0.0" {
+					t.Errorf("First module from = %v, want [\"4.0.0\"]", updates[0].From)
+				}
+				// Second module with multiple from versions
+				if len(updates[1].From) != 2 {
+					t.Fatalf("Second module from length = %d, want 2", len(updates[1].From))
+				}
+				if updates[1].From[0] != "3.0.0" {
+					t.Errorf("Second module from[0] = %q, want %q", updates[1].From[0], "3.0.0")
+				}
+				if updates[1].From[1] != "~> 3.0" {
+					t.Errorf("Second module from[1] = %q, want %q", updates[1].From[1], "~> 3.0")
+				}
+			},
+		},
+		{
+			name: "config with empty from array",
+			configYAML: `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    from: []
+`,
+			expectError: false,
+			expectCount: 1,
+			validate: func(t *testing.T, updates []ModuleUpdate) {
+				if len(updates[0].From) != 0 {
+					t.Errorf("Module from = %v, want empty slice", updates[0].From)
 				}
 			},
 		},
@@ -630,6 +750,85 @@ module "iam" {
 	// IAM should be updated (no from filter)
 	if !strings.Contains(contentStr, `version = "5.2.0"`) {
 		t.Error("IAM module should be updated to 5.2.0")
+	}
+}
+
+// TestConfigFileIntegrationWithMultipleFromVersions tests the multiple from versions feature
+func TestConfigFileIntegrationWithMultipleFromVersions(t *testing.T) {
+	// Create test Terraform files
+	tmpDir := t.TempDir()
+
+	tfContent := `module "s3_exact" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "3.0.0"
+}
+
+module "s3_constraint" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "~> 3.0"
+}
+
+module "s3_other" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "3.1.0"
+}
+`
+
+	tfFile := filepath.Join(tmpDir, "test.tf")
+	err := os.WriteFile(tfFile, []byte(tfContent), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp Terraform file: %v", err)
+	}
+
+	// Create config with multiple from versions
+	configContent := `modules:
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+    from:
+      - "3.0.0"
+      - "~> 3.0"
+`
+
+	configFile := filepath.Join(tmpDir, "config.yml")
+	err = os.WriteFile(configFile, []byte(configContent), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	// Load config
+	updates, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Process the file with each update
+	for _, update := range updates {
+		_, err := updateModuleVersion(tfFile, update.Source, update.Version, update.From, update.Ignore, false, false, false)
+		if err != nil {
+			t.Fatalf("Failed to update module version: %v", err)
+		}
+	}
+
+	// Read updated file
+	content, err := os.ReadFile(tfFile)
+	if err != nil {
+		t.Fatalf("Failed to read updated file: %v", err)
+	}
+	contentStr := string(content)
+
+	// s3_exact should be updated (version "3.0.0" matches first from filter)
+	if !strings.Contains(contentStr, `module "s3_exact"`) {
+		t.Error("s3_exact module should exist")
+	}
+	// Count how many modules have version 4.0.0
+	count4 := strings.Count(contentStr, `version = "4.0.0"`)
+	if count4 != 2 {
+		t.Errorf("Expected 2 modules updated to 4.0.0, got %d", count4)
+	}
+
+	// s3_other should remain at 3.1.0 (doesn't match any from filter)
+	if !strings.Contains(contentStr, `version = "3.1.0"`) {
+		t.Error("s3_other module should remain at 3.1.0")
 	}
 }
 
@@ -848,8 +1047,8 @@ func TestLoadConfigWhitespaceInValues(t *testing.T) {
 	if updates[0].Version != "5.0.0" {
 		t.Errorf("Version = %q, want %q (whitespace should be trimmed)", updates[0].Version, "5.0.0")
 	}
-	if updates[0].From != "4.0.0" {
-		t.Errorf("From = %q, want %q (whitespace should be trimmed)", updates[0].From, "4.0.0")
+	if len(updates[0].From) != 1 || updates[0].From[0] != "4.0.0" {
+		t.Errorf("From = %v, want [\"4.0.0\"] (whitespace should be trimmed)", updates[0].From)
 	}
 }
 
@@ -929,8 +1128,8 @@ func TestLoadConfigVersionConstraintsWithWhitespace(t *testing.T) {
 				t.Errorf("Version = %q, want %q (whitespace should be trimmed, constraint preserved)", updates[0].Version, tt.expectedVersion)
 			}
 
-			if updates[0].From != tt.expectedFrom {
-				t.Errorf("From = %q, want %q (whitespace should be trimmed, constraint preserved)", updates[0].From, tt.expectedFrom)
+			if len(updates[0].From) != 1 || updates[0].From[0] != tt.expectedFrom {
+				t.Errorf("From = %v, want [%q] (whitespace should be trimmed, constraint preserved)", updates[0].From, tt.expectedFrom)
 			}
 		})
 	}
@@ -992,8 +1191,8 @@ func TestLoadConfigWithIgnoreField(t *testing.T) {
 	if updates[1].Version != "4.0.0" {
 		t.Errorf("Second module version = %q, want %q", updates[1].Version, "4.0.0")
 	}
-	if updates[1].From != "3.0.0" {
-		t.Errorf("Second module from = %q, want %q", updates[1].From, "3.0.0")
+	if len(updates[1].From) != 1 || updates[1].From[0] != "3.0.0" {
+		t.Errorf("Second module from = %v, want [\"3.0.0\"]", updates[1].From)
 	}
 	if len(updates[1].Ignore) != 1 {
 		t.Fatalf("Second module ignore patterns count = %d, want 1", len(updates[1].Ignore))
