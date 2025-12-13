@@ -129,7 +129,7 @@ module "vpc-prod-legacy" {
 
 	// Test ignoring only exact "vpc"
 	ignorePatterns := []string{"vpc"}
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", ignorePatterns, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, ignorePatterns, false, false, false)
 	if err != nil {
 		t.Fatalf("Failed to process: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestHugeVersionString(t *testing.T) {
 	// Create a version string that's exactly 10KB
 	hugeVersion := strings.Repeat("X", 10*1024)
 
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", hugeVersion, "", nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", hugeVersion, nil, nil, false, false, false)
 	if err != nil {
 		t.Fatalf("Failed to process: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestInterpolationInSource(t *testing.T) {
 	// The tool performs literal string matching on the parsed source value.
 	// The HCL parser preserves "terraform-aws-modules/${var.module_name}/aws" as-is,
 	// so it won't match the literal string "terraform-aws-modules/vpc/aws".
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, false, false, false)
 	if err != nil {
 		t.Fatalf("Failed to process: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestMultilineAttributes(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, false, false, false)
 	if err != nil {
 		t.Fatalf("Failed to process file with heredoc: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestIgnorePatternPerformanceWithManyModules(t *testing.T) {
 
 	// Measure performance
 	start := time.Now()
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", ignorePatterns, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, ignorePatterns, false, false, false)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -356,7 +356,7 @@ module       "vpc"        {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, false, false, false)
 	if err != nil {
 		t.Fatalf("Failed to process weirdly formatted file: %v", err)
 	}
@@ -479,7 +479,7 @@ func TestSourceWithEscapedCharacters(t *testing.T) {
 	}
 
 	// Exact match should work
-	updated, err := updateModuleVersion(testFile, source, "5.0.0", "", nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, source, "5.0.0", nil, nil, false, false, false)
 	if err != nil {
 		t.Fatalf("Failed to process: %v", err)
 	}
@@ -510,7 +510,7 @@ func TestVeryLongModuleSource(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(testFile, longSource, "5.0.0", "", nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, longSource, "5.0.0", nil, nil, false, false, false)
 	if err != nil {
 		t.Fatalf("Failed to process very long source: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestFromVersionNotMatching(t *testing.T) {
 	}
 
 	// From filter that doesn't match any modules
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "99.99.99", nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", []string{"99.99.99"}, nil, false, false, false)
 	if err != nil {
 		t.Fatalf("Failed to process: %v", err)
 	}
@@ -629,7 +629,7 @@ func TestDryRunModificationTime(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Run in dry-run mode
-	_, err = updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", nil, false, true, false)
+	_, err = updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, false, true, false)
 	if err != nil {
 		t.Fatalf("Dry-run failed: %v", err)
 	}

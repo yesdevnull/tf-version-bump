@@ -170,7 +170,7 @@ func TestFileSystemEdgeCases(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// Try to process a directory as if it were a file
-		_, err := updateModuleVersion(tmpDir, "test", "1.0.0", "", nil, false, false, false)
+		_, err := updateModuleVersion(tmpDir, "test", "1.0.0", nil, nil, false, false, false)
 
 		if err == nil {
 			t.Error("Expected error when processing directory as file")
@@ -202,7 +202,7 @@ func TestFileSystemEdgeCases(t *testing.T) {
 		}
 
 		// Should be able to process it
-		updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", nil, false, false, false)
+		updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, false, false, false)
 		if err != nil {
 			t.Errorf("Failed to process file in deep directory: %v", err)
 		}
@@ -235,7 +235,7 @@ func TestConcurrentSafetyConsiderations(t *testing.T) {
 		// Multiple sequential updates should work fine
 		for i := 2; i <= 5; i++ {
 			version := fmt.Sprintf("1.0.%d", i-1)
-			_, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", version, "", nil, false, false, false)
+			_, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", version, nil, nil, false, false, false)
 			if err != nil {
 				t.Errorf("Sequential update %d failed: %v", i, err)
 			}
@@ -266,7 +266,7 @@ func TestLargeFileHandling(t *testing.T) {
 	}
 
 	// Process the large file
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", "", nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, false, false, false)
 	if err != nil {
 		t.Fatalf("Failed to process large file: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestLargeFileHandling(t *testing.T) {
 func TestErrorMessageQuality(t *testing.T) {
 	t.Run("file not found error includes path", func(t *testing.T) {
 		nonExistent := "/tmp/nonexistent-file-12345.tf"
-		_, err := updateModuleVersion(nonExistent, "test", "1.0.0", "", nil, false, false, false)
+		_, err := updateModuleVersion(nonExistent, "test", "1.0.0", nil, nil, false, false, false)
 
 		if err == nil {
 			t.Error("Expected error for non-existent file")
@@ -322,7 +322,7 @@ func TestErrorMessageQuality(t *testing.T) {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
 
-		_, err = updateModuleVersion(testFile, "test", "1.0.0", "", nil, false, false, false)
+		_, err = updateModuleVersion(testFile, "test", "1.0.0", nil, nil, false, false, false)
 
 		if err == nil {
 			t.Error("Expected error for invalid HCL")

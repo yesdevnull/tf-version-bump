@@ -8,14 +8,40 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// FromVersions is a custom type that can unmarshal both string and []string from YAML
+type FromVersions []string
+
+// UnmarshalYAML implements custom unmarshaling to handle both string and array formats
+func (f *FromVersions) UnmarshalYAML(value *yaml.Node) error {
+	// Try to unmarshal as a slice first
+	var slice []string
+	if err := value.Decode(&slice); err == nil {
+		*f = FromVersions(slice)
+		return nil
+	}
+
+	// If that fails, try to unmarshal as a string
+	var str string
+	if err := value.Decode(&str); err == nil {
+		if str == "" {
+			*f = FromVersions{}
+		} else {
+			*f = FromVersions{str}
+		}
+		return nil
+	}
+
+	return fmt.Errorf("from field must be either a string or an array of strings")
+}
+
 // ModuleUpdate represents a single module source and its target version.
 // It is used both for single module updates via CLI flags and for batch
 // updates from YAML configuration files.
 type ModuleUpdate struct {
-	Source  string   `yaml:"source"`  // Module source (e.g., "terraform-aws-modules/vpc/aws")
-	Version string   `yaml:"version"` // Target version (e.g., "5.0.0")
-	From    string   `yaml:"from"`    // Optional: only update if current version matches this (e.g., "4.0.0")
-	Ignore  []string `yaml:"ignore"`  // Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
+	Source  string       `yaml:"source"`  // Module source (e.g., "terraform-aws-modules/vpc/aws")
+	Version string       `yaml:"version"` // Target version (e.g., "5.0.0")
+	From    FromVersions `yaml:"from"`    // Optional: only update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
+	Ignore  []string     `yaml:"ignore"`  // Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
 }
 
 // Config represents the structure of a YAML configuration file for batch updates.
@@ -61,7 +87,15 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 		// Trim whitespace from source and version fields
 		config.Modules[i].Source = strings.TrimSpace(module.Source)
 		config.Modules[i].Version = strings.TrimSpace(module.Version)
-		config.Modules[i].From = strings.TrimSpace(module.From)
+
+		// Trim whitespace from from versions and filter out empty ones
+		var filteredFrom []string
+		for _, fromVer := range module.From {
+			if trimmed := strings.TrimSpace(fromVer); trimmed != "" {
+				filteredFrom = append(filteredFrom, trimmed)
+			}
+		}
+		config.Modules[i].From = filteredFrom
 
 		// Trim whitespace from ignore patterns and filter out empty ones
 		var filteredIgnore []string

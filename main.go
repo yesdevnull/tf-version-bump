@@ -33,7 +33,7 @@ func main() {
 	pattern := flag.String("pattern", "", "Glob pattern for Terraform files (e.g., '*.tf' or 'modules/**/*.tf')")
 	moduleSource := flag.String("module", "", "Source of the module to update (e.g., 'terraform-aws-modules/vpc/aws')")
 	toVersion := flag.String("to", "", "Desired version number")
-	from := flag.String("from", "", "Optional: only update modules with this current version (e.g., '4.0.0')")
+	from := flag.String("from", "", "Optional: comma-separated list of versions to update from (e.g., '4.0.0' or '3.0.0,~> 3.0')")
 	ignore := flag.String("ignore", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
 	configFile := flag.String("config", "", "Path to YAML config file with multiple module updates")
 	forceAdd := flag.Bool("force-add", false, "Add version attribute to modules that don't have one (default: skip with warning)")
@@ -87,8 +87,17 @@ func main() {
 				}
 			}
 		}
+		// Parse from versions from comma-separated list
+		var fromVersions []string
+		if *from != "" {
+			for _, v := range strings.Split(*from, ",") {
+				if trimmed := strings.TrimSpace(v); trimmed != "" {
+					fromVersions = append(fromVersions, trimmed)
+				}
+			}
+		}
 		updates = []ModuleUpdate{
-			{Source: *moduleSource, Version: *toVersion, From: *from, Ignore: ignorePatterns},
+			{Source: *moduleSource, Version: *toVersion, From: fromVersions, Ignore: ignorePatterns},
 		}
 	}
 
@@ -125,8 +134,8 @@ func main() {
 					prefix = "→"
 					action = "Would update"
 				}
-				if update.From != "" {
-					fmt.Printf("%s %s module source '%s' from version '%s' to '%s' in %s\n", prefix, action, update.Source, update.From, update.Version, file)
+				if len(update.From) > 0 {
+					fmt.Printf("%s %s module source '%s' from version(s) %v to '%s' in %s\n", prefix, action, update.Source, update.From, update.Version, file)
 				} else {
 					fmt.Printf("%s %s module source '%s' to version '%s' in %s\n", prefix, action, update.Source, update.Version, file)
 				}
@@ -160,14 +169,14 @@ func main() {
 //   - When forceAdd is true: a version attribute is added to the module
 //
 // All modules with the same source attribute will be updated to the same version.
-// If fromVersion is specified, only modules with that current version will be updated.
+// If fromVersions is specified, only modules with current version matching any in the list will be updated.
 // If ignorePatterns is specified, modules with names matching any pattern will be skipped.
 //
 // Parameters:
 //   - filename: Path to the Terraform file to process
 //   - moduleSource: The module source to match (e.g., "terraform-aws-modules/vpc/aws")
 //   - version: The target version to set (e.g., "5.0.0")
-//   - fromVersion: Optional: only update if current version matches this (e.g., "4.0.0")
+//   - fromVersions: Optional: only update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
 //   - ignorePatterns: Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
 //   - forceAdd: If true, add version attribute to modules that don't have one
 //   - dryRun: If true, show what would be changed without modifying files
@@ -176,7 +185,7 @@ func main() {
 // Returns:
 //   - bool: true if at least one module was updated (or would be updated in dry-run mode), false otherwise
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateModuleVersion(filename, moduleSource, version, fromVersion string, ignorePatterns []string, forceAdd bool, dryRun bool, verbose bool) (bool, error) {
+func updateModuleVersion(filename, moduleSource, version string, fromVersions []string, ignorePatterns []string, forceAdd bool, dryRun bool, verbose bool) (bool, error) {
 	// Get original file permissions to preserve them when writing
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
@@ -246,16 +255,25 @@ func updateModuleVersion(filename, moduleSource, version, fromVersion string, ig
 							continue
 						}
 						// forceAdd is true, so we'll add the version attribute below
-					} else if fromVersion != "" {
-						// If fromVersion is specified, check if current version matches
+					} else if len(fromVersions) > 0 {
+						// If fromVersions is specified, check if current version matches any in the list
 						versionTokens := versionAttr.Expr().BuildTokens(nil)
 						currentVersion := string(versionTokens.Bytes())
 						currentVersion = trimQuotes(strings.TrimSpace(currentVersion))
 
-						if currentVersion != fromVersion {
-							// Current version doesn't match fromVersion, skip this module
+						// Check if current version matches any of the from versions
+						matchesFromVersion := false
+						for _, fromVer := range fromVersions {
+							if currentVersion == fromVer {
+								matchesFromVersion = true
+								break
+							}
+						}
+
+						if !matchesFromVersion {
+							// Current version doesn't match any fromVersion, skip this module
 							if verbose {
-								fmt.Printf("  ⊗ Skipped module %q in %s (current version %q does not match 'from' filter %q)\n", moduleName, filename, currentVersion, fromVersion)
+								fmt.Printf("  ⊗ Skipped module %q in %s (current version %q does not match any 'from' filter %v)\n", moduleName, filename, currentVersion, fromVersions)
 							}
 							continue
 						}
