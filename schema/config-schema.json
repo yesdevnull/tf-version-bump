@@ -42,17 +42,31 @@
             ]
           },
           "from": {
-            "type": "string",
-            "description": "Optional: Only update the module if its current version matches this value. Supports full SemVer 2.0.0 specification including pre-release and build metadata",
-            "minLength": 1,
-            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
-            "examples": [
-              "4.0.0",
-              "1.0.0",
-              "9.12.1",
-              "1.5.0-rc.1",
-              "2.0.0-beta.2+exp.sha.5114f85"
-            ]
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "Single version to update from. Supports full SemVer 2.0.0 specification including pre-release and build metadata",
+                "minLength": 1,
+                "examples": [
+                  "4.0.0",
+                  "~> 3.0"
+                ]
+              },
+              {
+                "type": "array",
+                "description": "List of versions to update from. Module will be updated if current version matches any in this list",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "examples": [
+                  ["3.0.0", "~> 3.0"],
+                  ["4.0.0", "4.1.0"]
+                ]
+              }
+            ],
+            "description": "Optional: Only update the module if its current version matches this value or any value in the list. Supports version constraints like ~> 3.0"
           },
           "ignore": {
             "type": "array",
@@ -104,7 +118,7 @@
         {
           "source": "terraform-aws-modules/s3-bucket/aws",
           "version": "4.0.0",
-          "from": "3.0.0",
+          "from": ["3.0.0", "~> 3.0"],
           "ignore": ["*-deprecated"]
         }
       ]
