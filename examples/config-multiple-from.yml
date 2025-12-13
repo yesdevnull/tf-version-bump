@@ -1,0 +1,24 @@
+# Example configuration demonstrating multiple from versions
+# This allows selective updates - only modules at specified versions will be updated
+
+modules:
+  # Update S3 bucket modules from versions 3.0.0 or ~> 3.0 to 4.0.0
+  # Modules at other versions (e.g., 3.1.0) will remain unchanged
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+    from:
+      - "3.0.0"
+      - "~> 3.0"
+
+  # Update VPC modules from multiple specific versions
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    from:
+      - "3.14.0"
+      - "4.0.0"
+      - "~> 4.0"
+
+  # Single from version still works (backward compatible)
+  - source: "terraform-aws-modules/security-group/aws"
+    version: "5.1.0"
+    from: "5.0.0"
