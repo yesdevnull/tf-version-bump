@@ -2042,7 +2042,7 @@ module "vpc-staging" {
 	if !strings.Contains(output, "Skipped module \"vpc-staging\"") {
 		t.Errorf("Expected verbose output for version mismatch, got: %s", output)
 	}
-	if !strings.Contains(output, "does not match 'from' filter") {
+	if !strings.Contains(output, "does not match any 'from' filter") {
 		t.Errorf("Expected from filter message in verbose output, got: %s", output)
 	}
 }

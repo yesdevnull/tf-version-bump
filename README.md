@@ -109,7 +109,7 @@ tf-version-bump -pattern <glob-pattern> -module <module-source> -to <version>
 - `-pattern`: Glob pattern for Terraform files (e.g., `*.tf`, `modules/**/*.tf`)
 - `-module`: Source of the module to update (e.g., `terraform-aws-modules/vpc/aws`)
 - `-to`: Desired version number
-- `-from`: (Optional) Only update modules with this current version (e.g., `4.0.0`)
+- `-from`: (Optional) Comma-separated list of versions to update from (e.g., `4.0.0` or `3.0.0,~> 3.0`)
 - `-ignore`: (Optional) Comma-separated list of module names or patterns to ignore (e.g., `vpc,legacy-*,*-test`)
 - `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
 - `-dry-run`: (Optional) Show what changes would be made without actually modifying files
@@ -146,6 +146,14 @@ Update only modules currently at version `3.14.0` to version `5.0.0`:
 ```bash
 tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -from "3.14.0"
 ```
+
+Update modules from multiple specific versions (CLI supports comma-separated list):
+
+```bash
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/s3-bucket/aws" -to "4.0.0" -from "3.0.0,~> 3.0"
+```
+
+This will update S3 bucket modules that are currently at version `3.0.0` OR `~> 3.0` to version `4.0.0`, while leaving modules at other versions (like `3.1.0`) unchanged.
 
 Update all VPC modules except specific ones using ignore patterns:
 
@@ -202,6 +210,9 @@ modules:
       - "test-*"
   - source: "terraform-aws-modules/s3-bucket/aws"
     version: "4.0.0"
+    from:           # Optional: update from multiple versions
+      - "3.0.0"
+      - "~> 3.0"
   - source: "terraform-aws-modules/security-group/aws"
     version: "5.1.0"
     from: "4.0.0"   # Optional: only update from version 4.0.0
@@ -212,7 +223,10 @@ modules:
 Each module entry supports the following fields:
 - `source` (required): Module source identifier
 - `version` (required): Target version to update to
-- `from` (optional): Only update modules currently at this version
+- `from` (optional): Only update modules currently at this version (or any version in a list)
+  - Can be a single string: `from: "3.14.0"`
+  - Can be a list of versions: `from: ["3.0.0", "~> 3.0"]`
+  - Modules will be updated if their current version matches any version in the list
 - `ignore` (optional): List of module names or wildcard patterns to skip
   - Supports exact matches: `"vpc"` matches only a module named "vpc"
   - Supports wildcards with `*`:
@@ -241,6 +255,63 @@ Update all Terraform files recursively:
 
 ```bash
 tf-version-bump -pattern "**/*.tf" -config "module-updates.yml"
+```
+
+#### Example: Selective Updates with Multiple From Versions
+
+You can specify multiple "from" versions to selectively update only modules matching specific versions. This is useful when you want to upgrade modules from certain versions while leaving others untouched.
+
+**Example scenario:** Update S3 bucket modules from versions `3.0.0` and `~> 3.0` to `4.0.0`, but leave modules at `3.1.0` unchanged.
+
+**Config file** (`selective-update.yml`):
+```yaml
+modules:
+  - source: "terraform-aws-modules/s3-bucket/aws"
+    version: "4.0.0"
+    from:
+      - "3.0.0"
+      - "~> 3.0"
+```
+
+**Terraform file before** (`main.tf`):
+```hcl
+module "s3_exact" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "3.0.0"  # Will be updated
+}
+
+module "s3_constraint" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "~> 3.0"  # Will be updated
+}
+
+module "s3_other" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "3.1.0"  # Will NOT be updated (doesn't match)
+}
+```
+
+**Run the update:**
+```bash
+tf-version-bump -pattern "main.tf" -config "selective-update.yml"
+```
+
+**Terraform file after:**
+```hcl
+module "s3_exact" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "4.0.0"  # Updated
+}
+
+module "s3_constraint" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "4.0.0"  # Updated
+}
+
+module "s3_other" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "3.1.0"  # Unchanged
+}
 ```
 
 #### Example Config Files
