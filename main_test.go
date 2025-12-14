@@ -12,6 +12,119 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 )
 
+func TestStringSliceFlag(t *testing.T) {
+	tests := []struct {
+		name     string
+		values   []string
+		expected string
+	}{
+		{
+			name:     "empty slice",
+			values:   []string{},
+			expected: "",
+		},
+		{
+			name:     "single value",
+			values:   []string{"3.0.0"},
+			expected: "3.0.0",
+		},
+		{
+			name:     "multiple values",
+			values:   []string{"3.0.0", "~> 3.0", "4.0.0"},
+			expected: "3.0.0,~> 3.0,4.0.0",
+		},
+		{
+			name:     "values with spaces",
+			values:   []string{"3.0.0", "~> 3.0 "},
+			expected: "3.0.0,~> 3.0 ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var flag stringSliceFlag
+			for _, v := range tt.values {
+				if err := flag.Set(v); err != nil {
+					t.Errorf("Set() error = %v", err)
+				}
+			}
+			if got := flag.String(); got != tt.expected {
+				t.Errorf("String() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestStringSliceFlagSet(t *testing.T) {
+	tests := []struct {
+		name   string
+		value  string
+		expect []string
+	}{
+		{
+			name:   "set single value",
+			value:  "3.0.0",
+			expect: []string{"3.0.0"},
+		},
+		{
+			name:   "set empty value",
+			value:  "",
+			expect: []string{""},
+		},
+		{
+			name:   "set version constraint",
+			value:  "~> 3.0",
+			expect: []string{"~> 3.0"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var flag stringSliceFlag
+			if err := flag.Set(tt.value); err != nil {
+				t.Errorf("Set() error = %v", err)
+			}
+			if len(flag) != len(tt.expect) {
+				t.Errorf("flag length = %d, want %d", len(flag), len(tt.expect))
+			}
+			for i, v := range tt.expect {
+				if flag[i] != v {
+					t.Errorf("flag[%d] = %q, want %q", i, flag[i], v)
+				}
+			}
+		})
+	}
+}
+
+func TestStringSliceFlagMultipleSet(t *testing.T) {
+	var flag stringSliceFlag
+	
+	// Set multiple values
+	values := []string{"3.0.0", "~> 3.0", "4.0.0"}
+	for _, v := range values {
+		if err := flag.Set(v); err != nil {
+			t.Errorf("Set(%q) error = %v", v, err)
+		}
+	}
+	
+	// Verify all values were accumulated
+	if len(flag) != len(values) {
+		t.Errorf("flag length = %d, want %d", len(flag), len(values))
+	}
+	
+	for i, expected := range values {
+		if flag[i] != expected {
+			t.Errorf("flag[%d] = %q, want %q", i, flag[i], expected)
+		}
+	}
+	
+	// Verify String() output
+	expected := strings.Join(values, ",")
+	if got := flag.String(); got != expected {
+		t.Errorf("String() = %q, want %q", got, expected)
+	}
+}
+
 func TestTrimQuotes(t *testing.T) {
 	tests := []struct {
 		name     string

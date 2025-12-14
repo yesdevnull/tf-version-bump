@@ -634,6 +634,34 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "config with invalid from type - number",
+			configYAML: `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    from: 123
+`,
+			expectError: true,
+		},
+		{
+			name: "config with invalid from type - boolean",
+			configYAML: `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    from: true
+`,
+			expectError: true,
+		},
+		{
+			name: "config with invalid from type - object",
+			configYAML: `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    from:
+      version: "3.0.0"
+`,
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {

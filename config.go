@@ -13,16 +13,28 @@ type FromVersions []string
 
 // UnmarshalYAML implements custom unmarshaling to handle both string and array formats
 func (f *FromVersions) UnmarshalYAML(value *yaml.Node) error {
-	// Try to unmarshal as a slice first
-	var slice []string
-	if err := value.Decode(&slice); err == nil {
+	// Check if it's a sequence (array)
+	if value.Kind == yaml.SequenceNode {
+		var slice []string
+		if err := value.Decode(&slice); err != nil {
+			return fmt.Errorf("from field array contains non-string values: %w", err)
+		}
 		*f = FromVersions(slice)
 		return nil
 	}
 
-	// If that fails, try to unmarshal as a string
-	var str string
-	if err := value.Decode(&str); err == nil {
+	// Check if it's a scalar (single value)
+	if value.Kind == yaml.ScalarNode {
+		// Only accept string scalars, reject numbers and booleans
+		if value.Tag != "!!str" {
+			return fmt.Errorf("from field must be a string or array of strings, got %s", value.Tag)
+		}
+		
+		var str string
+		if err := value.Decode(&str); err != nil {
+			return fmt.Errorf("failed to decode from field as string: %w", err)
+		}
+		
 		if str == "" {
 			*f = FromVersions{}
 		} else {
@@ -31,7 +43,7 @@ func (f *FromVersions) UnmarshalYAML(value *yaml.Node) error {
 		return nil
 	}
 
-	return fmt.Errorf("from field must be either a string or an array of strings")
+	return fmt.Errorf("from field must be either a string or an array of strings, got node kind %v", value.Kind)
 }
 
 // ModuleUpdate represents a single module source and its target version.
