@@ -11,6 +11,7 @@ A CLI tool written in Go that updates Terraform module versions across multiple 
 - Process multiple files using glob patterns
 - **Batch updates** via YAML configuration files
 - **Selective updates** with ignore patterns (wildcard support)
+- **Version filtering** to skip specific versions or update only from specific versions
 - Preserves formatting and comments in Terraform files
 - Safe and reliable HCL parsing and writing
 - Comprehensive test suite
@@ -110,6 +111,7 @@ tf-version-bump -pattern <glob-pattern> -module <module-source> -to <version>
 - `-module`: Source of the module to update (e.g., `terraform-aws-modules/vpc/aws`)
 - `-to`: Desired version number
 - `-from`: (Optional) Version to update from (can be specified multiple times, e.g., `-from 3.0.0 -from '~> 3.0'`)
+- `-ignore-version`: (Optional) Version(s) to skip (can be specified multiple times, e.g., `-ignore-version 3.0.0 -ignore-version '~> 3.0'`)
 - `-ignore`: (Optional) Comma-separated list of module names or patterns to ignore (e.g., `vpc,legacy-*,*-test`)
 - `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
 - `-dry-run`: (Optional) Show what changes would be made without actually modifying files
@@ -154,6 +156,22 @@ tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/s3-bucket/aws" -t
 ```
 
 This will update S3 bucket modules that are currently at version `3.0.0` OR `~> 3.0` to version `4.0.0`, while leaving modules at other versions (like `3.1.0`) unchanged.
+
+Skip updating specific versions using ignore-version flag:
+
+```bash
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -ignore-version "3.14.0"
+```
+
+This will update all VPC modules to version `5.0.0` EXCEPT those currently at version `3.14.0`.
+
+Skip multiple versions (can specify flag multiple times):
+
+```bash
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/s3-bucket/aws" -to "4.0.0" -ignore-version "3.0.0" -ignore-version "~> 3.0"
+```
+
+This will update all S3 bucket modules to version `4.0.0` EXCEPT those currently at version `3.0.0` or `~> 3.0`.
 
 Update all VPC modules except specific ones using ignore patterns:
 
@@ -204,18 +222,23 @@ Create a YAML file with the following structure:
 modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
-    from: "3.14.0"  # Optional: only update if current version is 3.14.0
-    ignore:         # Optional: module names or patterns to ignore
+    from: "3.14.0"       # Optional: only update if current version is 3.14.0
+    ignore_versions:     # Optional: versions to skip
+      - "3.0.0"
+      - "~> 3.0"
+    ignore:              # Optional: module names or patterns to ignore
       - "legacy-vpc"
       - "test-*"
   - source: "terraform-aws-modules/s3-bucket/aws"
     version: "4.0.0"
-    from:           # Optional: update from multiple versions
+    from:                # Optional: update from multiple versions
       - "3.0.0"
       - "~> 3.0"
+    ignore_versions:     # Optional: skip specific versions
+      - "3.5.0"
   - source: "terraform-aws-modules/security-group/aws"
     version: "5.1.0"
-    from: "4.0.0"   # Optional: only update from version 4.0.0
+    from: "4.0.0"        # Optional: only update from version 4.0.0
     ignore:
       - "*-deprecated"
 ```
@@ -227,6 +250,11 @@ Each module entry supports the following fields:
   - Can be a single string: `from: "3.14.0"`
   - Can be a list of versions: `from: ["3.0.0", "~> 3.0"]`
   - Modules will be updated if their current version matches any version in the list
+- `ignore_versions` (optional): Skip modules currently at these version(s)
+  - Can be a single string: `ignore_versions: "3.14.0"`
+  - Can be a list of versions: `ignore_versions: ["3.0.0", "~> 3.0"]`
+  - Modules will be skipped if their current version matches any version in the list
+  - Takes precedence over `from` filter (if a version matches both, it will be skipped)
 - `ignore` (optional): List of module names or wildcard patterns to skip
   - Supports exact matches: `"vpc"` matches only a module named "vpc"
   - Supports wildcards with `*`:
@@ -255,6 +283,63 @@ Update all Terraform files recursively:
 
 ```bash
 tf-version-bump -pattern "**/*.tf" -config "module-updates.yml"
+```
+
+#### Example: Skipping Specific Versions with ignore_versions
+
+You can use `ignore_versions` to skip updating modules at specific versions while updating all others. This is useful when you want to keep certain versions pinned (e.g., for compatibility reasons) but update everything else.
+
+**Example scenario:** Update all VPC modules to version `5.0.0` EXCEPT those at version `3.14.0` and `~> 3.0` (which should remain unchanged).
+
+**Config file** (`skip-versions.yml`):
+```yaml
+modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    ignore_versions:
+      - "3.14.0"
+      - "~> 3.0"
+```
+
+**Terraform file before** (`main.tf`):
+```hcl
+module "vpc_old" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.14.0"  # Will NOT be updated (ignored)
+}
+
+module "vpc_constraint" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 3.0"  # Will NOT be updated (ignored)
+}
+
+module "vpc_newer" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "4.0.0"  # Will be updated
+}
+```
+
+**Run the update:**
+```bash
+tf-version-bump -pattern "main.tf" -config "skip-versions.yml"
+```
+
+**Terraform file after:**
+```hcl
+module "vpc_old" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.14.0"  # Unchanged (ignored)
+}
+
+module "vpc_constraint" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 3.0"  # Unchanged (ignored)
+}
+
+module "vpc_newer" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "5.0.0"  # Updated
+}
 ```
 
 #### Example: Selective Updates with Multiple From Versions
@@ -314,6 +399,27 @@ module "s3_other" {
 }
 ```
 
+#### Example: Combining from and ignore_versions Filters
+
+You can combine both `from` and `ignore_versions` filters for fine-grained control. The `ignore_versions` filter takes precedence - if a version matches both filters, it will be skipped.
+
+**Example scenario:** Update VPC modules from versions `3.x` and `4.x` to `5.0.0`, but keep version `4.0.0` pinned for compatibility.
+
+**Config file** (`combined-filters.yml`):
+```yaml
+modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    from:
+      - "3.14.0"
+      - "4.0.0"
+      - "4.5.0"
+    ignore_versions:
+      - "4.0.0"  # Keep this version pinned
+```
+
+**Result:** Modules at `3.14.0` and `4.5.0` will be updated to `5.0.0`, but modules at `4.0.0` will remain unchanged.
+
 #### Example Config Files
 
 See the `examples/` directory for sample configuration files:
@@ -331,6 +437,7 @@ See the `examples/` directory for sample configuration files:
    - Searches for `module` blocks with the specified source attribute
    - Checks if the module name matches any ignore patterns and skips if matched
    - Skips local modules (sources starting with `./`, `../`, or `/`) with a warning
+   - If the `-ignore-version` flag is specified, skips modules with matching current version (takes precedence)
    - If the `-from` flag is specified, only updates modules with matching current version
    - Updates the `version` attribute to the desired version
    - If a module doesn't have a version attribute, it prints a warning and skips it (no version will be added)
