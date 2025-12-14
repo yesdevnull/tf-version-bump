@@ -168,6 +168,24 @@ func main() {
 	}
 }
 
+// containsVersion checks if a version string is present in a slice of versions.
+// This helper function reduces code duplication when checking version filters.
+//
+// Parameters:
+//   - versions: List of version strings to search through
+//   - version: The version string to search for
+//
+// Returns:
+//   - bool: true if the version is found in the list, false otherwise
+func containsVersion(versions []string, version string) bool {
+	for _, v := range versions {
+		if v == version {
+			return true
+		}
+	}
+	return false
+}
+
 // updateModuleVersion parses a Terraform file, finds modules with the specified source,
 // updates their version attribute, and writes the modified content back to the file.
 //
@@ -272,42 +290,21 @@ func updateModuleVersion(filename, moduleSource, version string, fromVersions []
 						currentVersion = trimQuotes(strings.TrimSpace(currentVersion))
 
 						// Check if current version matches any ignore-version filter
-						if len(ignoreVersions) > 0 {
-							matchesIgnoreVersion := false
-							for _, ignoreVer := range ignoreVersions {
-								if currentVersion == ignoreVer {
-									matchesIgnoreVersion = true
-									break
-								}
+						if len(ignoreVersions) > 0 && containsVersion(ignoreVersions, currentVersion) {
+							// Current version matches an ignore-version filter, skip this module
+							if verbose {
+								fmt.Printf("  ⊗ Skipped module %q in %s (current version %q matches 'ignore-version' filter %v)\n", moduleName, filename, currentVersion, ignoreVersions)
 							}
-
-							if matchesIgnoreVersion {
-								// Current version matches an ignore-version filter, skip this module
-								if verbose {
-									fmt.Printf("  ⊗ Skipped module %q in %s (current version %q matches 'ignore-version' filter %v)\n", moduleName, filename, currentVersion, ignoreVersions)
-								}
-								continue
-							}
+							continue
 						}
 
 						// If fromVersions is specified, check if current version matches any in the list
-						if len(fromVersions) > 0 {
-							// Check if current version matches any of the from versions
-							matchesFromVersion := false
-							for _, fromVer := range fromVersions {
-								if currentVersion == fromVer {
-									matchesFromVersion = true
-									break
-								}
+						if len(fromVersions) > 0 && !containsVersion(fromVersions, currentVersion) {
+							// Current version doesn't match any fromVersion, skip this module
+							if verbose {
+								fmt.Printf("  ⊗ Skipped module %q in %s (current version %q does not match any 'from' filter %v)\n", moduleName, filename, currentVersion, fromVersions)
 							}
-
-							if !matchesFromVersion {
-								// Current version doesn't match any fromVersion, skip this module
-								if verbose {
-									fmt.Printf("  ⊗ Skipped module %q in %s (current version %q does not match any 'from' filter %v)\n", moduleName, filename, currentVersion, fromVersions)
-								}
-								continue
-							}
+							continue
 						}
 					}
 
