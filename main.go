@@ -49,6 +49,8 @@ func main() {
 	toVersion := flag.String("to", "", "Desired version number")
 	var fromVersions stringSliceFlag
 	flag.Var(&fromVersions, "from", "Optional: version to update from (can be specified multiple times, e.g., -from 3.0.0 -from '~> 3.0')")
+	var ignoreVersions stringSliceFlag
+	flag.Var(&ignoreVersions, "ignore-version", "Optional: version(s) to skip (can be specified multiple times, e.g., -ignore-version 3.0.0 -ignore-version '~> 3.0')")
 	ignore := flag.String("ignore", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
 	configFile := flag.String("config", "", "Path to YAML config file with multiple module updates")
 	forceAdd := flag.Bool("force-add", false, "Add version attribute to modules that don't have one (default: skip with warning)")
@@ -71,8 +73,8 @@ func main() {
 
 	if *configFile != "" {
 		// Config file mode
-		if *moduleSource != "" || *toVersion != "" || len(fromVersions) > 0 || *ignore != "" {
-			log.Fatal("Error: Cannot use -config with -module, -to, -from, or -ignore flags")
+		if *moduleSource != "" || *toVersion != "" || len(fromVersions) > 0 || len(ignoreVersions) > 0 || *ignore != "" {
+			log.Fatal("Error: Cannot use -config with -module, -to, -from, -ignore-version, or -ignore flags")
 		}
 		if *pattern == "" {
 			log.Fatal("Error: -pattern flag is required")
@@ -88,7 +90,7 @@ func main() {
 		// Single module mode
 		if *pattern == "" || *moduleSource == "" || *toVersion == "" {
 			fmt.Println("Usage:")
-			fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -to <version> [-from <version>]... [-ignore <patterns>]")
+			fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -to <version> [-from <version>]... [-ignore-version <version>]... [-ignore <patterns>]")
 			fmt.Println("  Config file:    tf-version-bump -pattern <glob> -config <config-file>")
 			flag.PrintDefaults()
 			os.Exit(1)
@@ -103,7 +105,7 @@ func main() {
 			}
 		}
 		updates = []ModuleUpdate{
-			{Source: *moduleSource, Version: *toVersion, From: FromVersions(fromVersions), Ignore: ignorePatterns},
+			{Source: *moduleSource, Version: *toVersion, From: FromVersions(fromVersions), IgnoreVersions: FromVersions(ignoreVersions), Ignore: ignorePatterns},
 		}
 	}
 
@@ -128,7 +130,7 @@ func main() {
 	for _, file := range files {
 		fileUpdates := 0
 		for _, update := range updates {
-			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, update.Ignore, *forceAdd, *dryRun, *verbose)
+			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, update.IgnoreVersions, update.Ignore, *forceAdd, *dryRun, *verbose)
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				continue
@@ -176,6 +178,7 @@ func main() {
 //
 // All modules with the same source attribute will be updated to the same version.
 // If fromVersions is specified, only modules with current version matching any in the list will be updated.
+// If ignoreVersions is specified, modules with current version matching any in the list will be skipped.
 // If ignorePatterns is specified, modules with names matching any pattern will be skipped.
 //
 // Parameters:
@@ -183,6 +186,7 @@ func main() {
 //   - moduleSource: The module source to match (e.g., "terraform-aws-modules/vpc/aws")
 //   - version: The target version to set (e.g., "5.0.0")
 //   - fromVersions: Optional: only update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
+//   - ignoreVersions: Optional: skip update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
 //   - ignorePatterns: Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
 //   - forceAdd: If true, add version attribute to modules that don't have one
 //   - dryRun: If true, show what would be changed without modifying files
@@ -191,7 +195,7 @@ func main() {
 // Returns:
 //   - bool: true if at least one module was updated (or would be updated in dry-run mode), false otherwise
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateModuleVersion(filename, moduleSource, version string, fromVersions []string, ignorePatterns []string, forceAdd bool, dryRun bool, verbose bool) (bool, error) {
+func updateModuleVersion(filename, moduleSource, version string, fromVersions []string, ignoreVersions []string, ignorePatterns []string, forceAdd bool, dryRun bool, verbose bool) (bool, error) {
 	// Get original file permissions to preserve them when writing
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
@@ -261,27 +265,49 @@ func updateModuleVersion(filename, moduleSource, version string, fromVersions []
 							continue
 						}
 						// forceAdd is true, so we'll add the version attribute below
-					} else if len(fromVersions) > 0 {
-						// If fromVersions is specified, check if current version matches any in the list
+					} else {
+						// Get the current version for filtering
 						versionTokens := versionAttr.Expr().BuildTokens(nil)
 						currentVersion := string(versionTokens.Bytes())
 						currentVersion = trimQuotes(strings.TrimSpace(currentVersion))
 
-						// Check if current version matches any of the from versions
-						matchesFromVersion := false
-						for _, fromVer := range fromVersions {
-							if currentVersion == fromVer {
-								matchesFromVersion = true
-								break
+						// Check if current version matches any ignore-version filter
+						if len(ignoreVersions) > 0 {
+							matchesIgnoreVersion := false
+							for _, ignoreVer := range ignoreVersions {
+								if currentVersion == ignoreVer {
+									matchesIgnoreVersion = true
+									break
+								}
+							}
+
+							if matchesIgnoreVersion {
+								// Current version matches an ignore-version filter, skip this module
+								if verbose {
+									fmt.Printf("  ⊗ Skipped module %q in %s (current version %q matches 'ignore-version' filter %v)\n", moduleName, filename, currentVersion, ignoreVersions)
+								}
+								continue
 							}
 						}
 
-						if !matchesFromVersion {
-							// Current version doesn't match any fromVersion, skip this module
-							if verbose {
-								fmt.Printf("  ⊗ Skipped module %q in %s (current version %q does not match any 'from' filter %v)\n", moduleName, filename, currentVersion, fromVersions)
+						// If fromVersions is specified, check if current version matches any in the list
+						if len(fromVersions) > 0 {
+							// Check if current version matches any of the from versions
+							matchesFromVersion := false
+							for _, fromVer := range fromVersions {
+								if currentVersion == fromVer {
+									matchesFromVersion = true
+									break
+								}
 							}
-							continue
+
+							if !matchesFromVersion {
+								// Current version doesn't match any fromVersion, skip this module
+								if verbose {
+									fmt.Printf("  ⊗ Skipped module %q in %s (current version %q does not match any 'from' filter %v)\n", moduleName, filename, currentVersion, fromVersions)
+								}
+								continue
+							}
 						}
 					}
 

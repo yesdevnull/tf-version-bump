@@ -50,10 +50,11 @@ func (f *FromVersions) UnmarshalYAML(value *yaml.Node) error {
 // It is used both for single module updates via CLI flags and for batch
 // updates from YAML configuration files.
 type ModuleUpdate struct {
-	Source  string       `yaml:"source"`  // Module source (e.g., "terraform-aws-modules/vpc/aws")
-	Version string       `yaml:"version"` // Target version (e.g., "5.0.0")
-	From    FromVersions `yaml:"from"`    // Optional: only update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
-	Ignore  []string     `yaml:"ignore"`  // Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
+	Source         string       `yaml:"source"`          // Module source (e.g., "terraform-aws-modules/vpc/aws")
+	Version        string       `yaml:"version"`         // Target version (e.g., "5.0.0")
+	From           FromVersions `yaml:"from"`            // Optional: only update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
+	IgnoreVersions FromVersions `yaml:"ignore_versions"` // Optional: skip update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
+	Ignore         []string     `yaml:"ignore"`          // Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
 }
 
 // Config represents the structure of a YAML configuration file for batch updates.
@@ -64,8 +65,11 @@ type ModuleUpdate struct {
 //	modules:
 //	  - source: "terraform-aws-modules/vpc/aws"
 //	    version: "5.0.0"
-//	    from: "4.0.0"  # Optional: only update if current version is 4.0.0
-//	    ignore:        # Optional: module names or patterns to ignore
+//	    from: "4.0.0"          # Optional: only update if current version is 4.0.0
+//	    ignore_versions:       # Optional: versions to skip
+//	      - "3.0.0"
+//	      - "~> 3.0"
+//	    ignore:                # Optional: module names or patterns to ignore
 //	      - "legacy-vpc"
 //	      - "test-*"
 //	  - source: "terraform-aws-modules/s3-bucket/aws"
@@ -108,6 +112,15 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 			}
 		}
 		config.Modules[i].From = filteredFrom
+
+		// Trim whitespace from ignore versions and filter out empty ones
+		filteredIgnoreVersions := make([]string, 0, len(module.IgnoreVersions))
+		for _, ignoreVer := range module.IgnoreVersions {
+			if trimmed := strings.TrimSpace(ignoreVer); trimmed != "" {
+				filteredIgnoreVersions = append(filteredIgnoreVersions, trimmed)
+			}
+		}
+		config.Modules[i].IgnoreVersions = filteredIgnoreVersions
 
 		// Trim whitespace from ignore patterns and filter out empty ones
 		filteredIgnore := make([]string, 0, len(module.Ignore))
