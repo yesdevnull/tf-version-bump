@@ -12,6 +12,79 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 )
 
+func TestContainsVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		versions []string
+		version  string
+		expected bool
+	}{
+		{
+			name:     "empty slice",
+			versions: []string{},
+			version:  "1.0.0",
+			expected: false,
+		},
+		{
+			name:     "version found",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			version:  "2.0.0",
+			expected: true,
+		},
+		{
+			name:     "version not found",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			version:  "4.0.0",
+			expected: false,
+		},
+		{
+			name:     "version at start",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			version:  "1.0.0",
+			expected: true,
+		},
+		{
+			name:     "version at end",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			version:  "3.0.0",
+			expected: true,
+		},
+		{
+			name:     "version with constraint",
+			versions: []string{"~> 1.0", "~> 2.0", "~> 3.0"},
+			version:  "~> 2.0",
+			expected: true,
+		},
+		{
+			name:     "empty version string",
+			versions: []string{"1.0.0", "2.0.0"},
+			version:  "",
+			expected: false,
+		},
+		{
+			name:     "single version match",
+			versions: []string{"1.0.0"},
+			version:  "1.0.0",
+			expected: true,
+		},
+		{
+			name:     "single version no match",
+			versions: []string{"1.0.0"},
+			version:  "2.0.0",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := containsVersion(tt.versions, tt.version)
+			if result != tt.expected {
+				t.Errorf("containsVersion(%v, %q) = %v, want %v", tt.versions, tt.version, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestStringSliceFlag(t *testing.T) {
 	tests := []struct {
 		name     string
