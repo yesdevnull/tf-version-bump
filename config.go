@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -94,7 +95,13 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 	}
 
 	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+	decoder.KnownFields(true) // Strict mode: error on unknown fields
+	if err := decoder.Decode(&config); err != nil {
+		// EOF indicates an empty file or a file with only comments, which is valid
+		if err == io.EOF {
+			return []ModuleUpdate{}, nil
+		}
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 

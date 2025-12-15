@@ -1367,3 +1367,139 @@ func TestLoadConfigWithoutIgnoreModulesField(t *testing.T) {
 		t.Errorf("IgnoreModules patterns should be empty, got %v", updates[0].IgnoreModules)
 	}
 }
+
+// TestLoadConfigWithLegacyIgnoreField tests that the legacy 'ignore' field throws an error
+func TestLoadConfigWithLegacyIgnoreField(t *testing.T) {
+	configYAML := `modules:
+  - source: "module/name"
+    version: "~> 2.0"
+    ignore: "skip_module"
+`
+
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	_, err = loadConfig(configFile)
+	if err == nil {
+		t.Error("Expected error for legacy 'ignore' field, but got none")
+	}
+
+	// Verify that the error message mentions the unknown field
+	if !strings.Contains(err.Error(), "field ignore not found") {
+		t.Errorf("Error should mention unknown field 'ignore', got: %v", err)
+	}
+}
+
+// TestLoadConfigWithUnknownFields tests that any unknown field throws an error
+func TestLoadConfigWithUnknownFields(t *testing.T) {
+	tests := []struct {
+		name           string
+		configYAML     string
+		expectedField  string
+	}{
+		{
+			name: "unknown field 'ignore'",
+			configYAML: `modules:
+  - source: "module/name"
+    version: "~> 2.0"
+    ignore: "skip_module"
+`,
+			expectedField: "ignore",
+		},
+		{
+			name: "unknown field 'skip'",
+			configYAML: `modules:
+  - source: "module/name"
+    version: "~> 2.0"
+    skip: true
+`,
+			expectedField: "skip",
+		},
+		{
+			name: "unknown field 'exclude'",
+			configYAML: `modules:
+  - source: "module/name"
+    version: "~> 2.0"
+    exclude: ["pattern"]
+`,
+			expectedField: "exclude",
+		},
+		{
+			name: "unknown field 'enabled'",
+			configYAML: `modules:
+  - source: "module/name"
+    version: "~> 2.0"
+    enabled: false
+`,
+			expectedField: "enabled",
+		},
+		{
+			name: "unknown field at root level",
+			configYAML: `modules:
+  - source: "module/name"
+    version: "~> 2.0"
+unknown_root: "value"
+`,
+			expectedField: "unknown_root",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configFile := filepath.Join(tmpDir, "config.yml")
+
+			err := os.WriteFile(configFile, []byte(tt.configYAML), 0644)
+			if err != nil {
+				t.Fatalf("Failed to create temp config file: %v", err)
+			}
+
+			_, err = loadConfig(configFile)
+			if err == nil {
+				t.Errorf("Expected error for unknown field '%s', but got none", tt.expectedField)
+			}
+
+			// Verify that the error message mentions the unknown field
+			if !strings.Contains(err.Error(), fmt.Sprintf("field %s not found", tt.expectedField)) {
+				t.Errorf("Error should mention unknown field '%s', got: %v", tt.expectedField, err)
+			}
+		})
+	}
+}
+
+// TestLoadConfigWithMultipleLegacyFields tests handling of multiple unknown fields
+func TestLoadConfigWithMultipleLegacyFields(t *testing.T) {
+	configYAML := `modules:
+  - source: "module/name"
+    version: "~> 2.0"
+    ignore: "skip_module"
+    deprecated_field: "value"
+`
+
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yml")
+
+	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+
+	_, err = loadConfig(configFile)
+	if err == nil {
+		t.Error("Expected error for unknown fields, but got none")
+	}
+
+	// The error should mention at least one of the unknown fields
+	errStr := err.Error()
+	hasIgnore := strings.Contains(errStr, "field ignore not found")
+	hasDeprecated := strings.Contains(errStr, "field deprecated_field not found")
+
+	if !hasIgnore && !hasDeprecated {
+		t.Errorf("Error should mention unknown fields, got: %v", err)
+	}
+}
