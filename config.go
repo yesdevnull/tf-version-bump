@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -95,7 +96,7 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 	}
 
 	var config Config
-	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true) // Strict mode: error on unknown fields
 	if err := decoder.Decode(&config); err != nil {
 		// EOF indicates an empty file or a file with only comments, which is valid
