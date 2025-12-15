@@ -36,7 +36,7 @@ func TestNullBytesInFile(t *testing.T) {
 	}
 
 	// Parsing should fail with null bytes in file
-	_, err = updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false)
+	_, err = updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 
 	// Assert that null bytes cause an error
 	if err == nil {
@@ -58,7 +58,7 @@ func TestBinaryFileContent(t *testing.T) {
 	}
 
 	// Should fail to parse as HCL
-	_, err = updateModuleVersion(testFile, "test", "1.0.0", nil, nil, nil, false, false, false)
+	_, err = updateModuleVersion(testFile, "test", "1.0.0", nil, nil, nil, false, false, false, "text")
 
 	if err == nil {
 		t.Fatal("Expected error when parsing binary content as HCL")
@@ -92,7 +92,7 @@ func TestUTF8BOM(t *testing.T) {
 	}
 
 	// HCL parser should handle BOM
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 	if err != nil {
 		t.Fatalf("Expected BOM to be handled, but got error: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestMixedLineEndings(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 	if err != nil {
 		t.Fatalf("Failed to process file with mixed line endings: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestSymbolicLinks(t *testing.T) {
 	}
 
 	// Update via symlink
-	updated, err := updateModuleVersion(linkFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false)
+	updated, err := updateModuleVersion(linkFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 	if err != nil {
 		t.Fatalf("Failed to process symlink: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestReadOnlyFile(t *testing.T) {
 	}
 
 	// Should fail to write
-	_, err = updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false)
+	_, err = updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 
 	if err == nil {
 		t.Error("Expected error when trying to write to read-only file")
@@ -230,7 +230,7 @@ func TestExtremelyNestedModuleSource(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(testFile, deepSource, "5.0.0", nil, nil, nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, deepSource, "5.0.0", nil, nil, nil, false, false, false, "text")
 	if err != nil {
 		t.Fatalf("Failed to process deeply nested source: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestModuleSourceWithQueryParams(t *testing.T) {
 				t.Fatalf("Failed to create test file: %v", err)
 			}
 
-			updated, err := updateModuleVersion(testFile, tt.source, "5.0.0", nil, nil, nil, false, false, false)
+			updated, err := updateModuleVersion(testFile, tt.source, "5.0.0", nil, nil, nil, false, false, false, "text")
 			if err != nil {
 				t.Fatalf("Failed to process source with query params: %v", err)
 			}
@@ -310,7 +310,7 @@ func TestInvalidVersionFormats(t *testing.T) {
 			// Tool doesn't validate version format, it will just set whatever is given.
 			// Note: Some edge cases (e.g., multiline strings) may cause HCL parse errors during
 			// file write/format operations, as HCL doesn't support newlines in attribute values.
-			updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", tt.version, nil, nil, nil, false, false, false)
+			updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", tt.version, nil, nil, nil, false, false, false, "text")
 
 			// Verify behavior - if no error, file should contain the version string
 			if err == nil && updated {
@@ -365,7 +365,7 @@ func TestExtremeWhitespace(t *testing.T) {
 				t.Fatalf("Failed to create test file: %v", err)
 			}
 
-			updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false)
+			updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 			if err != nil {
 				t.Fatalf("Failed to process file with extreme whitespace: %v", err)
 			}
@@ -398,7 +398,7 @@ module "vpc" {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 	if err != nil {
 		t.Fatalf("Failed to process file with duplicate names: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestVeryLargeIgnoreList(t *testing.T) {
 
 	// Measure performance with large ignore list
 	start := time.Now()
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, ignorePatterns, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, ignorePatterns, false, false, false, "text")
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -555,7 +555,7 @@ func TestFileWithOnlyComments(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(testFile, "test", "1.0.0", nil, nil, nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, "test", "1.0.0", nil, nil, nil, false, false, false, "text")
 	if err != nil {
 		t.Fatalf("Failed to process comments-only file: %v", err)
 	}
@@ -583,7 +583,7 @@ func TestNestedQuotesInAttributes(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 	if err != nil {
 		t.Fatalf("Failed to process file with nested quotes: %v", err)
 	}
@@ -623,7 +623,7 @@ func TestTrailingWhitespace(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 	if err != nil {
 		t.Fatalf("Failed to process file with trailing whitespace: %v", err)
 	}
@@ -649,7 +649,7 @@ func TestFromVersionWithSpecialChars(t *testing.T) {
 	}
 
 	// Exact match should work
-	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", []string{"3.0.0-rc.1+build.123"}, nil, nil, false, false, false)
+	updated, err := updateModuleVersion(testFile, "terraform-aws-modules/vpc/aws", "5.0.0", []string{"3.0.0-rc.1+build.123"}, nil, nil, false, false, false, "text")
 	if err != nil {
 		t.Fatalf("Failed to process: %v", err)
 	}

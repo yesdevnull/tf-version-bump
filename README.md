@@ -116,6 +116,7 @@ tf-version-bump -pattern <glob-pattern> -module <module-source> -to <version>
 - `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
 - `-dry-run`: (Optional) Show what changes would be made without actually modifying files
 - `-verbose`: (Optional) Show verbose output including skipped modules
+- `-output`: (Optional) Output format: `text` (default) or `md` (Markdown). Controls whether strings are quoted with single quotes or backticks
 
 #### Examples
 
@@ -195,6 +196,24 @@ Preview changes without modifying files (dry-run):
 tf-version-bump -pattern "**/*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -dry-run
 ```
 
+Use Markdown output format (backticks instead of single quotes):
+
+```bash
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -output md
+```
+
+This will output messages like:
+```
+Found 3 file(s) matching pattern `*.tf`
+✓ Updated module source `terraform-aws-modules/vpc/aws` to version `5.0.0` in main.tf
+```
+
+Instead of:
+```
+Found 3 file(s) matching pattern '*.tf'
+✓ Updated module source 'terraform-aws-modules/vpc/aws' to version '5.0.0' in main.tf
+```
+
 **Note:** Local modules (sources starting with `./`, `../`, or `/`) are not supported and will be skipped with a warning. Version bumping is only supported for registry modules and remote sources (Git, HTTP, etc.).
 
 ### Config File Mode
@@ -213,6 +232,7 @@ tf-version-bump -pattern <glob-pattern> -config <config-file>
 - `-config`: Path to YAML configuration file (required)
 - `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
 - `-dry-run`: (Optional) Show what changes would be made without actually modifying files
+- `-output`: (Optional) Output format: `text` (default) or `md` (Markdown). Controls whether strings are quoted with single quotes or backticks
 
 #### Config File Format
 

@@ -59,7 +59,7 @@ func TestUnicodeModuleNames(t *testing.T) {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
 
-			updated, err := updateModuleVersion(tmpFile, tt.moduleSource, tt.version, nil, nil, nil, false, false, false)
+			updated, err := updateModuleVersion(tmpFile, tt.moduleSource, tt.version, nil, nil, nil, false, false, false, "text")
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -155,7 +155,7 @@ module "vpc-prod" {
 
 	// Should ignore the Unicode-named module
 	ignorePatterns := []string{"vpc-主要"}
-	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, ignorePatterns, false, false, false)
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, ignorePatterns, false, false, false, "text")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestVeryLongModuleName(t *testing.T) {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 
-	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false)
+	updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestSpecialCharactersInModuleName(t *testing.T) {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
 
-			updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false)
+			updated, err := updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -292,7 +292,7 @@ func TestFilePermissionPreservation(t *testing.T) {
 	originalMode := originalInfo.Mode()
 
 	// Update the file
-	_, err = updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false)
+	_, err = updateModuleVersion(tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestMultipleFilesSimultaneously(t *testing.T) {
 
 	// Update all files
 	for _, file := range files {
-		updated, err := updateModuleVersion(file, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false)
+		updated, err := updateModuleVersion(file, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 		if err != nil {
 			t.Errorf("Failed to update %s: %v", file, err)
 		}
