@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -195,6 +196,42 @@ func TestStringSliceFlagMultipleSet(t *testing.T) {
 	expected := strings.Join(values, ",")
 	if got := flag.String(); got != expected {
 		t.Errorf("String() = %q, want %q", got, expected)
+	}
+}
+
+func TestParseFlagsIgnoreModules(t *testing.T) {
+	origArgs := os.Args
+	origCommandLine := flag.CommandLine
+	defer func() {
+		os.Args = origArgs
+		flag.CommandLine = origCommandLine
+	}()
+
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	os.Args = []string{
+		"tf-version-bump",
+		"-pattern", "*.tf",
+		"-module", "terraform-aws-modules/vpc/aws",
+		"-to", "5.0.0",
+		"-ignore-modules", "legacy-vpc,test-*",
+	}
+
+	parsed := parseFlags()
+	if parsed.pattern != "*.tf" {
+		t.Fatalf("pattern = %q, want %q", parsed.pattern, "*.tf")
+	}
+
+	updates := loadModuleUpdates(parsed)
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 module update, got %d", len(updates))
+	}
+
+	if len(updates[0].Ignore) != 2 {
+		t.Fatalf("expected 2 ignore patterns, got %d", len(updates[0].Ignore))
+	}
+
+	if updates[0].Ignore[0] != "legacy-vpc" || updates[0].Ignore[1] != "test-*" {
+		t.Fatalf("unexpected ignore patterns: %v", updates[0].Ignore)
 	}
 }
 
