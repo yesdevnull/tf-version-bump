@@ -54,7 +54,7 @@ type ModuleUpdate struct {
 	Version        string       `yaml:"version"`         // Target version (e.g., "5.0.0")
 	From           FromVersions `yaml:"from"`            // Optional: only update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
 	IgnoreVersions FromVersions `yaml:"ignore_versions"` // Optional: skip update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
-	Ignore         []string     `yaml:"-"`               // Optional: list of module names or patterns to ignore (canonical field)
+	Ignore         []string     `yaml:"-"`               // Canonical ignore patterns populated from ignore_modules (or legacy ignore) for internal use
 	IgnoreModules  []string     `yaml:"ignore_modules"`  // New name for ignore patterns
 	LegacyIgnore   []string     `yaml:"ignore"`          // Legacy support for older configs
 }
@@ -138,10 +138,6 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 			}
 		}
 		config.Modules[i].Ignore = filteredIgnore
-		// Clear legacy storage to avoid accidental use later
-		config.Modules[i].IgnoreModules = nil
-		config.Modules[i].LegacyIgnore = nil
-
 		if config.Modules[i].Source == "" {
 			return nil, fmt.Errorf("module at index %d is missing 'source' field", i)
 		}
