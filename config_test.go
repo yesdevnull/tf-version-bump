@@ -1168,13 +1168,13 @@ func TestLoadConfigWithIgnoreField(t *testing.T) {
 	configYAML := `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
-    ignore:
+    ignore_modules:
       - "legacy-vpc"
       - "test-*"
   - source: "terraform-aws-modules/s3-bucket/aws"
     version: "4.0.0"
     from: "3.0.0"
-    ignore:
+    ignore_modules:
       - "*-deprecated"
 `
 
@@ -1234,7 +1234,7 @@ func TestLoadConfigWithIgnoreFieldWhitespace(t *testing.T) {
 	configYAML := `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
-    ignore:
+    ignore_modules:
       - "  legacy-vpc  "
       - "  test-*  "
 `
@@ -1272,7 +1272,7 @@ func TestLoadConfigWithWhitespaceOnlyIgnorePatterns(t *testing.T) {
 	configYAML := `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
-    ignore:
+    ignore_modules:
       - "legacy-vpc"
       - "   "
       - "test-*"
@@ -1313,7 +1313,7 @@ func TestLoadConfigWithEmptyIgnoreField(t *testing.T) {
 	configYAML := `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
-    ignore: []
+    ignore_modules: []
 `
 
 	tmpDir := t.TempDir()

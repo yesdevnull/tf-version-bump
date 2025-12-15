@@ -29,12 +29,12 @@ func (f *FromVersions) UnmarshalYAML(value *yaml.Node) error {
 		if value.Tag != "!!str" {
 			return fmt.Errorf("from field must be a string or array of strings, got %s", value.Tag)
 		}
-		
+
 		var str string
 		if err := value.Decode(&str); err != nil {
 			return fmt.Errorf("failed to decode from field as string: %w", err)
 		}
-		
+
 		if str == "" {
 			*f = FromVersions{}
 		} else {
@@ -54,7 +54,9 @@ type ModuleUpdate struct {
 	Version        string       `yaml:"version"`         // Target version (e.g., "5.0.0")
 	From           FromVersions `yaml:"from"`            // Optional: only update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
 	IgnoreVersions FromVersions `yaml:"ignore_versions"` // Optional: skip update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
-	Ignore         []string     `yaml:"ignore"`          // Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
+	Ignore         []string     `yaml:"-"`               // Optional: list of module names or patterns to ignore (canonical field)
+	IgnoreModules  []string     `yaml:"ignore_modules"`  // New name for ignore patterns
+	LegacyIgnore   []string     `yaml:"ignore"`          // Legacy support for older configs
 }
 
 // Config represents the structure of a YAML configuration file for batch updates.
@@ -122,14 +124,23 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 		}
 		config.Modules[i].IgnoreVersions = filteredIgnoreVersions
 
+		// Prefer new ignore_modules; fall back to legacy ignore
+		rawIgnore := module.IgnoreModules
+		if len(rawIgnore) == 0 && len(module.LegacyIgnore) > 0 {
+			rawIgnore = module.LegacyIgnore
+		}
+
 		// Trim whitespace from ignore patterns and filter out empty ones
-		filteredIgnore := make([]string, 0, len(module.Ignore))
-		for _, pattern := range module.Ignore {
+		filteredIgnore := make([]string, 0, len(rawIgnore))
+		for _, pattern := range rawIgnore {
 			if trimmed := strings.TrimSpace(pattern); trimmed != "" {
 				filteredIgnore = append(filteredIgnore, trimmed)
 			}
 		}
 		config.Modules[i].Ignore = filteredIgnore
+		// Clear legacy storage to avoid accidental use later
+		config.Modules[i].IgnoreModules = nil
+		config.Modules[i].LegacyIgnore = nil
 
 		if config.Modules[i].Source == "" {
 			return nil, fmt.Errorf("module at index %d is missing 'source' field", i)

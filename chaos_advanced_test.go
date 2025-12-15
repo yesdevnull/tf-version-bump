@@ -563,7 +563,7 @@ func TestIgnorePatternWhitespaceTrimming(t *testing.T) {
 	content := `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
-    ignore:
+    ignore_modules:
       - "  vpc-prod  "
       - "  staging-*  "
       - "	dev-*	"`

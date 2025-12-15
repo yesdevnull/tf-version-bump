@@ -5,7 +5,7 @@ modules:
   # Update all VPC modules to 5.0.0, except legacy and test modules
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
-    ignore:
+    ignore_modules:
       - "legacy-vpc"           # Ignore exact module name
       - "test-*"               # Ignore all modules starting with "test-"
       - "*-deprecated"         # Ignore all modules ending with "-deprecated"
@@ -14,27 +14,27 @@ modules:
   - source: "terraform-aws-modules/s3-bucket/aws"
     version: "4.0.0"
     from: "3.0.0"
-    ignore:
+    ignore_modules:
       - "dev-*"                # Skip all dev environment buckets
       - "*-staging"            # Skip staging buckets
 
   # Update security groups but preserve old ones for compatibility
   - source: "terraform-aws-modules/security-group/aws"
     version: "5.1.0"
-    ignore:
+    ignore_modules:
       - "*-old"                # Keep old security groups
       - "legacy-*"             # Keep legacy security groups
 
   # Update RDS modules everywhere except production
   - source: "terraform-aws-modules/rds/aws"
     version: "6.0.0"
-    ignore:
+    ignore_modules:
       - "prod-*"               # Don't touch production databases
       - "*-production"         # Alternative production naming
 
   # Complex pattern examples
   - source: "terraform-aws-modules/eks/aws"
     version: "19.0.0"
-    ignore:
+    ignore_modules:
       - "*-temp-*"             # Ignore temporary clusters
       - "experimental-*"       # Ignore experimental setups
