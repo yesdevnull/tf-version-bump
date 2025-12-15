@@ -243,10 +243,11 @@ package main
 
 // ModuleUpdate struct - represents a single module update
 type ModuleUpdate struct {
-    Source  string   // Module source (YAML: "source")
-    Version string   // Target version (YAML: "version")
-    From    string   // Optional: current version filter (YAML: "from")
-    Ignore  []string // Optional: module names/patterns to ignore (YAML: "ignore")
+    Source         string       // Module source (YAML: "source")
+    Version        string       // Target version (YAML: "version")
+    From           FromVersions // Optional: only update if current version matches (YAML: "from", can be string or []string)
+    IgnoreVersions FromVersions // Optional: versions to skip (YAML: "ignore_versions", can be string or []string)
+    IgnoreModules  []string     // Optional: module names/patterns to ignore (YAML: "ignore_modules")
 }
 
 // Config struct - represents YAML configuration file structure
@@ -335,7 +336,8 @@ tf-version-bump \
     -module "terraform-aws-modules/vpc/aws" \
     -to "5.0.0" \
     [-from "4.0.0"] \
-    [-ignore "legacy-*,test-*"] \
+    [-ignore-version "3.14.0"] \
+    [-ignore-modules "legacy-*,test-*"] \
     [-force-add] \
     [-dry-run] \
     [-verbose]
@@ -347,7 +349,8 @@ tf-version-bump \
 tf-version-bump \
     -pattern "**/*.tf" \
     -config "updates.yml" \
-    [-force-add]
+    [-force-add] \
+    [-dry-run]
 ```
 
 ### File Processing Pipeline
@@ -716,7 +719,10 @@ done
 ./tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -force-add
 
 # Ignore specific modules using patterns
-./tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -ignore "legacy-vpc,test-*"
+./tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -ignore-modules "legacy-vpc,test-*"
+
+# Skip specific versions from being updated
+./tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -ignore-version "3.14.0"
 ```
 
 ### Ignore Pattern Matching
@@ -733,7 +739,6 @@ Pattern matching is implemented in the `matchPattern()` function which:
 - Handles exact matches when no wildcards present
 - Checks prefix/suffix for single wildcard
 - Processes multiple wildcards by splitting and matching parts in order
-```
 
 ### Key Files to Know
 
@@ -875,7 +880,6 @@ strace -e openat ./tf-version-bump -pattern "*.tf" -module "test" -to "1.0"
 
 ### Potential Features (Not Currently Implemented)
 
-- **Dry-run mode**: Preview changes without writing
 - **Parallel processing**: Use goroutines for multiple files
 - **Module discovery**: Find all modules used in codebase
 - **Version constraint support**: Update to versions matching constraints (e.g., `>= 5.0.0`)
