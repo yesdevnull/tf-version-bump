@@ -112,7 +112,7 @@ tf-version-bump -pattern <glob-pattern> -module <module-source> -to <version>
 - `-to`: Desired version number
 - `-from`: (Optional) Version to update from (can be specified multiple times, e.g., `-from 3.0.0 -from '~> 3.0'`)
 - `-ignore-version`: (Optional) Version(s) to skip (can be specified multiple times, e.g., `-ignore-version 3.0.0 -ignore-version '~> 3.0'`)
-- `-ignore`: (Optional) Comma-separated list of module names or patterns to ignore (e.g., `vpc,legacy-*,*-test`)
+- `-ignore-modules`: (Optional) Comma-separated list of module names or patterns to ignore (e.g., `vpc,legacy-*,*-test`)
 - `-force-add`: (Optional) Add version attribute to modules that don't have one (default: false, skip with warning)
 - `-dry-run`: (Optional) Show what changes would be made without actually modifying files
 - `-verbose`: (Optional) Show verbose output including skipped modules
@@ -177,7 +177,7 @@ This will update all S3 bucket modules to version `4.0.0` EXCEPT those currently
 Update all VPC modules except specific ones using ignore patterns:
 
 ```bash
-tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -ignore "legacy-vpc,test-*"
+tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0" -ignore-modules "legacy-vpc,test-*"
 ```
 
 This will update all VPC modules to version 5.0.0 except:
@@ -246,7 +246,7 @@ modules:
     ignore_versions:     # Optional: versions to skip
       - "3.0.0"
       - "~> 3.0"
-    ignore:              # Optional: module names or patterns to ignore
+    ignore_modules:      # Optional: module names or patterns to ignore
       - "legacy-vpc"
       - "test-*"
   - source: "terraform-aws-modules/s3-bucket/aws"
@@ -259,7 +259,7 @@ modules:
   - source: "terraform-aws-modules/security-group/aws"
     version: "5.1.0"
     from: "4.0.0"        # Optional: only update from version 4.0.0
-    ignore:
+    ignore_modules:
       - "*-deprecated"
 ```
 
@@ -275,7 +275,7 @@ Each module entry supports the following fields:
   - Can be a list of versions: `ignore_versions: ["3.0.0", "~> 3.0"]`
   - Modules will be skipped if their current version matches any version in the list
   - Takes precedence over `from` filter (if a version matches both, it will be skipped)
-- `ignore` (optional): List of module names or wildcard patterns to skip
+- `ignore_modules` (optional): List of module names or wildcard patterns to skip
   - Supports exact matches: `"vpc"` matches only a module named "vpc"
   - Supports wildcards with `*`:
     - Prefix: `"legacy-*"` matches `legacy-vpc`, `legacy-network`, etc.
@@ -447,7 +447,7 @@ See the `examples/` directory for sample configuration files:
 - `config-basic.yml` - Simple configuration with a few modules
 - `config-advanced.yml` - Advanced configuration showing various module types (subpaths, Git sources)
 - `config-production.yml` - Production-ready configuration with common AWS modules
-- `config-with-ignore.yml` - Examples of using the ignore feature with various patterns
+- `config-with-ignore.yml` - Examples of using the ignore_modules feature with various patterns
 
 ## How it Works
 
@@ -583,7 +583,7 @@ For verification instructions and detailed release information, see [docs/RELEAS
 The tool fully supports Unicode characters in:
 - Module names (e.g., `module "vpc-主要"`)
 - Module sources (e.g., `source = "registry.example.com/組織/module"`)
-- Ignore patterns (e.g., `ignore: ["vpc-主要", "test-🚀-*"]`)
+- Ignore patterns (e.g., `ignore_modules: ["vpc-主要", "test-🚀-*"]`)
 
 ### Permissions
 

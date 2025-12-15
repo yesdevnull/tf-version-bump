@@ -400,17 +400,17 @@ func TestConfigLoadingEdgeCases(t *testing.T) {
 			configYAML: `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
-    ignore:
+    ignore_modules:
       - "vpc-主要"
       - "test-🚀-*"
       - "vpc[prod]"
 `,
 			expectError: false,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if len(updates[0].Ignore) != 3 {
-					t.Errorf("Expected 3 ignore patterns, got %d", len(updates[0].Ignore))
+				if len(updates[0].IgnoreModules) != 3 {
+					t.Errorf("Expected 3 ignore patterns, got %d", len(updates[0].IgnoreModules))
 				}
-				if updates[0].Ignore[0] != "vpc-主要" {
+				if updates[0].IgnoreModules[0] != "vpc-主要" {
 					t.Errorf("Unicode ignore pattern not preserved")
 				}
 			},

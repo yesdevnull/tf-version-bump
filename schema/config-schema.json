@@ -68,7 +68,7 @@
             ],
             "description": "Optional: Only update the module if its current version matches this value or any value in the list. Supports version constraints like ~> 3.0"
           },
-          "ignore": {
+          "ignore_modules": {
             "type": "array",
             "description": "Optional: List of module names or patterns to ignore. Supports wildcard matching using '*' for zero or more characters",
             "items": {
@@ -113,13 +113,13 @@
         {
           "source": "terraform-aws-modules/vpc/aws",
           "version": "5.0.0",
-          "ignore": ["legacy-vpc", "test-*"]
+          "ignore_modules": ["legacy-vpc", "test-*"]
         },
         {
           "source": "terraform-aws-modules/s3-bucket/aws",
           "version": "4.0.0",
           "from": ["3.0.0", "~> 3.0"],
-          "ignore": ["*-deprecated"]
+          "ignore_modules": ["*-deprecated"]
         }
       ]
     }
