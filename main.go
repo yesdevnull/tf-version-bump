@@ -42,6 +42,26 @@ func (s *stringSliceFlag) Set(value string) error {
 	return nil
 }
 
+// quote formats a string with appropriate quoting based on the output format.
+// For "text" output, uses single quotes. For "md" (Markdown) output, uses backticks.
+//
+// Parameters:
+//   - s: The string to quote
+//   - format: Output format ("text" or "md")
+//
+// Returns:
+//   - string: The quoted string
+//
+// Examples:
+//   - quote("vpc", "text") returns "'vpc'"
+//   - quote("vpc", "md") returns "`vpc`"
+func quote(s, format string) string {
+	if format == "md" {
+		return "`" + s + "`"
+	}
+	return "'" + s + "'"
+}
+
 func main() {
 	// Define CLI flags
 	pattern := flag.String("pattern", "", "Glob pattern for Terraform files (e.g., '*.tf' or 'modules/**/*.tf')")
@@ -57,7 +77,13 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "Show what changes would be made without actually modifying files")
 	verbose := flag.Bool("verbose", false, "Show verbose output including skipped modules")
 	showVersion := flag.Bool("version", false, "Print version information and exit")
+	output := flag.String("output", "text", "Output format: 'text' (default) or 'md' (Markdown)")
 	flag.Parse()
+
+	// Validate output format
+	if *output != "text" && *output != "md" {
+		log.Fatalf("Error: Invalid output format '%s'. Must be 'text' or 'md'", *output)
+	}
 
 	// Handle version flag
 	if *showVersion {
@@ -119,7 +145,7 @@ func main() {
 		log.Fatalf("No files matched pattern: %s", *pattern)
 	}
 
-	fmt.Printf("Found %d file(s) matching pattern '%s'\n", len(files), *pattern)
+	fmt.Printf("Found %d file(s) matching pattern %s\n", len(files), quote(*pattern, *output))
 
 	if *dryRun {
 		fmt.Println("Running in dry-run mode - no files will be modified")
@@ -130,7 +156,7 @@ func main() {
 	for _, file := range files {
 		fileUpdates := 0
 		for _, update := range updates {
-			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, update.IgnoreVersions, update.Ignore, *forceAdd, *dryRun, *verbose)
+			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, update.IgnoreVersions, update.Ignore, *forceAdd, *dryRun, *verbose, *output)
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				continue
@@ -143,9 +169,9 @@ func main() {
 					action = "Would update"
 				}
 				if len(update.From) > 0 {
-					fmt.Printf("%s %s module source '%s' from version(s) %v to '%s' in %s\n", prefix, action, update.Source, update.From, update.Version, file)
+					fmt.Printf("%s %s module source %s from version(s) %v to %s in %s\n", prefix, action, quote(update.Source, *output), update.From, quote(update.Version, *output), file)
 				} else {
-					fmt.Printf("%s %s module source '%s' to version '%s' in %s\n", prefix, action, update.Source, update.Version, file)
+					fmt.Printf("%s %s module source %s to version %s in %s\n", prefix, action, quote(update.Source, *output), quote(update.Version, *output), file)
 				}
 				fileUpdates++
 				totalUpdates++
@@ -209,11 +235,12 @@ func containsVersion(versions []string, version string) bool {
 //   - forceAdd: If true, add version attribute to modules that don't have one
 //   - dryRun: If true, show what would be changed without modifying files
 //   - verbose: If true, print informational messages about skipped modules
+//   - outputFormat: Output format ("text" or "md")
 //
 // Returns:
 //   - bool: true if at least one module was updated (or would be updated in dry-run mode), false otherwise
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateModuleVersion(filename, moduleSource, version string, fromVersions []string, ignoreVersions []string, ignorePatterns []string, forceAdd bool, dryRun bool, verbose bool) (bool, error) {
+func updateModuleVersion(filename, moduleSource, version string, fromVersions []string, ignoreVersions []string, ignorePatterns []string, forceAdd bool, dryRun bool, verbose bool, outputFormat string) (bool, error) {
 	// Get original file permissions to preserve them when writing
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
@@ -258,8 +285,8 @@ func updateModuleVersion(filename, moduleSource, version string, fromVersions []
 
 				// Skip local modules - they don't have versions
 				if isLocalModule(sourceValue) && sourceValue == moduleSource {
-					fmt.Fprintf(os.Stderr, "Warning: Module %q in %s (source: %q) is a local module and cannot be version-bumped, skipping\n",
-						moduleName, filename, moduleSource)
+					fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) is a local module and cannot be version-bumped, skipping\n",
+						quote(moduleName, outputFormat), filename, quote(moduleSource, outputFormat))
 					continue
 				}
 
@@ -268,7 +295,7 @@ func updateModuleVersion(filename, moduleSource, version string, fromVersions []
 					// Check if module name matches any ignore pattern
 					if shouldIgnoreModule(moduleName, ignorePatterns) {
 						if verbose {
-							fmt.Printf("  ⊗ Skipped module %q in %s (matches ignore pattern)\n", moduleName, filename)
+							fmt.Printf("  ⊗ Skipped module %s in %s (matches ignore pattern)\n", quote(moduleName, outputFormat), filename)
 						}
 						continue
 					}
@@ -278,8 +305,8 @@ func updateModuleVersion(filename, moduleSource, version string, fromVersions []
 					if versionAttr == nil {
 						if !forceAdd {
 							// Module doesn't have a version attribute - print warning and skip
-							fmt.Fprintf(os.Stderr, "Warning: Module %q in %s (source: %q) has no version attribute, skipping\n",
-								moduleName, filename, moduleSource)
+							fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) has no version attribute, skipping\n",
+								quote(moduleName, outputFormat), filename, quote(moduleSource, outputFormat))
 							continue
 						}
 						// forceAdd is true, so we'll add the version attribute below
@@ -293,7 +320,7 @@ func updateModuleVersion(filename, moduleSource, version string, fromVersions []
 						if len(ignoreVersions) > 0 && containsVersion(ignoreVersions, currentVersion) {
 							// Current version matches an ignore-version filter, skip this module
 							if verbose {
-								fmt.Printf("  ⊗ Skipped module %q in %s (current version %q matches 'ignore-version' filter %v)\n", moduleName, filename, currentVersion, ignoreVersions)
+								fmt.Printf("  ⊗ Skipped module %s in %s (current version %s matches 'ignore-version' filter %v)\n", quote(moduleName, outputFormat), filename, quote(currentVersion, outputFormat), ignoreVersions)
 							}
 							continue
 						}
@@ -302,7 +329,7 @@ func updateModuleVersion(filename, moduleSource, version string, fromVersions []
 						if len(fromVersions) > 0 && !containsVersion(fromVersions, currentVersion) {
 							// Current version doesn't match any fromVersion, skip this module
 							if verbose {
-								fmt.Printf("  ⊗ Skipped module %q in %s (current version %q does not match any 'from' filter %v)\n", moduleName, filename, currentVersion, fromVersions)
+								fmt.Printf("  ⊗ Skipped module %s in %s (current version %s does not match any 'from' filter %v)\n", quote(moduleName, outputFormat), filename, quote(currentVersion, outputFormat), fromVersions)
 							}
 							continue
 						}
