@@ -71,7 +71,7 @@ type ModuleUpdate struct {
 //	    ignore_versions:       # Optional: versions to skip
 //	      - "3.0.0"
 //	      - "~> 3.0"
-//	    ignore:                # Optional: module names or patterns to ignore
+//	    ignore_modules:        # Optional: module names or patterns to ignore (legacy: "ignore")
 //	      - "legacy-vpc"
 //	      - "test-*"
 //	  - source: "terraform-aws-modules/s3-bucket/aws"
@@ -137,6 +137,7 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 				filteredIgnore = append(filteredIgnore, trimmed)
 			}
 		}
+		// Canonical ignore slice populated from ignore_modules (or legacy ignore)
 		config.Modules[i].Ignore = filteredIgnore
 		if config.Modules[i].Source == "" {
 			return nil, fmt.Errorf("module at index %d is missing 'source' field", i)
