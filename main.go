@@ -69,7 +69,7 @@ type cliFlags struct {
 	toVersion      string
 	fromVersions   stringSliceFlag
 	ignoreVersions stringSliceFlag
-	ignore         string
+	ignoreModules  string
 	configFile     string
 	forceAdd       bool
 	dryRun         bool
@@ -87,7 +87,7 @@ func parseFlags() *cliFlags {
 	flag.StringVar(&flags.toVersion, "to", "", "Desired version number")
 	flag.Var(&flags.fromVersions, "from", "Optional: version to update from (can be specified multiple times, e.g., -from 3.0.0 -from '~> 3.0')")
 	flag.Var(&flags.ignoreVersions, "ignore-version", "Optional: version(s) to skip (can be specified multiple times, e.g., -ignore-version 3.0.0 -ignore-version '~> 3.0')")
-	flag.StringVar(&flags.ignore, "ignore", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
+	flag.StringVar(&flags.ignoreModules, "ignore-modules", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
 	flag.StringVar(&flags.configFile, "config", "", "Path to YAML config file with multiple module updates")
 	flag.BoolVar(&flags.forceAdd, "force-add", false, "Add version attribute to modules that don't have one (default: skip with warning)")
 	flag.BoolVar(&flags.dryRun, "dry-run", false, "Show what changes would be made without actually modifying files")
@@ -108,8 +108,8 @@ func parseFlags() *cliFlags {
 func loadModuleUpdates(flags *cliFlags) []ModuleUpdate {
 	if flags.configFile != "" {
 		// Config file mode
-		if flags.moduleSource != "" || flags.toVersion != "" || len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignore != "" {
-			log.Fatal("Error: Cannot use -config with -module, -to, -from, -ignore-version, or -ignore flags")
+		if flags.moduleSource != "" || flags.toVersion != "" || len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" {
+			log.Fatal("Error: Cannot use -config with -module, -to, -from, -ignore-version, or -ignore-modules flags")
 		}
 		if flags.pattern == "" {
 			log.Fatal("Error: -pattern flag is required")
@@ -127,7 +127,7 @@ func loadModuleUpdates(flags *cliFlags) []ModuleUpdate {
 	// Single module mode
 	if flags.pattern == "" || flags.moduleSource == "" || flags.toVersion == "" {
 		fmt.Println("Usage:")
-		fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -to <version> [-from <version>]... [-ignore-version <version>]... [-ignore <patterns>]")
+		fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -to <version> [-from <version>]... [-ignore-version <version>]... [-ignore-modules <patterns>]")
 		fmt.Println("  Config file:    tf-version-bump -pattern <glob> -config <config-file>")
 		flag.PrintDefaults()
 		os.Exit(1)
@@ -135,8 +135,8 @@ func loadModuleUpdates(flags *cliFlags) []ModuleUpdate {
 
 	// Parse ignore patterns from comma-separated list
 	var ignorePatterns []string
-	if flags.ignore != "" {
-		for _, p := range strings.Split(flags.ignore, ",") {
+	if flags.ignoreModules != "" {
+		for _, p := range strings.Split(flags.ignoreModules, ",") {
 			if trimmed := strings.TrimSpace(p); trimmed != "" {
 				ignorePatterns = append(ignorePatterns, trimmed)
 			}
@@ -144,7 +144,7 @@ func loadModuleUpdates(flags *cliFlags) []ModuleUpdate {
 	}
 
 	return []ModuleUpdate{
-		{Source: flags.moduleSource, Version: flags.toVersion, From: FromVersions(flags.fromVersions), IgnoreVersions: FromVersions(flags.ignoreVersions), Ignore: ignorePatterns},
+		{Source: flags.moduleSource, Version: flags.toVersion, From: FromVersions(flags.fromVersions), IgnoreVersions: FromVersions(flags.ignoreVersions), IgnoreModules: ignorePatterns},
 	}
 }
 
@@ -153,7 +153,7 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) int {
 	totalUpdates := 0
 	for _, file := range files {
 		for _, update := range updates {
-			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, update.IgnoreVersions, update.Ignore, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
+			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, update.IgnoreVersions, update.IgnoreModules, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				continue

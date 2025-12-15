@@ -421,7 +421,7 @@ func TestConfigWithDuplicateSources(t *testing.T) {
 	// This is the expected contract: not finding a module is not considered an error, just a no-op.
 	var successCount, failCount, notFoundCount int
 	for _, update := range updates {
-		updated, err := updateModuleVersion(testFile, update.Source, update.Version, update.From, update.IgnoreVersions, update.Ignore, false, false, false, "text")
+		updated, err := updateModuleVersion(testFile, update.Source, update.Version, update.From, update.IgnoreVersions, update.IgnoreModules, false, false, false, "text")
 		if err != nil {
 			t.Logf("Update for %s to %s failed: %v", update.Source, update.Version, err)
 			failCount++
@@ -563,7 +563,7 @@ func TestIgnorePatternWhitespaceTrimming(t *testing.T) {
 	content := `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
-    ignore:
+    ignore_modules:
       - "  vpc-prod  "
       - "  staging-*  "
       - "	dev-*	"`
@@ -578,18 +578,18 @@ func TestIgnorePatternWhitespaceTrimming(t *testing.T) {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Ignore patterns should have whitespace trimmed
-	if len(updates[0].Ignore) != 3 {
-		t.Errorf("Expected 3 ignore patterns, got %d", len(updates[0].Ignore))
+	// IgnoreModules patterns should have whitespace trimmed
+	if len(updates[0].IgnoreModules) != 3 {
+		t.Errorf("Expected 3 ignore patterns, got %d", len(updates[0].IgnoreModules))
 	}
-	if updates[0].Ignore[0] != "vpc-prod" {
-		t.Errorf("First ignore pattern whitespace not trimmed: %q", updates[0].Ignore[0])
+	if updates[0].IgnoreModules[0] != "vpc-prod" {
+		t.Errorf("First ignore pattern whitespace not trimmed: %q", updates[0].IgnoreModules[0])
 	}
-	if updates[0].Ignore[1] != "staging-*" {
-		t.Errorf("Second ignore pattern whitespace not trimmed: %q", updates[0].Ignore[1])
+	if updates[0].IgnoreModules[1] != "staging-*" {
+		t.Errorf("Second ignore pattern whitespace not trimmed: %q", updates[0].IgnoreModules[1])
 	}
-	if updates[0].Ignore[2] != "dev-*" {
-		t.Errorf("Third ignore pattern (with tabs) whitespace not trimmed: %q", updates[0].Ignore[2])
+	if updates[0].IgnoreModules[2] != "dev-*" {
+		t.Errorf("Third ignore pattern (with tabs) whitespace not trimmed: %q", updates[0].IgnoreModules[2])
 	}
 }
 

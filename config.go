@@ -54,7 +54,7 @@ type ModuleUpdate struct {
 	Version        string       `yaml:"version"`         // Target version (e.g., "5.0.0")
 	From           FromVersions `yaml:"from"`            // Optional: only update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
 	IgnoreVersions FromVersions `yaml:"ignore_versions"` // Optional: skip update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
-	Ignore         []string     `yaml:"ignore"`          // Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
+	IgnoreModules  []string     `yaml:"ignore_modules"`  // Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
 }
 
 // Config represents the structure of a YAML configuration file for batch updates.
@@ -69,7 +69,7 @@ type ModuleUpdate struct {
 //	    ignore_versions:       # Optional: versions to skip
 //	      - "3.0.0"
 //	      - "~> 3.0"
-//	    ignore:                # Optional: module names or patterns to ignore
+//	    ignore_modules:        # Optional: module names or patterns to ignore
 //	      - "legacy-vpc"
 //	      - "test-*"
 //	  - source: "terraform-aws-modules/s3-bucket/aws"
@@ -123,13 +123,13 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 		config.Modules[i].IgnoreVersions = filteredIgnoreVersions
 
 		// Trim whitespace from ignore patterns and filter out empty ones
-		filteredIgnore := make([]string, 0, len(module.Ignore))
-		for _, pattern := range module.Ignore {
+		filteredIgnore := make([]string, 0, len(module.IgnoreModules))
+		for _, pattern := range module.IgnoreModules {
 			if trimmed := strings.TrimSpace(pattern); trimmed != "" {
 				filteredIgnore = append(filteredIgnore, trimmed)
 			}
 		}
-		config.Modules[i].Ignore = filteredIgnore
+		config.Modules[i].IgnoreModules = filteredIgnore
 
 		if config.Modules[i].Source == "" {
 			return nil, fmt.Errorf("module at index %d is missing 'source' field", i)

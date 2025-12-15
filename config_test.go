@@ -204,11 +204,11 @@ module "s3" {
 
 	// Apply updates
 	for _, update := range updates {
-		_, err := updateModuleVersion(tf1File, update.Source, update.Version, update.From, update.IgnoreVersions, update.Ignore, false, false, false, "text")
+		_, err := updateModuleVersion(tf1File, update.Source, update.Version, update.From, update.IgnoreVersions, update.IgnoreModules, false, false, false, "text")
 		if err != nil {
 			t.Errorf("Failed to update %s: %v", tf1File, err)
 		}
-		_, err = updateModuleVersion(tf2File, update.Source, update.Version, update.From, update.IgnoreVersions, update.Ignore, false, false, false, "text")
+		_, err = updateModuleVersion(tf2File, update.Source, update.Version, update.From, update.IgnoreVersions, update.IgnoreModules, false, false, false, "text")
 		if err != nil {
 			t.Errorf("Failed to update %s: %v", tf2File, err)
 		}
@@ -751,7 +751,7 @@ module "iam" {
 
 	// Apply updates
 	for _, update := range updates {
-		_, err := updateModuleVersion(tfFile, update.Source, update.Version, update.From, update.IgnoreVersions, update.Ignore, false, false, false, "text")
+		_, err := updateModuleVersion(tfFile, update.Source, update.Version, update.From, update.IgnoreVersions, update.IgnoreModules, false, false, false, "text")
 		if err != nil {
 			t.Fatalf("Failed to update module: %v", err)
 		}
@@ -831,7 +831,7 @@ module "s3_other" {
 
 	// Process the file with each update
 	for _, update := range updates {
-		_, err := updateModuleVersion(tfFile, update.Source, update.Version, update.From, update.IgnoreVersions, update.Ignore, false, false, false, "text")
+		_, err := updateModuleVersion(tfFile, update.Source, update.Version, update.From, update.IgnoreVersions, update.IgnoreModules, false, false, false, "text")
 		if err != nil {
 			t.Fatalf("Failed to update module version: %v", err)
 		}
@@ -1164,17 +1164,17 @@ func TestLoadConfigVersionConstraintsWithWhitespace(t *testing.T) {
 }
 
 
-func TestLoadConfigWithIgnoreField(t *testing.T) {
+func TestLoadConfigWithIgnoreModulesField(t *testing.T) {
 	configYAML := `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
-    ignore:
+    ignore_modules:
       - "legacy-vpc"
       - "test-*"
   - source: "terraform-aws-modules/s3-bucket/aws"
     version: "4.0.0"
     from: "3.0.0"
-    ignore:
+    ignore_modules:
       - "*-deprecated"
 `
 
@@ -1202,14 +1202,14 @@ func TestLoadConfigWithIgnoreField(t *testing.T) {
 	if updates[0].Version != "5.0.0" {
 		t.Errorf("First module version = %q, want %q", updates[0].Version, "5.0.0")
 	}
-	if len(updates[0].Ignore) != 2 {
-		t.Fatalf("First module ignore patterns count = %d, want 2", len(updates[0].Ignore))
+	if len(updates[0].IgnoreModules) != 2 {
+		t.Fatalf("First module ignore patterns count = %d, want 2", len(updates[0].IgnoreModules))
 	}
-	if updates[0].Ignore[0] != "legacy-vpc" {
-		t.Errorf("First module ignore[0] = %q, want %q", updates[0].Ignore[0], "legacy-vpc")
+	if updates[0].IgnoreModules[0] != "legacy-vpc" {
+		t.Errorf("First module ignore_modules[0] = %q, want %q", updates[0].IgnoreModules[0], "legacy-vpc")
 	}
-	if updates[0].Ignore[1] != "test-*" {
-		t.Errorf("First module ignore[1] = %q, want %q", updates[0].Ignore[1], "test-*")
+	if updates[0].IgnoreModules[1] != "test-*" {
+		t.Errorf("First module ignore_modules[1] = %q, want %q", updates[0].IgnoreModules[1], "test-*")
 	}
 
 	// Check second module
@@ -1222,19 +1222,19 @@ func TestLoadConfigWithIgnoreField(t *testing.T) {
 	if len(updates[1].From) != 1 || updates[1].From[0] != "3.0.0" {
 		t.Errorf("Second module from = %v, want [\"3.0.0\"]", updates[1].From)
 	}
-	if len(updates[1].Ignore) != 1 {
-		t.Fatalf("Second module ignore patterns count = %d, want 1", len(updates[1].Ignore))
+	if len(updates[1].IgnoreModules) != 1 {
+		t.Fatalf("Second module ignore patterns count = %d, want 1", len(updates[1].IgnoreModules))
 	}
-	if updates[1].Ignore[0] != "*-deprecated" {
-		t.Errorf("Second module ignore[0] = %q, want %q", updates[1].Ignore[0], "*-deprecated")
+	if updates[1].IgnoreModules[0] != "*-deprecated" {
+		t.Errorf("Second module ignore_modules[0] = %q, want %q", updates[1].IgnoreModules[0], "*-deprecated")
 	}
 }
 
-func TestLoadConfigWithIgnoreFieldWhitespace(t *testing.T) {
+func TestLoadConfigWithIgnoreModulesFieldWhitespace(t *testing.T) {
 	configYAML := `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
-    ignore:
+    ignore_modules:
       - "  legacy-vpc  "
       - "  test-*  "
 `
@@ -1257,22 +1257,22 @@ func TestLoadConfigWithIgnoreFieldWhitespace(t *testing.T) {
 	}
 
 	// Whitespace should be trimmed from ignore patterns
-	if len(updates[0].Ignore) != 2 {
-		t.Fatalf("Ignore patterns count = %d, want 2", len(updates[0].Ignore))
+	if len(updates[0].IgnoreModules) != 2 {
+		t.Fatalf("IgnoreModules patterns count = %d, want 2", len(updates[0].IgnoreModules))
 	}
-	if updates[0].Ignore[0] != "legacy-vpc" {
-		t.Errorf("Ignore[0] = %q, want %q (whitespace should be trimmed)", updates[0].Ignore[0], "legacy-vpc")
+	if updates[0].IgnoreModules[0] != "legacy-vpc" {
+		t.Errorf("IgnoreModules[0] = %q, want %q (whitespace should be trimmed)", updates[0].IgnoreModules[0], "legacy-vpc")
 	}
-	if updates[0].Ignore[1] != "test-*" {
-		t.Errorf("Ignore[1] = %q, want %q (whitespace should be trimmed)", updates[0].Ignore[1], "test-*")
+	if updates[0].IgnoreModules[1] != "test-*" {
+		t.Errorf("IgnoreModules[1] = %q, want %q (whitespace should be trimmed)", updates[0].IgnoreModules[1], "test-*")
 	}
 }
 
-func TestLoadConfigWithWhitespaceOnlyIgnorePatterns(t *testing.T) {
+func TestLoadConfigWithWhitespaceOnlyIgnoreModulesPatterns(t *testing.T) {
 	configYAML := `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
-    ignore:
+    ignore_modules:
       - "legacy-vpc"
       - "   "
       - "test-*"
@@ -1298,22 +1298,22 @@ func TestLoadConfigWithWhitespaceOnlyIgnorePatterns(t *testing.T) {
 	}
 
 	// Whitespace-only and empty patterns should be filtered out
-	if len(updates[0].Ignore) != 2 {
-		t.Fatalf("Ignore patterns count = %d, want 2 (empty patterns should be filtered out)", len(updates[0].Ignore))
+	if len(updates[0].IgnoreModules) != 2 {
+		t.Fatalf("IgnoreModules patterns count = %d, want 2 (empty patterns should be filtered out)", len(updates[0].IgnoreModules))
 	}
-	if updates[0].Ignore[0] != "legacy-vpc" {
-		t.Errorf("Ignore[0] = %q, want %q", updates[0].Ignore[0], "legacy-vpc")
+	if updates[0].IgnoreModules[0] != "legacy-vpc" {
+		t.Errorf("IgnoreModules[0] = %q, want %q", updates[0].IgnoreModules[0], "legacy-vpc")
 	}
-	if updates[0].Ignore[1] != "test-*" {
-		t.Errorf("Ignore[1] = %q, want %q", updates[0].Ignore[1], "test-*")
+	if updates[0].IgnoreModules[1] != "test-*" {
+		t.Errorf("IgnoreModules[1] = %q, want %q", updates[0].IgnoreModules[1], "test-*")
 	}
 }
 
-func TestLoadConfigWithEmptyIgnoreField(t *testing.T) {
+func TestLoadConfigWithEmptyIgnoreModulesField(t *testing.T) {
 	configYAML := `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
-    ignore: []
+    ignore_modules: []
 `
 
 	tmpDir := t.TempDir()
@@ -1333,13 +1333,13 @@ func TestLoadConfigWithEmptyIgnoreField(t *testing.T) {
 		t.Errorf("Expected 1 update, got %d", len(updates))
 	}
 
-	// Empty ignore array should be allowed
-	if len(updates[0].Ignore) != 0 {
-		t.Errorf("Ignore patterns count = %d, want 0", len(updates[0].Ignore))
+	// Empty ignore_modules array should be allowed
+	if len(updates[0].IgnoreModules) != 0 {
+		t.Errorf("IgnoreModules patterns count = %d, want 0", len(updates[0].IgnoreModules))
 	}
 }
 
-func TestLoadConfigWithoutIgnoreField(t *testing.T) {
+func TestLoadConfigWithoutIgnoreModulesField(t *testing.T) {
 	configYAML := `modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"
@@ -1362,8 +1362,8 @@ func TestLoadConfigWithoutIgnoreField(t *testing.T) {
 		t.Errorf("Expected 1 update, got %d", len(updates))
 	}
 
-	// Modules without ignore field should have empty slice
-	if len(updates[0].Ignore) != 0 {
-		t.Errorf("Ignore patterns should be empty, got %v", updates[0].Ignore)
+	// Modules without ignore_modules field should have empty slice
+	if len(updates[0].IgnoreModules) != 0 {
+		t.Errorf("IgnoreModules patterns should be empty, got %v", updates[0].IgnoreModules)
 	}
 }
