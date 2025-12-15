@@ -38,7 +38,7 @@ archives:
           - zip
 
 checksum:
-  name_template: "{{ .ProjectName }}-v{{ .Version }}.checksums.txt"
+  name_template: "{{ .ProjectName }}-{{ .Tag }}.checksums.txt"
   algorithm: sha256
 
 changelog:
@@ -80,10 +80,10 @@ release:
 
     ```bash
     # Download checksums
-    curl -LO https://github.com/{{ .Env.GITHUB_REPOSITORY }}/releases/download/{{ .Tag }}/{{ .ProjectName }}-v{{ .Version }}.checksums.txt
+    curl -LO https://github.com/{{ .Env.GITHUB_REPOSITORY }}/releases/download/{{ .Tag }}/{{ .ProjectName }}-{{ .Tag }}.checksums.txt
 
     # Verify the binary using the checksums file
-    sha256sum -c {{ .ProjectName }}-v{{ .Version }}.checksums.txt --ignore-missing
+    sha256sum -c {{ .ProjectName }}-{{ .Tag }}.checksums.txt --ignore-missing
     ```
 
     ### Verify artifact provenance
