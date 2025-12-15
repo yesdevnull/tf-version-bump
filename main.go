@@ -62,101 +62,98 @@ func quote(s, format string) string {
 	return "'" + s + "'"
 }
 
-func main() {
-	// Define CLI flags
-	pattern := flag.String("pattern", "", "Glob pattern for Terraform files (e.g., '*.tf' or 'modules/**/*.tf')")
-	moduleSource := flag.String("module", "", "Source of the module to update (e.g., 'terraform-aws-modules/vpc/aws')")
-	toVersion := flag.String("to", "", "Desired version number")
-	var fromVersions stringSliceFlag
-	flag.Var(&fromVersions, "from", "Optional: version to update from (can be specified multiple times, e.g., -from 3.0.0 -from '~> 3.0')")
-	var ignoreVersions stringSliceFlag
-	flag.Var(&ignoreVersions, "ignore-version", "Optional: version(s) to skip (can be specified multiple times, e.g., -ignore-version 3.0.0 -ignore-version '~> 3.0')")
-	ignore := flag.String("ignore", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
-	configFile := flag.String("config", "", "Path to YAML config file with multiple module updates")
-	forceAdd := flag.Bool("force-add", false, "Add version attribute to modules that don't have one (default: skip with warning)")
-	dryRun := flag.Bool("dry-run", false, "Show what changes would be made without actually modifying files")
-	verbose := flag.Bool("verbose", false, "Show verbose output including skipped modules")
-	showVersion := flag.Bool("version", false, "Print version information and exit")
-	output := flag.String("output", "text", "Output format: 'text' (default) or 'md' (Markdown)")
+// cliFlags holds all command-line flags
+type cliFlags struct {
+	pattern        string
+	moduleSource   string
+	toVersion      string
+	fromVersions   stringSliceFlag
+	ignoreVersions stringSliceFlag
+	ignore         string
+	configFile     string
+	forceAdd       bool
+	dryRun         bool
+	verbose        bool
+	showVersion    bool
+	output         string
+}
+
+// parseFlags parses and validates command-line flags
+func parseFlags() *cliFlags {
+	flags := &cliFlags{}
+	
+	flag.StringVar(&flags.pattern, "pattern", "", "Glob pattern for Terraform files (e.g., '*.tf' or 'modules/**/*.tf')")
+	flag.StringVar(&flags.moduleSource, "module", "", "Source of the module to update (e.g., 'terraform-aws-modules/vpc/aws')")
+	flag.StringVar(&flags.toVersion, "to", "", "Desired version number")
+	flag.Var(&flags.fromVersions, "from", "Optional: version to update from (can be specified multiple times, e.g., -from 3.0.0 -from '~> 3.0')")
+	flag.Var(&flags.ignoreVersions, "ignore-version", "Optional: version(s) to skip (can be specified multiple times, e.g., -ignore-version 3.0.0 -ignore-version '~> 3.0')")
+	flag.StringVar(&flags.ignore, "ignore", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
+	flag.StringVar(&flags.configFile, "config", "", "Path to YAML config file with multiple module updates")
+	flag.BoolVar(&flags.forceAdd, "force-add", false, "Add version attribute to modules that don't have one (default: skip with warning)")
+	flag.BoolVar(&flags.dryRun, "dry-run", false, "Show what changes would be made without actually modifying files")
+	flag.BoolVar(&flags.verbose, "verbose", false, "Show verbose output including skipped modules")
+	flag.BoolVar(&flags.showVersion, "version", false, "Print version information and exit")
+	flag.StringVar(&flags.output, "output", "text", "Output format: 'text' (default) or 'md' (Markdown)")
 	flag.Parse()
 
 	// Validate output format
-	if *output != "text" && *output != "md" {
-		log.Fatalf("Error: Invalid output format '%s'. Must be 'text' or 'md'", *output)
+	if flags.output != "text" && flags.output != "md" {
+		log.Fatalf("Error: Invalid output format '%s'. Must be 'text' or 'md'", flags.output)
 	}
 
-	// Handle version flag
-	if *showVersion {
-		fmt.Printf("tf-version-bump %s\n", version)
-		fmt.Printf("  commit: %s\n", commit)
-		fmt.Printf("  built:  %s\n", date)
-		os.Exit(0)
-	}
+	return flags
+}
 
-	// Determine operation mode
-	var updates []ModuleUpdate
-	var err error
-
-	if *configFile != "" {
+// loadModuleUpdates loads module updates based on the operation mode (config file or single module)
+func loadModuleUpdates(flags *cliFlags) []ModuleUpdate {
+	if flags.configFile != "" {
 		// Config file mode
-		if *moduleSource != "" || *toVersion != "" || len(fromVersions) > 0 || len(ignoreVersions) > 0 || *ignore != "" {
+		if flags.moduleSource != "" || flags.toVersion != "" || len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignore != "" {
 			log.Fatal("Error: Cannot use -config with -module, -to, -from, -ignore-version, or -ignore flags")
 		}
-		if *pattern == "" {
+		if flags.pattern == "" {
 			log.Fatal("Error: -pattern flag is required")
 		}
-		updates, err = loadConfig(*configFile)
+		updates, err := loadConfig(flags.configFile)
 		if err != nil {
 			log.Fatalf("Error loading config file: %v", err)
 		}
 		if len(updates) == 0 {
 			log.Fatal("Error: Config file contains no module updates")
 		}
-	} else {
-		// Single module mode
-		if *pattern == "" || *moduleSource == "" || *toVersion == "" {
-			fmt.Println("Usage:")
-			fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -to <version> [-from <version>]... [-ignore-version <version>]... [-ignore <patterns>]")
-			fmt.Println("  Config file:    tf-version-bump -pattern <glob> -config <config-file>")
-			flag.PrintDefaults()
-			os.Exit(1)
-		}
-		// Parse ignore patterns from comma-separated list
-		var ignorePatterns []string
-		if *ignore != "" {
-			for _, p := range strings.Split(*ignore, ",") {
-				if trimmed := strings.TrimSpace(p); trimmed != "" {
-					ignorePatterns = append(ignorePatterns, trimmed)
-				}
+		return updates
+	}
+
+	// Single module mode
+	if flags.pattern == "" || flags.moduleSource == "" || flags.toVersion == "" {
+		fmt.Println("Usage:")
+		fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -to <version> [-from <version>]... [-ignore-version <version>]... [-ignore <patterns>]")
+		fmt.Println("  Config file:    tf-version-bump -pattern <glob> -config <config-file>")
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	// Parse ignore patterns from comma-separated list
+	var ignorePatterns []string
+	if flags.ignore != "" {
+		for _, p := range strings.Split(flags.ignore, ",") {
+			if trimmed := strings.TrimSpace(p); trimmed != "" {
+				ignorePatterns = append(ignorePatterns, trimmed)
 			}
 		}
-		updates = []ModuleUpdate{
-			{Source: *moduleSource, Version: *toVersion, From: FromVersions(fromVersions), IgnoreVersions: FromVersions(ignoreVersions), Ignore: ignorePatterns},
-		}
 	}
 
-	// Find matching files
-	files, err := filepath.Glob(*pattern)
-	if err != nil {
-		log.Fatalf("Error matching pattern: %v", err)
+	return []ModuleUpdate{
+		{Source: flags.moduleSource, Version: flags.toVersion, From: FromVersions(flags.fromVersions), IgnoreVersions: FromVersions(flags.ignoreVersions), Ignore: ignorePatterns},
 	}
+}
 
-	if len(files) == 0 {
-		log.Fatalf("No files matched pattern: %s", *pattern)
-	}
-
-	fmt.Printf("Found %d file(s) matching pattern %s\n", len(files), quote(*pattern, *output))
-
-	if *dryRun {
-		fmt.Println("Running in dry-run mode - no files will be modified")
-	}
-
-	// Process each file with all module updates
+// processFiles processes all matching files and applies module updates
+func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) int {
 	totalUpdates := 0
 	for _, file := range files {
-		fileUpdates := 0
 		for _, update := range updates {
-			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, update.IgnoreVersions, update.Ignore, *forceAdd, *dryRun, *verbose, *output)
+			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, update.IgnoreVersions, update.Ignore, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				continue
@@ -164,34 +161,74 @@ func main() {
 			if updated {
 				prefix := "✓"
 				action := "Updated"
-				if *dryRun {
+				if flags.dryRun {
 					prefix = "→"
 					action = "Would update"
 				}
 				if len(update.From) > 0 {
-					fmt.Printf("%s %s module source %s from version(s) %v to %s in %s\n", prefix, action, quote(update.Source, *output), update.From, quote(update.Version, *output), file)
+					fmt.Printf("%s %s module source %s from version(s) %v to %s in %s\n", prefix, action, quote(update.Source, flags.output), update.From, quote(update.Version, flags.output), file)
 				} else {
-					fmt.Printf("%s %s module source %s to version %s in %s\n", prefix, action, quote(update.Source, *output), quote(update.Version, *output), file)
+					fmt.Printf("%s %s module source %s to version %s in %s\n", prefix, action, quote(update.Source, flags.output), quote(update.Version, flags.output), file)
 				}
-				fileUpdates++
 				totalUpdates++
 			}
 		}
 	}
+	return totalUpdates
+}
 
-	if *dryRun {
-		if len(updates) > 1 {
+// printSummary prints the final summary of updates
+func printSummary(totalUpdates int, updatesCount int, dryRun bool) {
+	if dryRun {
+		if updatesCount > 1 {
 			fmt.Printf("\nDry run: would apply %d update(s) across all files\n", totalUpdates)
 		} else {
 			fmt.Printf("\nDry run: would update %d file(s)\n", totalUpdates)
 		}
 	} else {
-		if len(updates) > 1 {
+		if updatesCount > 1 {
 			fmt.Printf("\nSuccessfully applied %d update(s) across all files\n", totalUpdates)
 		} else {
 			fmt.Printf("\nSuccessfully updated %d file(s)\n", totalUpdates)
 		}
 	}
+}
+
+func main() {
+	flags := parseFlags()
+
+	// Handle version flag
+	if flags.showVersion {
+		fmt.Printf("tf-version-bump %s\n", version)
+		fmt.Printf("  commit: %s\n", commit)
+		fmt.Printf("  built:  %s\n", date)
+		os.Exit(0)
+	}
+
+	// Load module updates
+	updates := loadModuleUpdates(flags)
+
+	// Find matching files
+	files, err := filepath.Glob(flags.pattern)
+	if err != nil {
+		log.Fatalf("Error matching pattern: %v", err)
+	}
+
+	if len(files) == 0 {
+		log.Fatalf("No files matched pattern: %s", flags.pattern)
+	}
+
+	fmt.Printf("Found %d file(s) matching pattern %s\n", len(files), quote(flags.pattern, flags.output))
+
+	if flags.dryRun {
+		fmt.Println("Running in dry-run mode - no files will be modified")
+	}
+
+	// Process all files
+	totalUpdates := processFiles(files, updates, flags)
+
+	// Print summary
+	printSummary(totalUpdates, len(updates), flags.dryRun)
 }
 
 // containsVersion checks if a version string is present in a slice of versions.
