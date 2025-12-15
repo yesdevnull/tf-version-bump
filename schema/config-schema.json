@@ -68,6 +68,33 @@
             ],
             "description": "Optional: Only update the module if its current version matches this value or any value in the list. Supports version constraints like ~> 3.0"
           },
+          "ignore_versions": {
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "Single version to skip during updates",
+                "minLength": 1,
+                "examples": [
+                  "3.14.0",
+                  "~> 3.0"
+                ]
+              },
+              {
+                "type": "array",
+                "description": "List of versions to skip during updates. Module will be skipped if current version matches any in this list",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "examples": [
+                  ["3.0.0", "~> 3.0"],
+                  ["3.14.0", "4.0.0"]
+                ]
+              }
+            ],
+            "description": "Optional: Skip modules currently at these versions. Takes precedence over 'from' filter"
+          },
           "ignore_modules": {
             "type": "array",
             "description": "Optional: List of module names or patterns to ignore. Supports wildcard matching using '*' for zero or more characters",
@@ -120,6 +147,15 @@
           "version": "4.0.0",
           "from": ["3.0.0", "~> 3.0"],
           "ignore_modules": ["*-deprecated"]
+        }
+      ]
+    },
+    {
+      "modules": [
+        {
+          "source": "terraform-aws-modules/vpc/aws",
+          "version": "5.0.0",
+          "ignore_versions": ["3.14.0", "~> 3.0"]
         }
       ]
     }
