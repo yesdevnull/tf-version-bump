@@ -61,13 +61,15 @@ release:
   header: |
     ## Installation
 
+    To install `{{ .ProjectName }}`, download one of the pre-built binaries provided for your platform from the artifacts attached to this release.
+
     Pre-built binaries are provided for Linux, macOS, and Windows (amd64 and arm64 architectures).
 
     ### Quick Install (Linux amd64)
 
     ```bash
     # Download the binary
-    curl -LO https://github.com/yesdevnull/{{ .ProjectName }}/releases/download/v{{ .Version }}/{{ .ProjectName }}_{{ .Version }}_linux_x86_64.tar.gz
+    curl -LO https://github.com/{{ .Env.GITHUB_REPOSITORY }}/releases/download/{{ .Tag }}/{{ .ProjectName }}_{{ .Version }}_linux_x86_64.tar.gz
 
     # Extract
     tar -xzf {{ .ProjectName }}_{{ .Version }}_linux_x86_64.tar.gz
@@ -79,32 +81,36 @@ release:
     sudo chmod +x /usr/local/bin/{{ .ProjectName }}
     ```
 
-    ### Verify Checksums
+    ### Verify binary integrity
+
+    To verify the integrity of the downloaded binary, you can utilize the checksums file:
 
     ```bash
     # Download checksums
-    curl -LO https://github.com/yesdevnull/{{ .ProjectName }}/releases/download/v{{ .Version }}/{{ .ProjectName }}-v{{ .Version }}.checksums.txt
+    curl -LO https://github.com/{{ .Env.GITHUB_REPOSITORY }}/releases/download/{{ .Tag }}/{{ .ProjectName }}-v{{ .Version }}.checksums.txt
 
-    # Verify
+    # Verify the binary using the checksums file
     sha256sum -c {{ .ProjectName }}-v{{ .Version }}.checksums.txt --ignore-missing
     ```
 
-    ### Verify SLSA Provenance (Recommended)
+    ### Verify artifact provenance
 
-    This release includes SLSA Level 3 provenance attestations for supply chain security.
+    This release includes [SLSA Level 3](https://slsa.dev/) provenance attestations for supply chain security. The SLSA provenance of the binaries and packages can be found within the artifacts associated with this release. It is presented through an [in-toto](https://in-toto.io/) link metadata file named `{{ .ProjectName }}-v{{ .Version }}.intoto.jsonl`.
+
+    To verify the provenance of an artifact, you can utilize the [`slsa-verifier`](https://github.com/slsa-framework/slsa-verifier) tool:
 
     ```bash
-    # Install slsa-verifier
+    # Install slsa-verifier (if not already installed)
     go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@latest
 
-    # Download provenance
-    curl -LO https://github.com/yesdevnull/{{ .ProjectName }}/releases/download/v{{ .Version }}/{{ .ProjectName }}-v{{ .Version }}.intoto.jsonl
+    # Download the metadata file
+    curl -LO https://github.com/{{ .Env.GITHUB_REPOSITORY }}/releases/download/{{ .Tag }}/{{ .ProjectName }}-v{{ .Version }}.intoto.jsonl
 
-    # Verify artifact
+    # Verify the provenance of the artifact
     slsa-verifier verify-artifact {{ .ProjectName }}_{{ .Version }}_linux_x86_64.tar.gz \
       --provenance-path {{ .ProjectName }}-v{{ .Version }}.intoto.jsonl \
-      --source-uri github.com/yesdevnull/{{ .ProjectName }} \
-      --source-tag v{{ .Version }}
+      --source-uri github.com/{{ .Env.GITHUB_REPOSITORY }} \
+      --source-tag {{ .Tag }}
     ```
 
     ### All Available Binaries
@@ -118,7 +124,7 @@ release:
     ### Alternative: Install via Go
 
     ```bash
-    go install github.com/yesdevnull/{{ .ProjectName }}@v{{ .Version }}
+    go install github.com/{{ .Env.GITHUB_REPOSITORY }}@{{ .Tag }}
     ```
 
 nfpms:
