@@ -27,17 +27,17 @@ func TestLoadConfig(t *testing.T) {
 			expectError: false,
 			expectCount: 2,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if updates[0].Source != "terraform-aws-modules/vpc/aws" {
-					t.Errorf("First module source = %q, want %q", updates[0].Source, "terraform-aws-modules/vpc/aws")
+				if config.Modules[0].Source != "terraform-aws-modules/vpc/aws" {
+					t.Errorf("First module source = %q, want %q", config.Modules[0].Source, "terraform-aws-modules/vpc/aws")
 				}
-				if updates[0].Version != "5.0.0" {
-					t.Errorf("First module version = %q, want %q", updates[0].Version, "5.0.0")
+				if config.Modules[0].Version != "5.0.0" {
+					t.Errorf("First module version = %q, want %q", config.Modules[0].Version, "5.0.0")
 				}
-				if updates[1].Source != "terraform-aws-modules/s3-bucket/aws" {
-					t.Errorf("Second module source = %q, want %q", updates[1].Source, "terraform-aws-modules/s3-bucket/aws")
+				if config.Modules[1].Source != "terraform-aws-modules/s3-bucket/aws" {
+					t.Errorf("Second module source = %q, want %q", config.Modules[1].Source, "terraform-aws-modules/s3-bucket/aws")
 				}
-				if updates[1].Version != "4.0.0" {
-					t.Errorf("Second module version = %q, want %q", updates[1].Version, "4.0.0")
+				if config.Modules[1].Version != "4.0.0" {
+					t.Errorf("Second module version = %q, want %q", config.Modules[1].Version, "4.0.0")
 				}
 			},
 		},
@@ -50,11 +50,11 @@ func TestLoadConfig(t *testing.T) {
 			expectError: false,
 			expectCount: 1,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if updates[0].Source != "terraform-aws-modules/vpc/aws" {
-					t.Errorf("Module source = %q, want %q", updates[0].Source, "terraform-aws-modules/vpc/aws")
+				if config.Modules[0].Source != "terraform-aws-modules/vpc/aws" {
+					t.Errorf("Module source = %q, want %q", config.Modules[0].Source, "terraform-aws-modules/vpc/aws")
 				}
-				if updates[0].Version != "5.0.0" {
-					t.Errorf("Module version = %q, want %q", updates[0].Version, "5.0.0")
+				if config.Modules[0].Version != "5.0.0" {
+					t.Errorf("Module version = %q, want %q", config.Modules[0].Version, "5.0.0")
 				}
 			},
 		},
@@ -67,8 +67,8 @@ func TestLoadConfig(t *testing.T) {
 			expectError: false,
 			expectCount: 1,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if updates[0].Source != "terraform-aws-modules/iam/aws//modules/iam-user" {
-					t.Errorf("Module source = %q, want %q", updates[0].Source, "terraform-aws-modules/iam/aws//modules/iam-user")
+				if config.Modules[0].Source != "terraform-aws-modules/iam/aws//modules/iam-user" {
+					t.Errorf("Module source = %q, want %q", config.Modules[0].Source, "terraform-aws-modules/iam/aws//modules/iam-user")
 				}
 			},
 		},
@@ -112,7 +112,7 @@ func TestLoadConfig(t *testing.T) {
 			}
 
 			// Load config
-			updates, err := loadConfig(configFile)
+			config, err := loadConfig(configFile)
 
 			// Check error expectation
 			if tt.expectError {
@@ -127,13 +127,13 @@ func TestLoadConfig(t *testing.T) {
 			}
 
 			// Check count
-			if len(updates) != tt.expectCount {
-				t.Errorf("Got %d modules, want %d", len(updates), tt.expectCount)
+			if len(config.Modules) != tt.expectCount {
+				t.Errorf("Got %d modules, want %d", len(config.Modules), tt.expectCount)
 			}
 
 			// Run custom validation if provided
 			if tt.validate != nil {
-				tt.validate(t, updates)
+				tt.validate(t, config.Modules)
 			}
 		})
 	}
@@ -197,13 +197,13 @@ module "s3" {
 	}
 
 	// Load config
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
 	// Apply updates
-	for _, update := range updates {
+	for _, update := range config.Modules {
 		_, err := updateModuleVersion(tf1File, update.Source, update.Version, update.From, update.IgnoreVersions, update.IgnoreModules, false, false, false, "text")
 		if err != nil {
 			t.Errorf("Failed to update %s: %v", tf1File, err)
@@ -257,13 +257,13 @@ modules:
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 2 {
-		t.Errorf("Got %d modules, want 2", len(updates))
+	if len(config.Modules) != 2 {
+		t.Errorf("Got %d modules, want 2", len(config.Modules))
 	}
 }
 
@@ -283,20 +283,20 @@ func TestLoadConfigWithGitSources(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 2 {
-		t.Errorf("Got %d modules, want 2", len(updates))
+	if len(config.Modules) != 2 {
+		t.Errorf("Got %d modules, want 2", len(config.Modules))
 	}
 
-	if updates[0].Source != "git::https://github.com/example/terraform-module.git" {
-		t.Errorf("First module source = %q, want %q", updates[0].Source, "git::https://github.com/example/terraform-module.git")
+	if config.Modules[0].Source != "git::https://github.com/example/terraform-module.git" {
+		t.Errorf("First module source = %q, want %q", config.Modules[0].Source, "git::https://github.com/example/terraform-module.git")
 	}
-	if updates[0].Version != "v1.0.0" {
-		t.Errorf("First module version = %q, want %q", updates[0].Version, "v1.0.0")
+	if config.Modules[0].Version != "v1.0.0" {
+		t.Errorf("First module version = %q, want %q", config.Modules[0].Version, "v1.0.0")
 	}
 }
 
@@ -320,21 +320,21 @@ func TestLoadConfigWithLocalModules(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 2 {
-		t.Errorf("Got %d modules, want 2", len(updates))
+	if len(config.Modules) != 2 {
+		t.Errorf("Got %d modules, want 2", len(config.Modules))
 	}
 
 	// Verify local paths are parsed correctly
-	if updates[0].Source != "./modules/vpc" {
-		t.Errorf("First module source = %q, want %q", updates[0].Source, "./modules/vpc")
+	if config.Modules[0].Source != "./modules/vpc" {
+		t.Errorf("First module source = %q, want %q", config.Modules[0].Source, "./modules/vpc")
 	}
-	if updates[1].Source != "../shared-modules/s3" {
-		t.Errorf("Second module source = %q, want %q", updates[1].Source, "../shared-modules/s3")
+	if config.Modules[1].Source != "../shared-modules/s3" {
+		t.Errorf("Second module source = %q, want %q", config.Modules[1].Source, "../shared-modules/s3")
 	}
 }
 
@@ -419,20 +419,20 @@ func TestLoadConfigLargeFile(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 50 {
-		t.Errorf("Got %d modules, want 50", len(updates))
+	if len(config.Modules) != 50 {
+		t.Errorf("Got %d modules, want 50", len(config.Modules))
 	}
 
 	// Verify first and last entries
-	if updates[0].Source != "terraform-aws-modules/module-0/aws" {
+	if config.Modules[0].Source != "terraform-aws-modules/module-0/aws" {
 		t.Errorf("First module source incorrect")
 	}
-	if updates[49].Source != "terraform-aws-modules/module-49/aws" {
+	if config.Modules[49].Source != "terraform-aws-modules/module-49/aws" {
 		t.Errorf("Last module source incorrect")
 	}
 }
@@ -456,14 +456,14 @@ func TestLoadConfigWithFromField(t *testing.T) {
 			expectError: false,
 			expectCount: 1,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if updates[0].Source != "terraform-aws-modules/vpc/aws" {
-					t.Errorf("Module source = %q, want %q", updates[0].Source, "terraform-aws-modules/vpc/aws")
+				if config.Modules[0].Source != "terraform-aws-modules/vpc/aws" {
+					t.Errorf("Module source = %q, want %q", config.Modules[0].Source, "terraform-aws-modules/vpc/aws")
 				}
-				if updates[0].Version != "5.0.0" {
-					t.Errorf("Module version = %q, want %q", updates[0].Version, "5.0.0")
+				if config.Modules[0].Version != "5.0.0" {
+					t.Errorf("Module version = %q, want %q", config.Modules[0].Version, "5.0.0")
 				}
-				if len(updates[0].From) != 1 || updates[0].From[0] != "3.14.0" {
-					t.Errorf("Module from = %v, want [\"3.14.0\"]", updates[0].From)
+				if len(config.Modules[0].From) != 1 || config.Modules[0].From[0] != "3.14.0" {
+					t.Errorf("Module from = %v, want [\"3.14.0\"]", config.Modules[0].From)
 				}
 			},
 		},
@@ -479,11 +479,11 @@ func TestLoadConfigWithFromField(t *testing.T) {
 			expectError: false,
 			expectCount: 2,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if len(updates[0].From) != 1 || updates[0].From[0] != "3.14.0" {
-					t.Errorf("First module from = %v, want [\"3.14.0\"]", updates[0].From)
+				if len(config.Modules[0].From) != 1 || config.Modules[0].From[0] != "3.14.0" {
+					t.Errorf("First module from = %v, want [\"3.14.0\"]", config.Modules[0].From)
 				}
-				if len(updates[1].From) != 0 {
-					t.Errorf("Second module from = %v, want empty slice", updates[1].From)
+				if len(config.Modules[1].From) != 0 {
+					t.Errorf("Second module from = %v, want empty slice", config.Modules[1].From)
 				}
 			},
 		},
@@ -503,14 +503,14 @@ func TestLoadConfigWithFromField(t *testing.T) {
 			expectError: false,
 			expectCount: 3,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if len(updates[0].From) != 1 || updates[0].From[0] != "3.14.0" {
-					t.Errorf("First module from = %v, want [\"3.14.0\"]", updates[0].From)
+				if len(config.Modules[0].From) != 1 || config.Modules[0].From[0] != "3.14.0" {
+					t.Errorf("First module from = %v, want [\"3.14.0\"]", config.Modules[0].From)
 				}
-				if len(updates[1].From) != 1 || updates[1].From[0] != "3.0.0" {
-					t.Errorf("Second module from = %v, want [\"3.0.0\"]", updates[1].From)
+				if len(config.Modules[1].From) != 1 || config.Modules[1].From[0] != "3.0.0" {
+					t.Errorf("Second module from = %v, want [\"3.0.0\"]", config.Modules[1].From)
 				}
-				if len(updates[2].From) != 1 || updates[2].From[0] != "5.1.0" {
-					t.Errorf("Third module from = %v, want [\"5.1.0\"]", updates[2].From)
+				if len(config.Modules[2].From) != 1 || config.Modules[2].From[0] != "5.1.0" {
+					t.Errorf("Third module from = %v, want [\"5.1.0\"]", config.Modules[2].From)
 				}
 			},
 		},
@@ -526,7 +526,7 @@ func TestLoadConfigWithFromField(t *testing.T) {
 				t.Fatalf("Failed to create temp config file: %v", err)
 			}
 
-			updates, err := loadConfig(configFile)
+			config, err := loadConfig(configFile)
 
 			if tt.expectError {
 				if err == nil {
@@ -539,8 +539,8 @@ func TestLoadConfigWithFromField(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			if len(updates) != tt.expectCount {
-				t.Errorf("Got %d modules, want %d", len(updates), tt.expectCount)
+			if len(config.Modules) != tt.expectCount {
+				t.Errorf("Got %d modules, want %d", len(config.Modules), tt.expectCount)
 			}
 
 			if tt.validate != nil {
@@ -571,20 +571,20 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 			expectError: false,
 			expectCount: 1,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if updates[0].Source != "terraform-aws-modules/s3-bucket/aws" {
-					t.Errorf("Module source = %q, want %q", updates[0].Source, "terraform-aws-modules/s3-bucket/aws")
+				if config.Modules[0].Source != "terraform-aws-modules/s3-bucket/aws" {
+					t.Errorf("Module source = %q, want %q", config.Modules[0].Source, "terraform-aws-modules/s3-bucket/aws")
 				}
-				if updates[0].Version != "4.0.0" {
-					t.Errorf("Module version = %q, want %q", updates[0].Version, "4.0.0")
+				if config.Modules[0].Version != "4.0.0" {
+					t.Errorf("Module version = %q, want %q", config.Modules[0].Version, "4.0.0")
 				}
-				if len(updates[0].From) != 2 {
-					t.Fatalf("Module from length = %d, want 2", len(updates[0].From))
+				if len(config.Modules[0].From) != 2 {
+					t.Fatalf("Module from length = %d, want 2", len(config.Modules[0].From))
 				}
-				if updates[0].From[0] != "3.0.0" {
-					t.Errorf("Module from[0] = %q, want %q", updates[0].From[0], "3.0.0")
+				if config.Modules[0].From[0] != "3.0.0" {
+					t.Errorf("Module from[0] = %q, want %q", config.Modules[0].From[0], "3.0.0")
 				}
-				if updates[0].From[1] != "~> 3.0" {
-					t.Errorf("Module from[1] = %q, want %q", updates[0].From[1], "~> 3.0")
+				if config.Modules[0].From[1] != "~> 3.0" {
+					t.Errorf("Module from[1] = %q, want %q", config.Modules[0].From[1], "~> 3.0")
 				}
 			},
 		},
@@ -604,18 +604,18 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 			expectCount: 2,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
 				// First module with single from version
-				if len(updates[0].From) != 1 || updates[0].From[0] != "4.0.0" {
-					t.Errorf("First module from = %v, want [\"4.0.0\"]", updates[0].From)
+				if len(config.Modules[0].From) != 1 || config.Modules[0].From[0] != "4.0.0" {
+					t.Errorf("First module from = %v, want [\"4.0.0\"]", config.Modules[0].From)
 				}
 				// Second module with multiple from versions
-				if len(updates[1].From) != 2 {
-					t.Fatalf("Second module from length = %d, want 2", len(updates[1].From))
+				if len(config.Modules[1].From) != 2 {
+					t.Fatalf("Second module from length = %d, want 2", len(config.Modules[1].From))
 				}
-				if updates[1].From[0] != "3.0.0" {
-					t.Errorf("Second module from[0] = %q, want %q", updates[1].From[0], "3.0.0")
+				if config.Modules[1].From[0] != "3.0.0" {
+					t.Errorf("Second module from[0] = %q, want %q", config.Modules[1].From[0], "3.0.0")
 				}
-				if updates[1].From[1] != "~> 3.0" {
-					t.Errorf("Second module from[1] = %q, want %q", updates[1].From[1], "~> 3.0")
+				if config.Modules[1].From[1] != "~> 3.0" {
+					t.Errorf("Second module from[1] = %q, want %q", config.Modules[1].From[1], "~> 3.0")
 				}
 			},
 		},
@@ -629,8 +629,8 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 			expectError: false,
 			expectCount: 1,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if len(updates[0].From) != 0 {
-					t.Errorf("Module from = %v, want empty slice", updates[0].From)
+				if len(config.Modules[0].From) != 0 {
+					t.Errorf("Module from = %v, want empty slice", config.Modules[0].From)
 				}
 			},
 		},
@@ -674,7 +674,7 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 				t.Fatalf("Failed to create temp config file: %v", err)
 			}
 
-			updates, err := loadConfig(configFile)
+			config, err := loadConfig(configFile)
 
 			if tt.expectError {
 				if err == nil {
@@ -687,8 +687,8 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			if len(updates) != tt.expectCount {
-				t.Errorf("Got %d modules, want %d", len(updates), tt.expectCount)
+			if len(config.Modules) != tt.expectCount {
+				t.Errorf("Got %d modules, want %d", len(config.Modules), tt.expectCount)
 			}
 
 			if tt.validate != nil {
@@ -744,13 +744,13 @@ module "iam" {
 	}
 
 	// Load config
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
 	// Apply updates
-	for _, update := range updates {
+	for _, update := range config.Modules {
 		_, err := updateModuleVersion(tfFile, update.Source, update.Version, update.From, update.IgnoreVersions, update.IgnoreModules, false, false, false, "text")
 		if err != nil {
 			t.Fatalf("Failed to update module: %v", err)
@@ -824,13 +824,13 @@ module "s3_other" {
 	}
 
 	// Load config
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
 	// Process the file with each update
-	for _, update := range updates {
+	for _, update := range config.Modules {
 		_, err := updateModuleVersion(tfFile, update.Source, update.Version, update.From, update.IgnoreVersions, update.IgnoreModules, false, false, false, "text")
 		if err != nil {
 			t.Fatalf("Failed to update module version: %v", err)
@@ -870,13 +870,13 @@ func TestLoadConfigEmptyFile(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 0 {
-		t.Errorf("Expected 0 updates from empty file, got %d", len(updates))
+	if len(config.Modules) != 0 {
+		t.Errorf("Expected 0 updates from empty file, got %d", len(config.Modules))
 	}
 }
 
@@ -894,13 +894,13 @@ func TestLoadConfigOnlyComments(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 0 {
-		t.Errorf("Expected 0 updates from comment-only file, got %d", len(updates))
+	if len(config.Modules) != 0 {
+		t.Errorf("Expected 0 updates from comment-only file, got %d", len(config.Modules))
 	}
 }
 
@@ -920,21 +920,21 @@ func TestLoadConfigSpecialCharacters(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 2 {
-		t.Errorf("Expected 2 updates, got %d", len(updates))
+	if len(config.Modules) != 2 {
+		t.Errorf("Expected 2 updates, got %d", len(config.Modules))
 	}
 
-	if updates[0].Source != "terraform-aws-modules/vpc_test-123/aws" {
-		t.Errorf("First module source incorrect: %s", updates[0].Source)
+	if config.Modules[0].Source != "terraform-aws-modules/vpc_test-123/aws" {
+		t.Errorf("First module source incorrect: %s", config.Modules[0].Source)
 	}
 
-	if updates[1].Source != "registry.example.com/org/module-name/provider" {
-		t.Errorf("Second module source incorrect: %s", updates[1].Source)
+	if config.Modules[1].Source != "registry.example.com/org/module-name/provider" {
+		t.Errorf("Second module source incorrect: %s", config.Modules[1].Source)
 	}
 }
 
@@ -954,22 +954,22 @@ func TestLoadConfigDuplicateModules(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	// Should parse both entries even if they're duplicates
-	if len(updates) != 2 {
-		t.Errorf("Expected 2 updates, got %d", len(updates))
+	if len(config.Modules) != 2 {
+		t.Errorf("Expected 2 updates, got %d", len(config.Modules))
 	}
 
-	if updates[0].Version != "5.0.0" {
-		t.Errorf("First module version = %q, want %q", updates[0].Version, "5.0.0")
+	if config.Modules[0].Version != "5.0.0" {
+		t.Errorf("First module version = %q, want %q", config.Modules[0].Version, "5.0.0")
 	}
 
-	if updates[1].Version != "5.1.0" {
-		t.Errorf("Second module version = %q, want %q", updates[1].Version, "5.1.0")
+	if config.Modules[1].Version != "5.1.0" {
+		t.Errorf("Second module version = %q, want %q", config.Modules[1].Version, "5.1.0")
 	}
 }
 
@@ -991,13 +991,13 @@ func TestLoadConfigMixedQuotes(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 3 {
-		t.Errorf("Expected 3 updates, got %d", len(updates))
+	if len(config.Modules) != 3 {
+		t.Errorf("Expected 3 updates, got %d", len(config.Modules))
 	}
 
 	// All should be parsed correctly regardless of quote style
@@ -1008,8 +1008,8 @@ func TestLoadConfigMixedQuotes(t *testing.T) {
 	}
 
 	for i, expected := range expectedSources {
-		if updates[i].Source != expected {
-			t.Errorf("Module %d source = %q, want %q", i, updates[i].Source, expected)
+		if config.Modules[i].Source != expected {
+			t.Errorf("Module %d source = %q, want %q", i, config.Modules[i].Source, expected)
 		}
 	}
 }
@@ -1030,17 +1030,17 @@ func TestLoadConfigVeryLongVersionString(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 1 {
-		t.Errorf("Expected 1 update, got %d", len(updates))
+	if len(config.Modules) != 1 {
+		t.Errorf("Expected 1 update, got %d", len(config.Modules))
 	}
 
-	if updates[0].Version != longVersion {
-		t.Errorf("Version = %q, want %q", updates[0].Version, longVersion)
+	if config.Modules[0].Version != longVersion {
+		t.Errorf("Version = %q, want %q", config.Modules[0].Version, longVersion)
 	}
 }
 
@@ -1059,24 +1059,24 @@ func TestLoadConfigWhitespaceInValues(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 1 {
-		t.Errorf("Expected 1 update, got %d", len(updates))
+	if len(config.Modules) != 1 {
+		t.Errorf("Expected 1 update, got %d", len(config.Modules))
 	}
 
 	// Source and Version should have whitespace trimmed by loadConfig
-	if updates[0].Source != "terraform-aws-modules/vpc/aws" {
-		t.Errorf("Source = %q, want %q (whitespace should be trimmed)", updates[0].Source, "terraform-aws-modules/vpc/aws")
+	if config.Modules[0].Source != "terraform-aws-modules/vpc/aws" {
+		t.Errorf("Source = %q, want %q (whitespace should be trimmed)", config.Modules[0].Source, "terraform-aws-modules/vpc/aws")
 	}
-	if updates[0].Version != "5.0.0" {
-		t.Errorf("Version = %q, want %q (whitespace should be trimmed)", updates[0].Version, "5.0.0")
+	if config.Modules[0].Version != "5.0.0" {
+		t.Errorf("Version = %q, want %q (whitespace should be trimmed)", config.Modules[0].Version, "5.0.0")
 	}
-	if len(updates[0].From) != 1 || updates[0].From[0] != "4.0.0" {
-		t.Errorf("From = %v, want [\"4.0.0\"] (whitespace should be trimmed)", updates[0].From)
+	if len(config.Modules[0].From) != 1 || config.Modules[0].From[0] != "4.0.0" {
+		t.Errorf("From = %v, want [\"4.0.0\"] (whitespace should be trimmed)", config.Modules[0].From)
 	}
 }
 
@@ -1142,22 +1142,22 @@ func TestLoadConfigVersionConstraintsWithWhitespace(t *testing.T) {
 				t.Fatalf("Failed to create temp config file: %v", err)
 			}
 
-			updates, err := loadConfig(configFile)
+			config, err := loadConfig(configFile)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			if len(updates) != 1 {
-				t.Errorf("Expected 1 update, got %d", len(updates))
+			if len(config.Modules) != 1 {
+				t.Errorf("Expected 1 update, got %d", len(config.Modules))
 			}
 
 			// Version constraints should have whitespace trimmed while preserving the constraint operators
-			if updates[0].Version != tt.expectedVersion {
-				t.Errorf("Version = %q, want %q (whitespace should be trimmed, constraint preserved)", updates[0].Version, tt.expectedVersion)
+			if config.Modules[0].Version != tt.expectedVersion {
+				t.Errorf("Version = %q, want %q (whitespace should be trimmed, constraint preserved)", config.Modules[0].Version, tt.expectedVersion)
 			}
 
-			if len(updates[0].From) != 1 || updates[0].From[0] != tt.expectedFrom {
-				t.Errorf("From = %v, want [%q] (whitespace should be trimmed, constraint preserved)", updates[0].From, tt.expectedFrom)
+			if len(config.Modules[0].From) != 1 || config.Modules[0].From[0] != tt.expectedFrom {
+				t.Errorf("From = %v, want [%q] (whitespace should be trimmed, constraint preserved)", config.Modules[0].From, tt.expectedFrom)
 			}
 		})
 	}
@@ -1186,47 +1186,47 @@ func TestLoadConfigWithIgnoreModulesField(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 2 {
-		t.Errorf("Expected 2 updates, got %d", len(updates))
+	if len(config.Modules) != 2 {
+		t.Errorf("Expected 2 updates, got %d", len(config.Modules))
 	}
 
 	// Check first module
-	if updates[0].Source != "terraform-aws-modules/vpc/aws" {
-		t.Errorf("First module source = %q, want %q", updates[0].Source, "terraform-aws-modules/vpc/aws")
+	if config.Modules[0].Source != "terraform-aws-modules/vpc/aws" {
+		t.Errorf("First module source = %q, want %q", config.Modules[0].Source, "terraform-aws-modules/vpc/aws")
 	}
-	if updates[0].Version != "5.0.0" {
-		t.Errorf("First module version = %q, want %q", updates[0].Version, "5.0.0")
+	if config.Modules[0].Version != "5.0.0" {
+		t.Errorf("First module version = %q, want %q", config.Modules[0].Version, "5.0.0")
 	}
-	if len(updates[0].IgnoreModules) != 2 {
-		t.Fatalf("First module ignore patterns count = %d, want 2", len(updates[0].IgnoreModules))
+	if len(config.Modules[0].IgnoreModules) != 2 {
+		t.Fatalf("First module ignore patterns count = %d, want 2", len(config.Modules[0].IgnoreModules))
 	}
-	if updates[0].IgnoreModules[0] != "legacy-vpc" {
-		t.Errorf("First module ignore_modules[0] = %q, want %q", updates[0].IgnoreModules[0], "legacy-vpc")
+	if config.Modules[0].IgnoreModules[0] != "legacy-vpc" {
+		t.Errorf("First module ignore_modules[0] = %q, want %q", config.Modules[0].IgnoreModules[0], "legacy-vpc")
 	}
-	if updates[0].IgnoreModules[1] != "test-*" {
-		t.Errorf("First module ignore_modules[1] = %q, want %q", updates[0].IgnoreModules[1], "test-*")
+	if config.Modules[0].IgnoreModules[1] != "test-*" {
+		t.Errorf("First module ignore_modules[1] = %q, want %q", config.Modules[0].IgnoreModules[1], "test-*")
 	}
 
 	// Check second module
-	if updates[1].Source != "terraform-aws-modules/s3-bucket/aws" {
-		t.Errorf("Second module source = %q, want %q", updates[1].Source, "terraform-aws-modules/s3-bucket/aws")
+	if config.Modules[1].Source != "terraform-aws-modules/s3-bucket/aws" {
+		t.Errorf("Second module source = %q, want %q", config.Modules[1].Source, "terraform-aws-modules/s3-bucket/aws")
 	}
-	if updates[1].Version != "4.0.0" {
-		t.Errorf("Second module version = %q, want %q", updates[1].Version, "4.0.0")
+	if config.Modules[1].Version != "4.0.0" {
+		t.Errorf("Second module version = %q, want %q", config.Modules[1].Version, "4.0.0")
 	}
-	if len(updates[1].From) != 1 || updates[1].From[0] != "3.0.0" {
-		t.Errorf("Second module from = %v, want [\"3.0.0\"]", updates[1].From)
+	if len(config.Modules[1].From) != 1 || config.Modules[1].From[0] != "3.0.0" {
+		t.Errorf("Second module from = %v, want [\"3.0.0\"]", config.Modules[1].From)
 	}
-	if len(updates[1].IgnoreModules) != 1 {
-		t.Fatalf("Second module ignore patterns count = %d, want 1", len(updates[1].IgnoreModules))
+	if len(config.Modules[1].IgnoreModules) != 1 {
+		t.Fatalf("Second module ignore patterns count = %d, want 1", len(config.Modules[1].IgnoreModules))
 	}
-	if updates[1].IgnoreModules[0] != "*-deprecated" {
-		t.Errorf("Second module ignore_modules[0] = %q, want %q", updates[1].IgnoreModules[0], "*-deprecated")
+	if config.Modules[1].IgnoreModules[0] != "*-deprecated" {
+		t.Errorf("Second module ignore_modules[0] = %q, want %q", config.Modules[1].IgnoreModules[0], "*-deprecated")
 	}
 }
 
@@ -1247,24 +1247,24 @@ func TestLoadConfigWithIgnoreModulesFieldWhitespace(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 1 {
-		t.Errorf("Expected 1 update, got %d", len(updates))
+	if len(config.Modules) != 1 {
+		t.Errorf("Expected 1 update, got %d", len(config.Modules))
 	}
 
 	// Whitespace should be trimmed from ignore patterns
-	if len(updates[0].IgnoreModules) != 2 {
-		t.Fatalf("IgnoreModules patterns count = %d, want 2", len(updates[0].IgnoreModules))
+	if len(config.Modules[0].IgnoreModules) != 2 {
+		t.Fatalf("IgnoreModules patterns count = %d, want 2", len(config.Modules[0].IgnoreModules))
 	}
-	if updates[0].IgnoreModules[0] != "legacy-vpc" {
-		t.Errorf("IgnoreModules[0] = %q, want %q (whitespace should be trimmed)", updates[0].IgnoreModules[0], "legacy-vpc")
+	if config.Modules[0].IgnoreModules[0] != "legacy-vpc" {
+		t.Errorf("IgnoreModules[0] = %q, want %q (whitespace should be trimmed)", config.Modules[0].IgnoreModules[0], "legacy-vpc")
 	}
-	if updates[0].IgnoreModules[1] != "test-*" {
-		t.Errorf("IgnoreModules[1] = %q, want %q (whitespace should be trimmed)", updates[0].IgnoreModules[1], "test-*")
+	if config.Modules[0].IgnoreModules[1] != "test-*" {
+		t.Errorf("IgnoreModules[1] = %q, want %q (whitespace should be trimmed)", config.Modules[0].IgnoreModules[1], "test-*")
 	}
 }
 
@@ -1288,24 +1288,24 @@ func TestLoadConfigWithWhitespaceOnlyIgnoreModulesPatterns(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 1 {
-		t.Errorf("Expected 1 update, got %d", len(updates))
+	if len(config.Modules) != 1 {
+		t.Errorf("Expected 1 update, got %d", len(config.Modules))
 	}
 
 	// Whitespace-only and empty patterns should be filtered out
-	if len(updates[0].IgnoreModules) != 2 {
-		t.Fatalf("IgnoreModules patterns count = %d, want 2 (empty patterns should be filtered out)", len(updates[0].IgnoreModules))
+	if len(config.Modules[0].IgnoreModules) != 2 {
+		t.Fatalf("IgnoreModules patterns count = %d, want 2 (empty patterns should be filtered out)", len(config.Modules[0].IgnoreModules))
 	}
-	if updates[0].IgnoreModules[0] != "legacy-vpc" {
-		t.Errorf("IgnoreModules[0] = %q, want %q", updates[0].IgnoreModules[0], "legacy-vpc")
+	if config.Modules[0].IgnoreModules[0] != "legacy-vpc" {
+		t.Errorf("IgnoreModules[0] = %q, want %q", config.Modules[0].IgnoreModules[0], "legacy-vpc")
 	}
-	if updates[0].IgnoreModules[1] != "test-*" {
-		t.Errorf("IgnoreModules[1] = %q, want %q", updates[0].IgnoreModules[1], "test-*")
+	if config.Modules[0].IgnoreModules[1] != "test-*" {
+		t.Errorf("IgnoreModules[1] = %q, want %q", config.Modules[0].IgnoreModules[1], "test-*")
 	}
 }
 
@@ -1324,18 +1324,18 @@ func TestLoadConfigWithEmptyIgnoreModulesField(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 1 {
-		t.Errorf("Expected 1 update, got %d", len(updates))
+	if len(config.Modules) != 1 {
+		t.Errorf("Expected 1 update, got %d", len(config.Modules))
 	}
 
 	// Empty ignore_modules array should be allowed
-	if len(updates[0].IgnoreModules) != 0 {
-		t.Errorf("IgnoreModules patterns count = %d, want 0", len(updates[0].IgnoreModules))
+	if len(config.Modules[0].IgnoreModules) != 0 {
+		t.Errorf("IgnoreModules patterns count = %d, want 0", len(config.Modules[0].IgnoreModules))
 	}
 }
 
@@ -1353,18 +1353,18 @@ func TestLoadConfigWithoutIgnoreModulesField(t *testing.T) {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(updates) != 1 {
-		t.Errorf("Expected 1 update, got %d", len(updates))
+	if len(config.Modules) != 1 {
+		t.Errorf("Expected 1 update, got %d", len(config.Modules))
 	}
 
 	// Modules without ignore_modules field should have empty slice
-	if len(updates[0].IgnoreModules) != 0 {
-		t.Errorf("IgnoreModules patterns should be empty, got %v", updates[0].IgnoreModules)
+	if len(config.Modules[0].IgnoreModules) != 0 {
+		t.Errorf("IgnoreModules patterns should be empty, got %v", config.Modules[0].IgnoreModules)
 	}
 }
 

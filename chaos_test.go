@@ -503,13 +503,13 @@ func TestConfigWithEmptyModulesList(t *testing.T) {
 		t.Fatalf("Failed to create config: %v", err)
 	}
 
-	updates, err := loadConfig(configFile)
+	config, err := loadConfig(configFile)
 	if err != nil {
 		t.Fatalf("Failed to load empty config: %v", err)
 	}
 
-	if len(updates) != 0 {
-		t.Errorf("Expected 0 updates, got %d", len(updates))
+	if len(config.Modules) != 0 {
+		t.Errorf("Expected 0 updates, got %d", len(config.Modules))
 	}
 }
 

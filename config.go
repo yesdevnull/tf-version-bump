@@ -59,11 +59,28 @@ type ModuleUpdate struct {
 	IgnoreModules  []string     `yaml:"ignore_modules"`  // Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
 }
 
+// ProviderUpdate represents a provider version update in required_providers blocks
+type ProviderUpdate struct {
+	Name    string `yaml:"name"`    // Provider name (e.g., "aws", "azurerm")
+	Version string `yaml:"version"` // Target version (e.g., "~> 5.0")
+}
+
 // Config represents the structure of a YAML configuration file for batch updates.
-// The YAML file should contain a top-level "modules" key with a list of module updates.
+// The YAML file can contain:
+// - A "modules" key with a list of module updates
+// - A "terraform_version" key to update Terraform required_version
+// - A "providers" key with a list of provider updates
 //
 // Example YAML:
 //
+//	terraform_version: ">= 1.5"
+//	
+//	providers:
+//	  - name: "aws"
+//	    version: "~> 5.0"
+//	  - name: "azurerm"
+//	    version: "~> 3.5"
+//	
 //	modules:
 //	  - source: "terraform-aws-modules/vpc/aws"
 //	    version: "5.0.0"
@@ -77,19 +94,21 @@ type ModuleUpdate struct {
 //	  - source: "terraform-aws-modules/s3-bucket/aws"
 //	    version: "4.0.0"
 type Config struct {
-	Modules []ModuleUpdate `yaml:"modules"`
+	TerraformVersion string           `yaml:"terraform_version"` // Optional: Terraform required_version to set
+	Providers        []ProviderUpdate `yaml:"providers"`         // Optional: List of provider updates
+	Modules          []ModuleUpdate   `yaml:"modules"`           // Optional: List of module updates
 }
 
-// loadConfig reads and parses a YAML configuration file containing module updates.
-// It validates that all required fields (source and version) are present for each module.
+// loadConfig reads and parses a YAML configuration file containing module, terraform version,
+// and provider updates. It validates that all required fields are present.
 //
 // Parameters:
 //   - filename: Path to the YAML configuration file
 //
 // Returns:
-//   - []ModuleUpdate: List of module updates parsed from the file
+//   - *Config: Configuration structure with all updates
 //   - error: Any error encountered during reading, parsing, or validation
-func loadConfig(filename string) ([]ModuleUpdate, error) {
+func loadConfig(filename string) (*Config, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -101,12 +120,28 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 	if err := decoder.Decode(&config); err != nil {
 		// EOF indicates an empty file or a file with only comments, which is valid
 		if err == io.EOF {
-			return []ModuleUpdate{}, nil
+			return &Config{}, nil
 		}
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
-	// Validate and sanitize config
+	// Trim and validate terraform_version
+	config.TerraformVersion = strings.TrimSpace(config.TerraformVersion)
+
+	// Validate and sanitize provider updates
+	for i, provider := range config.Providers {
+		config.Providers[i].Name = strings.TrimSpace(provider.Name)
+		config.Providers[i].Version = strings.TrimSpace(provider.Version)
+
+		if config.Providers[i].Name == "" {
+			return nil, fmt.Errorf("provider at index %d is missing 'name' field", i)
+		}
+		if config.Providers[i].Version == "" {
+			return nil, fmt.Errorf("provider at index %d is missing 'version' field", i)
+		}
+	}
+
+	// Validate and sanitize module updates
 	for i, module := range config.Modules {
 		// Trim whitespace from source and version fields
 		config.Modules[i].Source = strings.TrimSpace(module.Source)
@@ -147,5 +182,5 @@ func loadConfig(filename string) ([]ModuleUpdate, error) {
 		}
 	}
 
-	return config.Modules, nil
+	return &config, nil
 }
