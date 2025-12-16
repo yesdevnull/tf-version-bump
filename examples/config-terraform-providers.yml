@@ -1,0 +1,19 @@
+# Configuration example with Terraform version and provider updates
+# This config updates the Terraform required version and multiple provider versions
+
+# Update Terraform required version
+terraform_version: ">= 1.6"
+
+# Update provider versions
+providers:
+  - name: "aws"
+    version: "~> 5.0"
+  - name: "azurerm"
+    version: "~> 3.5"
+  - name: "google"
+    version: "~> 5.0"
+
+# Optionally, you can also include module updates in the same config
+modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
