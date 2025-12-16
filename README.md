@@ -90,10 +90,12 @@ go build -o tf-version-bump
 
 ## Usage
 
-The tool supports two modes of operation:
+The tool supports four modes of operation:
 
 1. **Single Module Mode**: Update one module at a time via command-line flags
 2. **Config File Mode**: Update multiple modules in one operation using a YAML configuration file
+3. **Terraform Version Mode**: Update Terraform `required_version` in terraform blocks
+4. **Provider Version Mode**: Update provider versions in terraform `required_providers` blocks
 
 ### Single Module Mode
 
@@ -448,6 +450,167 @@ See the `examples/` directory for sample configuration files:
 - `config-advanced.yml` - Advanced configuration showing various module types (subpaths, Git sources)
 - `config-production.yml` - Production-ready configuration with common AWS modules
 - `config-with-ignore.yml` - Examples of using the ignore_modules feature with various patterns
+
+### Terraform Version Mode
+
+Update the Terraform `required_version` in terraform blocks across your configuration files.
+
+**Basic syntax:**
+
+```bash
+tf-version-bump -pattern <glob-pattern> -terraform-version <version>
+```
+
+**Arguments:**
+
+- `-pattern`: Glob pattern for Terraform files (required)
+- `-terraform-version`: Target Terraform version (e.g., `">= 1.5"`, `"~> 1.6"`)
+- `-dry-run`: (Optional) Preview changes without modifying files
+- `-output`: (Optional) Output format: `text` (default) or `md` (Markdown)
+
+**Examples:**
+
+Update all Terraform files to require Terraform >= 1.5:
+
+```bash
+tf-version-bump -pattern "*.tf" -terraform-version ">= 1.5"
+```
+
+Update Terraform version in a specific directory:
+
+```bash
+tf-version-bump -pattern "environments/prod/*.tf" -terraform-version "~> 1.6"
+```
+
+Preview changes before applying:
+
+```bash
+tf-version-bump -pattern "**/*.tf" -terraform-version ">= 1.5" -dry-run
+```
+
+**Example transformation:**
+
+Before:
+```hcl
+terraform {
+  required_version = ">= 1.0"
+  
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+```
+
+After running: `tf-version-bump -pattern "*.tf" -terraform-version ">= 1.5"`
+
+```hcl
+terraform {
+  required_version = ">= 1.5"
+  
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+```
+
+**Notes:**
+
+- Only updates the `required_version` attribute in terraform blocks
+- Provider versions are not modified
+- Preserves all formatting and comments
+- If a file has multiple terraform blocks (unusual but valid), all will be updated
+
+### Provider Version Mode
+
+Update provider versions in terraform `required_providers` blocks across your configuration files.
+
+**Basic syntax:**
+
+```bash
+tf-version-bump -pattern <glob-pattern> -provider <provider-name> -to <version>
+```
+
+**Arguments:**
+
+- `-pattern`: Glob pattern for Terraform files (required)
+- `-provider`: Provider name (e.g., `aws`, `azurerm`, `google`)
+- `-to`: Target provider version (required)
+- `-dry-run`: (Optional) Preview changes without modifying files
+- `-output`: (Optional) Output format: `text` (default) or `md` (Markdown)
+
+**Examples:**
+
+Update AWS provider to version ~> 5.0:
+
+```bash
+tf-version-bump -pattern "*.tf" -provider aws -to "~> 5.0"
+```
+
+Update Azure provider in production environment:
+
+```bash
+tf-version-bump -pattern "environments/prod/**/*.tf" -provider azurerm -to "~> 3.5"
+```
+
+Preview changes for Google Cloud provider:
+
+```bash
+tf-version-bump -pattern "*.tf" -provider google -to "~> 5.0" -dry-run
+```
+
+**Example transformation:**
+
+Before:
+```hcl
+terraform {
+  required_version = ">= 1.0"
+  
+  required_providers {
+    aws {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+    azurerm {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+  }
+}
+```
+
+After running: `tf-version-bump -pattern "*.tf" -provider aws -to "~> 5.0"`
+
+```hcl
+terraform {
+  required_version = ">= 1.0"
+  
+  required_providers {
+    aws {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+    azurerm {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+  }
+}
+```
+
+**Notes:**
+
+- Only updates the specified provider's version
+- Other providers in the same required_providers block remain unchanged
+- Terraform required_version is not modified
+- Preserves all formatting and comments
+- Currently supports block-based provider syntax: `aws { source = "..." version = "..." }`
+- The attribute-based syntax `aws = { source = "..." version = "..." }` is not yet supported
 
 ## How it Works
 
