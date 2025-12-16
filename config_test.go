@@ -27,17 +27,17 @@ func TestLoadConfig(t *testing.T) {
 			expectError: false,
 			expectCount: 2,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if config.Modules[0].Source != "terraform-aws-modules/vpc/aws" {
-					t.Errorf("First module source = %q, want %q", config.Modules[0].Source, "terraform-aws-modules/vpc/aws")
+				if updates[0].Source != "terraform-aws-modules/vpc/aws" {
+					t.Errorf("First module source = %q, want %q", updates[0].Source, "terraform-aws-modules/vpc/aws")
 				}
-				if config.Modules[0].Version != "5.0.0" {
-					t.Errorf("First module version = %q, want %q", config.Modules[0].Version, "5.0.0")
+				if updates[0].Version != "5.0.0" {
+					t.Errorf("First module version = %q, want %q", updates[0].Version, "5.0.0")
 				}
-				if config.Modules[1].Source != "terraform-aws-modules/s3-bucket/aws" {
-					t.Errorf("Second module source = %q, want %q", config.Modules[1].Source, "terraform-aws-modules/s3-bucket/aws")
+				if updates[1].Source != "terraform-aws-modules/s3-bucket/aws" {
+					t.Errorf("Second module source = %q, want %q", updates[1].Source, "terraform-aws-modules/s3-bucket/aws")
 				}
-				if config.Modules[1].Version != "4.0.0" {
-					t.Errorf("Second module version = %q, want %q", config.Modules[1].Version, "4.0.0")
+				if updates[1].Version != "4.0.0" {
+					t.Errorf("Second module version = %q, want %q", updates[1].Version, "4.0.0")
 				}
 			},
 		},
@@ -50,11 +50,11 @@ func TestLoadConfig(t *testing.T) {
 			expectError: false,
 			expectCount: 1,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if config.Modules[0].Source != "terraform-aws-modules/vpc/aws" {
-					t.Errorf("Module source = %q, want %q", config.Modules[0].Source, "terraform-aws-modules/vpc/aws")
+				if updates[0].Source != "terraform-aws-modules/vpc/aws" {
+					t.Errorf("Module source = %q, want %q", updates[0].Source, "terraform-aws-modules/vpc/aws")
 				}
-				if config.Modules[0].Version != "5.0.0" {
-					t.Errorf("Module version = %q, want %q", config.Modules[0].Version, "5.0.0")
+				if updates[0].Version != "5.0.0" {
+					t.Errorf("Module version = %q, want %q", updates[0].Version, "5.0.0")
 				}
 			},
 		},
@@ -67,8 +67,8 @@ func TestLoadConfig(t *testing.T) {
 			expectError: false,
 			expectCount: 1,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if config.Modules[0].Source != "terraform-aws-modules/iam/aws//modules/iam-user" {
-					t.Errorf("Module source = %q, want %q", config.Modules[0].Source, "terraform-aws-modules/iam/aws//modules/iam-user")
+				if updates[0].Source != "terraform-aws-modules/iam/aws//modules/iam-user" {
+					t.Errorf("Module source = %q, want %q", updates[0].Source, "terraform-aws-modules/iam/aws//modules/iam-user")
 				}
 			},
 		},
@@ -456,14 +456,14 @@ func TestLoadConfigWithFromField(t *testing.T) {
 			expectError: false,
 			expectCount: 1,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if config.Modules[0].Source != "terraform-aws-modules/vpc/aws" {
-					t.Errorf("Module source = %q, want %q", config.Modules[0].Source, "terraform-aws-modules/vpc/aws")
+				if updates[0].Source != "terraform-aws-modules/vpc/aws" {
+					t.Errorf("Module source = %q, want %q", updates[0].Source, "terraform-aws-modules/vpc/aws")
 				}
-				if config.Modules[0].Version != "5.0.0" {
-					t.Errorf("Module version = %q, want %q", config.Modules[0].Version, "5.0.0")
+				if updates[0].Version != "5.0.0" {
+					t.Errorf("Module version = %q, want %q", updates[0].Version, "5.0.0")
 				}
-				if len(config.Modules[0].From) != 1 || config.Modules[0].From[0] != "3.14.0" {
-					t.Errorf("Module from = %v, want [\"3.14.0\"]", config.Modules[0].From)
+				if len(updates[0].From) != 1 || updates[0].From[0] != "3.14.0" {
+					t.Errorf("Module from = %v, want [\"3.14.0\"]", updates[0].From)
 				}
 			},
 		},
@@ -479,11 +479,11 @@ func TestLoadConfigWithFromField(t *testing.T) {
 			expectError: false,
 			expectCount: 2,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if len(config.Modules[0].From) != 1 || config.Modules[0].From[0] != "3.14.0" {
-					t.Errorf("First module from = %v, want [\"3.14.0\"]", config.Modules[0].From)
+				if len(updates[0].From) != 1 || updates[0].From[0] != "3.14.0" {
+					t.Errorf("First module from = %v, want [\"3.14.0\"]", updates[0].From)
 				}
-				if len(config.Modules[1].From) != 0 {
-					t.Errorf("Second module from = %v, want empty slice", config.Modules[1].From)
+				if len(updates[1].From) != 0 {
+					t.Errorf("Second module from = %v, want empty slice", updates[1].From)
 				}
 			},
 		},
@@ -503,14 +503,14 @@ func TestLoadConfigWithFromField(t *testing.T) {
 			expectError: false,
 			expectCount: 3,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if len(config.Modules[0].From) != 1 || config.Modules[0].From[0] != "3.14.0" {
-					t.Errorf("First module from = %v, want [\"3.14.0\"]", config.Modules[0].From)
+				if len(updates[0].From) != 1 || updates[0].From[0] != "3.14.0" {
+					t.Errorf("First module from = %v, want [\"3.14.0\"]", updates[0].From)
 				}
-				if len(config.Modules[1].From) != 1 || config.Modules[1].From[0] != "3.0.0" {
-					t.Errorf("Second module from = %v, want [\"3.0.0\"]", config.Modules[1].From)
+				if len(updates[1].From) != 1 || updates[1].From[0] != "3.0.0" {
+					t.Errorf("Second module from = %v, want [\"3.0.0\"]", updates[1].From)
 				}
-				if len(config.Modules[2].From) != 1 || config.Modules[2].From[0] != "5.1.0" {
-					t.Errorf("Third module from = %v, want [\"5.1.0\"]", config.Modules[2].From)
+				if len(updates[2].From) != 1 || updates[2].From[0] != "5.1.0" {
+					t.Errorf("Third module from = %v, want [\"5.1.0\"]", updates[2].From)
 				}
 			},
 		},
@@ -544,7 +544,7 @@ func TestLoadConfigWithFromField(t *testing.T) {
 			}
 
 			if tt.validate != nil {
-				tt.validate(t, updates)
+				tt.validate(t, config.Modules)
 			}
 		})
 	}
@@ -571,20 +571,20 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 			expectError: false,
 			expectCount: 1,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if config.Modules[0].Source != "terraform-aws-modules/s3-bucket/aws" {
-					t.Errorf("Module source = %q, want %q", config.Modules[0].Source, "terraform-aws-modules/s3-bucket/aws")
+				if updates[0].Source != "terraform-aws-modules/s3-bucket/aws" {
+					t.Errorf("Module source = %q, want %q", updates[0].Source, "terraform-aws-modules/s3-bucket/aws")
 				}
-				if config.Modules[0].Version != "4.0.0" {
-					t.Errorf("Module version = %q, want %q", config.Modules[0].Version, "4.0.0")
+				if updates[0].Version != "4.0.0" {
+					t.Errorf("Module version = %q, want %q", updates[0].Version, "4.0.0")
 				}
-				if len(config.Modules[0].From) != 2 {
-					t.Fatalf("Module from length = %d, want 2", len(config.Modules[0].From))
+				if len(updates[0].From) != 2 {
+					t.Fatalf("Module from length = %d, want 2", len(updates[0].From))
 				}
-				if config.Modules[0].From[0] != "3.0.0" {
-					t.Errorf("Module from[0] = %q, want %q", config.Modules[0].From[0], "3.0.0")
+				if updates[0].From[0] != "3.0.0" {
+					t.Errorf("Module from[0] = %q, want %q", updates[0].From[0], "3.0.0")
 				}
-				if config.Modules[0].From[1] != "~> 3.0" {
-					t.Errorf("Module from[1] = %q, want %q", config.Modules[0].From[1], "~> 3.0")
+				if updates[0].From[1] != "~> 3.0" {
+					t.Errorf("Module from[1] = %q, want %q", updates[0].From[1], "~> 3.0")
 				}
 			},
 		},
@@ -604,18 +604,18 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 			expectCount: 2,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
 				// First module with single from version
-				if len(config.Modules[0].From) != 1 || config.Modules[0].From[0] != "4.0.0" {
-					t.Errorf("First module from = %v, want [\"4.0.0\"]", config.Modules[0].From)
+				if len(updates[0].From) != 1 || updates[0].From[0] != "4.0.0" {
+					t.Errorf("First module from = %v, want [\"4.0.0\"]", updates[0].From)
 				}
 				// Second module with multiple from versions
-				if len(config.Modules[1].From) != 2 {
-					t.Fatalf("Second module from length = %d, want 2", len(config.Modules[1].From))
+				if len(updates[1].From) != 2 {
+					t.Fatalf("Second module from length = %d, want 2", len(updates[1].From))
 				}
-				if config.Modules[1].From[0] != "3.0.0" {
-					t.Errorf("Second module from[0] = %q, want %q", config.Modules[1].From[0], "3.0.0")
+				if updates[1].From[0] != "3.0.0" {
+					t.Errorf("Second module from[0] = %q, want %q", updates[1].From[0], "3.0.0")
 				}
-				if config.Modules[1].From[1] != "~> 3.0" {
-					t.Errorf("Second module from[1] = %q, want %q", config.Modules[1].From[1], "~> 3.0")
+				if updates[1].From[1] != "~> 3.0" {
+					t.Errorf("Second module from[1] = %q, want %q", updates[1].From[1], "~> 3.0")
 				}
 			},
 		},
@@ -629,8 +629,8 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 			expectError: false,
 			expectCount: 1,
 			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if len(config.Modules[0].From) != 0 {
-					t.Errorf("Module from = %v, want empty slice", config.Modules[0].From)
+				if len(updates[0].From) != 0 {
+					t.Errorf("Module from = %v, want empty slice", updates[0].From)
 				}
 			},
 		},
@@ -692,7 +692,7 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 			}
 
 			if tt.validate != nil {
-				tt.validate(t, updates)
+				tt.validate(t, config.Modules)
 			}
 		})
 	}

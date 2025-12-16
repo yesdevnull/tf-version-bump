@@ -1080,7 +1080,7 @@ func TestLoadConfigYAMLEdgeCases(t *testing.T) {
 				t.Fatalf("failed to write config file: %v", err)
 			}
 
-			modules, err := loadConfig(configFile)
+			config, err := loadConfig(configFile)
 
 			if tt.expectError {
 				if err == nil {
@@ -1092,17 +1092,17 @@ func TestLoadConfigYAMLEdgeCases(t *testing.T) {
 				}
 				// Validate field length when specified
 				if tt.validateField != "" {
-					if len(modules) == 0 {
+					if len(config.Modules) == 0 {
 						t.Error("expected at least one module for field validation")
 					} else {
 						switch tt.validateField {
 						case "From":
-							if len(modules[0].From) != tt.expectLen {
-								t.Errorf("From length = %d, want %d", len(modules[0].From), tt.expectLen)
+							if len(config.Modules[0].From) != tt.expectLen {
+								t.Errorf("From length = %d, want %d", len(config.Modules[0].From), tt.expectLen)
 							}
 						case "IgnoreVersions":
-							if len(modules[0].IgnoreVersions) != tt.expectLen {
-								t.Errorf("IgnoreVersions length = %d, want %d", len(modules[0].IgnoreVersions), tt.expectLen)
+							if len(config.Modules[0].IgnoreVersions) != tt.expectLen {
+								t.Errorf("IgnoreVersions length = %d, want %d", len(config.Modules[0].IgnoreVersions), tt.expectLen)
 							}
 						default:
 							t.Errorf("unknown validateField: %s", tt.validateField)
