@@ -102,7 +102,7 @@ terraform {
 			}
 
 			// Run the update
-			updated, err := updateTerraformVersion(tmpFile, tt.version, false, "text")
+			updated, err := updateTerraformVersion(tmpFile, tt.version, false)
 
 			// Check error expectation
 			if tt.expectError {
@@ -151,7 +151,7 @@ func TestUpdateTerraformVersionDryRun(t *testing.T) {
 	}
 
 	// Run in dry-run mode
-	updated, err := updateTerraformVersion(tmpFile, ">= 1.5", true, "text")
+	updated, err := updateTerraformVersion(tmpFile, ">= 1.5", true)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestUpdateProviderVersion(t *testing.T) {
 			}
 
 			// Run the update
-			updated, err := updateProviderVersion(tmpFile, tt.providerName, tt.version, false, "text")
+			updated, err := updateProviderVersion(tmpFile, tt.providerName, tt.version, false)
 
 			// Check error expectation
 			if tt.expectError {
@@ -343,7 +343,7 @@ func TestUpdateProviderVersionDryRun(t *testing.T) {
 	}
 
 	// Run in dry-run mode
-	updated, err := updateProviderVersion(tmpFile, "aws", "~> 5.0", true, "text")
+	updated, err := updateProviderVersion(tmpFile, "aws", "~> 5.0", true)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -392,9 +392,15 @@ module "vpc" {
 	file2 := filepath.Join(tmpDir, "vpc.tf")
 	file3 := filepath.Join(tmpDir, "s3.tf")
 
-	os.WriteFile(file1, []byte(file1Content), 0644)
-	os.WriteFile(file2, []byte(file2Content), 0644)
-	os.WriteFile(file3, []byte(file3Content), 0644)
+	if err := os.WriteFile(file1, []byte(file1Content), 0644); err != nil {
+		t.Fatalf("Failed to create file1: %v", err)
+	}
+	if err := os.WriteFile(file2, []byte(file2Content), 0644); err != nil {
+		t.Fatalf("Failed to create file2: %v", err)
+	}
+	if err := os.WriteFile(file3, []byte(file3Content), 0644); err != nil {
+		t.Fatalf("Failed to create file3: %v", err)
+	}
 
 	files := []string{file1, file2, file3}
 
@@ -452,9 +458,15 @@ func TestProcessProviderVersion(t *testing.T) {
 	file2 := filepath.Join(tmpDir, "vpc.tf")
 	file3 := filepath.Join(tmpDir, "s3.tf")
 
-	os.WriteFile(file1, []byte(file1Content), 0644)
-	os.WriteFile(file2, []byte(file2Content), 0644)
-	os.WriteFile(file3, []byte(file3Content), 0644)
+	if err := os.WriteFile(file1, []byte(file1Content), 0644); err != nil {
+		t.Fatalf("Failed to create file1: %v", err)
+	}
+	if err := os.WriteFile(file2, []byte(file2Content), 0644); err != nil {
+		t.Fatalf("Failed to create file2: %v", err)
+	}
+	if err := os.WriteFile(file3, []byte(file3Content), 0644); err != nil {
+		t.Fatalf("Failed to create file3: %v", err)
+	}
 
 	files := []string{file1, file2, file3}
 

@@ -258,35 +258,37 @@ func main() {
 	// Handle different operation modes
 	var totalUpdates int
 
-	if flags.terraformVersion != "" {
+	switch {
+	case flags.terraformVersion != "":
 		// Terraform version update mode
 		totalUpdates = processTerraformVersion(files, flags.terraformVersion, flags.dryRun, flags.output)
-	} else if flags.providerName != "" {
+	case flags.providerName != "":
 		// Provider version update mode
 		if flags.toVersion == "" {
 			log.Fatal("Error: -to flag is required when using -provider")
 		}
 		totalUpdates = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output)
-	} else {
+	default:
 		// Module update mode (existing functionality)
 		updates := loadModuleUpdates(flags)
 		totalUpdates = processFiles(files, updates, flags)
 	}
 
 	// Print summary
-	if flags.terraformVersion != "" {
+	switch {
+	case flags.terraformVersion != "":
 		if flags.dryRun {
 			fmt.Printf("\nDry run: would update Terraform version in %d file(s)\n", totalUpdates)
 		} else {
 			fmt.Printf("\nSuccessfully updated Terraform version in %d file(s)\n", totalUpdates)
 		}
-	} else if flags.providerName != "" {
+	case flags.providerName != "":
 		if flags.dryRun {
 			fmt.Printf("\nDry run: would update %s provider version in %d file(s)\n", quote(flags.providerName, flags.output), totalUpdates)
 		} else {
 			fmt.Printf("\nSuccessfully updated %s provider version in %d file(s)\n", quote(flags.providerName, flags.output), totalUpdates)
 		}
-	} else {
+	default:
 		printSummary(totalUpdates, len(loadModuleUpdates(flags)), flags.dryRun)
 	}
 }
@@ -322,7 +324,7 @@ func containsVersion(versions []string, version string) bool {
 func processTerraformVersion(files []string, version string, dryRun bool, outputFormat string) int {
 	totalUpdates := 0
 	for _, file := range files {
-		updated, err := updateTerraformVersion(file, version, dryRun, outputFormat)
+		updated, err := updateTerraformVersion(file, version, dryRun)
 		if err != nil {
 			log.Printf("Error processing %s: %v", file, err)
 			continue
@@ -355,7 +357,7 @@ func processTerraformVersion(files []string, version string, dryRun bool, output
 func processProviderVersion(files []string, providerName string, version string, dryRun bool, outputFormat string) int {
 	totalUpdates := 0
 	for _, file := range files {
-		updated, err := updateProviderVersion(file, providerName, version, dryRun, outputFormat)
+		updated, err := updateProviderVersion(file, providerName, version, dryRun)
 		if err != nil {
 			log.Printf("Error processing %s: %v", file, err)
 			continue
@@ -380,12 +382,11 @@ func processProviderVersion(files []string, providerName string, version string,
 //   - filename: Path to the Terraform file to process
 //   - version: Target Terraform version to set
 //   - dryRun: If true, show what would be changed without modifying files
-//   - outputFormat: Output format ("text" or "md")
 //
 // Returns:
 //   - bool: true if a terraform block was updated (or would be updated in dry-run mode)
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateTerraformVersion(filename, version string, dryRun bool, outputFormat string) (bool, error) {
+func updateTerraformVersion(filename, version string, dryRun bool) (bool, error) {
 	// Get original file permissions to preserve them when writing
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
@@ -437,12 +438,11 @@ func updateTerraformVersion(filename, version string, dryRun bool, outputFormat 
 //   - providerName: Name of the provider to update (e.g., "aws", "azurerm")
 //   - version: Target provider version to set
 //   - dryRun: If true, show what would be changed without modifying files
-//   - outputFormat: Output format ("text" or "md")
 //
 // Returns:
 //   - bool: true if a provider was updated (or would be updated in dry-run mode)
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateProviderVersion(filename, providerName, version string, dryRun bool, outputFormat string) (bool, error) {
+func updateProviderVersion(filename, providerName, version string, dryRun bool) (bool, error) {
 	// Get original file permissions to preserve them when writing
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
