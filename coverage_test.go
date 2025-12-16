@@ -544,13 +544,13 @@ module "s3" {
 				}
 			}()
 			os.Stdout = w
+			defer func() { os.Stdout = oldStdout }()
 
 			totalUpdates := processFiles([]string{tfFile}, tt.updates, flags)
 
 			if err := w.Close(); err != nil {
 				t.Fatalf("failed to close pipe writer: %v", err)
 			}
-			os.Stdout = oldStdout
 			if _, err := io.ReadAll(r); err != nil {
 				t.Fatalf("failed to read from pipe: %v", err)
 			}
@@ -629,13 +629,13 @@ func TestProcessFilesWithFromVersionFilter(t *testing.T) {
 				}
 			}()
 			os.Stdout = w
+			defer func() { os.Stdout = oldStdout }()
 
 			totalUpdates := processFiles([]string{tfFile}, updates, flags)
 
 			if err := w.Close(); err != nil {
 				t.Fatalf("failed to close pipe writer: %v", err)
 			}
-			os.Stdout = oldStdout
 			if _, err := io.ReadAll(r); err != nil {
 				t.Fatalf("failed to read from pipe: %v", err)
 			}
@@ -692,13 +692,13 @@ func TestProcessFilesMultipleFiles(t *testing.T) {
 		}
 	}()
 	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
 
 	totalUpdates := processFiles([]string{tfFile1, tfFile2}, updates, flags)
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("failed to close pipe writer: %v", err)
 	}
-	os.Stdout = oldStdout
 	if _, err := io.ReadAll(r); err != nil {
 		t.Fatalf("failed to read from pipe: %v", err)
 	}
@@ -775,13 +775,13 @@ func TestPrintSummary(t *testing.T) {
 				}
 			}()
 			os.Stdout = w
+			defer func() { os.Stdout = oldStdout }()
 
 			printSummary(tt.totalUpdates, tt.updatesCount, tt.dryRun)
 
 			if err := w.Close(); err != nil {
 				t.Fatalf("failed to close pipe writer: %v", err)
 			}
-			os.Stdout = oldStdout
 			output, err := io.ReadAll(r)
 			if err != nil {
 				t.Fatalf("failed to read from pipe: %v", err)
@@ -834,13 +834,13 @@ func TestProcessFilesWithVerbose(t *testing.T) {
 		}
 	}()
 	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
 
 	totalUpdates := processFiles([]string{tfFile}, updates, flags)
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("failed to close pipe writer: %v", err)
 	}
-	os.Stdout = oldStdout
 	output, err := io.ReadAll(r)
 	if err != nil {
 		t.Fatalf("failed to read from pipe: %v", err)
@@ -890,13 +890,13 @@ func TestProcessFilesMarkdownOutput(t *testing.T) {
 		}
 	}()
 	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
 
 	totalUpdates := processFiles([]string{tfFile}, updates, flags)
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("failed to close pipe writer: %v", err)
 	}
-	os.Stdout = oldStdout
 	output, err := io.ReadAll(r)
 	if err != nil {
 		t.Fatalf("failed to read from pipe: %v", err)
@@ -978,13 +978,13 @@ func TestProcessFilesOutputMessages(t *testing.T) {
 				}
 			}()
 			os.Stdout = w
+			defer func() { os.Stdout = oldStdout }()
 
 			processFiles([]string{tfFile}, updates, flags)
 
 			if err := w.Close(); err != nil {
 				t.Fatalf("failed to close pipe writer: %v", err)
 			}
-			os.Stdout = oldStdout
 			output, err := io.ReadAll(r)
 			if err != nil {
 				t.Fatalf("failed to read from pipe: %v", err)
@@ -1196,13 +1196,13 @@ module "legacy-vpc" {
 				}
 			}()
 			os.Stdout = w
+			defer func() { os.Stdout = oldStdout }()
 
 			totalUpdates := processFiles([]string{tfFile}, updates, flags)
 
 			if err := w.Close(); err != nil {
 				t.Fatalf("failed to close pipe writer: %v", err)
 			}
-			os.Stdout = oldStdout
 			if _, err := io.ReadAll(r); err != nil {
 				t.Fatalf("failed to read from pipe: %v", err)
 			}
