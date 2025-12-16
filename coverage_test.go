@@ -538,6 +538,7 @@ module "s3" {
 			if err != nil {
 				t.Fatalf("failed to create os.Pipe: %v", err)
 			}
+			defer r.Close()
 			os.Stdout = w
 
 			totalUpdates := processFiles([]string{tfFile}, tt.updates, flags)
@@ -618,6 +619,7 @@ func TestProcessFilesWithFromVersionFilter(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create os.Pipe: %v", err)
 			}
+			defer r.Close()
 			os.Stdout = w
 
 			totalUpdates := processFiles([]string{tfFile}, updates, flags)
@@ -676,6 +678,7 @@ func TestProcessFilesMultipleFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create os.Pipe: %v", err)
 	}
+	defer r.Close()
 	os.Stdout = w
 
 	totalUpdates := processFiles([]string{tfFile1, tfFile2}, updates, flags)
@@ -754,6 +757,7 @@ func TestPrintSummary(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create os.Pipe: %v", err)
 			}
+			defer r.Close()
 			os.Stdout = w
 
 			printSummary(tt.totalUpdates, tt.updatesCount, tt.dryRun)
@@ -808,6 +812,7 @@ func TestProcessFilesWithVerbose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create os.Pipe: %v", err)
 	}
+	defer r.Close()
 	os.Stdout = w
 
 	totalUpdates := processFiles([]string{tfFile}, updates, flags)
@@ -859,6 +864,7 @@ func TestProcessFilesMarkdownOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create os.Pipe: %v", err)
 	}
+	defer r.Close()
 	os.Stdout = w
 
 	totalUpdates := processFiles([]string{tfFile}, updates, flags)
@@ -942,6 +948,7 @@ func TestProcessFilesOutputMessages(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create os.Pipe: %v", err)
 			}
+			defer r.Close()
 			os.Stdout = w
 
 			processFiles([]string{tfFile}, updates, flags)
@@ -1155,6 +1162,7 @@ module "legacy-vpc" {
 			if err != nil {
 				t.Fatalf("failed to create os.Pipe: %v", err)
 			}
+			defer r.Close()
 			os.Stdout = w
 
 			totalUpdates := processFiles([]string{tfFile}, updates, flags)
