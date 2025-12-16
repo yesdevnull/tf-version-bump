@@ -1503,3 +1503,103 @@ func TestLoadConfigWithMultipleLegacyFields(t *testing.T) {
 		t.Errorf("Error should mention unknown fields, got: %v", err)
 	}
 }
+
+// TestLoadConfigProviderMissingName tests that providers without name field are rejected
+func TestLoadConfigProviderMissingName(t *testing.T) {
+configYAML := `providers:
+  - version: "~> 5.0"
+`
+tmpDir := t.TempDir()
+configFile := filepath.Join(tmpDir, "config.yml")
+
+err := os.WriteFile(configFile, []byte(configYAML), 0644)
+if err != nil {
+t.Fatalf("Failed to create temp config file: %v", err)
+}
+
+_, err = loadConfig(configFile)
+if err == nil {
+t.Error("Expected error for provider missing name field, but got none")
+}
+
+if !strings.Contains(err.Error(), "missing 'name' field") {
+t.Errorf("Expected error about missing 'name' field, got: %v", err)
+}
+}
+
+// TestLoadConfigProviderMissingVersion tests that providers without version field are rejected
+func TestLoadConfigProviderMissingVersion(t *testing.T) {
+configYAML := `providers:
+  - name: "aws"
+`
+tmpDir := t.TempDir()
+configFile := filepath.Join(tmpDir, "config.yml")
+
+err := os.WriteFile(configFile, []byte(configYAML), 0644)
+if err != nil {
+t.Fatalf("Failed to create temp config file: %v", err)
+}
+
+_, err = loadConfig(configFile)
+if err == nil {
+t.Error("Expected error for provider missing version field, but got none")
+}
+
+if !strings.Contains(err.Error(), "missing 'version' field") {
+t.Errorf("Expected error about missing 'version' field, got: %v", err)
+}
+}
+
+// TestLoadConfigProviderWhitespaceTrimming tests that whitespace in provider name/version is trimmed
+func TestLoadConfigProviderWhitespaceTrimming(t *testing.T) {
+configYAML := `providers:
+  - name: "  aws  "
+    version: "  ~> 5.0  "
+`
+tmpDir := t.TempDir()
+configFile := filepath.Join(tmpDir, "config.yml")
+
+err := os.WriteFile(configFile, []byte(configYAML), 0644)
+if err != nil {
+t.Fatalf("Failed to create temp config file: %v", err)
+}
+
+config, err := loadConfig(configFile)
+if err != nil {
+t.Fatalf("Unexpected error: %v", err)
+}
+
+if len(config.Providers) != 1 {
+t.Fatalf("Expected 1 provider, got %d", len(config.Providers))
+}
+
+if config.Providers[0].Name != "aws" {
+t.Errorf("Expected provider name 'aws', got '%s'", config.Providers[0].Name)
+}
+
+if config.Providers[0].Version != "~> 5.0" {
+t.Errorf("Expected provider version '~> 5.0', got '%s'", config.Providers[0].Version)
+}
+}
+
+// TestLoadConfigEmptyProvidersArray tests that empty providers array is handled correctly
+func TestLoadConfigEmptyProvidersArray(t *testing.T) {
+configYAML := `providers: []
+`
+tmpDir := t.TempDir()
+configFile := filepath.Join(tmpDir, "config.yml")
+
+err := os.WriteFile(configFile, []byte(configYAML), 0644)
+if err != nil {
+t.Fatalf("Failed to create temp config file: %v", err)
+}
+
+config, err := loadConfig(configFile)
+if err != nil {
+t.Fatalf("Unexpected error: %v", err)
+}
+
+if len(config.Providers) != 0 {
+t.Errorf("Expected 0 providers, got %d", len(config.Providers))
+}
+}

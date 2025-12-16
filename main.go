@@ -213,8 +213,8 @@ func validateOperationModes(flags *cliFlags) {
 	// Config file mode is exclusive with all other CLI flags
 	if flags.configFile != "" {
 		if flags.moduleSource != "" || flags.terraformVersion != "" || flags.providerName != "" ||
-			len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" {
-			log.Fatal("Error: Cannot use -config with other operation flags (-module, -terraform-version, -provider, -from, -ignore-version, -ignore-modules)")
+			flags.toVersion != "" || len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" {
+			log.Fatal("Error: Cannot use -config with other operation flags (-module, -to, -terraform-version, -provider, -from, -ignore-version, -ignore-modules)")
 		}
 		return
 	}

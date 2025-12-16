@@ -413,9 +413,18 @@ module "vpc" {
 	}
 
 	// Verify updates
-	content1, _ := os.ReadFile(file1)
-	content2, _ := os.ReadFile(file2)
-	content3, _ := os.ReadFile(file3)
+	content1, err := os.ReadFile(file1)
+	if err != nil {
+		t.Fatalf("Failed to read file1: %v", err)
+	}
+	content2, err := os.ReadFile(file2)
+	if err != nil {
+		t.Fatalf("Failed to read file2: %v", err)
+	}
+	content3, err := os.ReadFile(file3)
+	if err != nil {
+		t.Fatalf("Failed to read file3: %v", err)
+	}
 
 	if !strings.Contains(string(content1), `required_version = ">= 1.5"`) {
 		t.Error("file1 was not updated correctly")
@@ -479,9 +488,18 @@ func TestProcessProviderVersion(t *testing.T) {
 	}
 
 	// Verify updates
-	content1, _ := os.ReadFile(file1)
-	content2, _ := os.ReadFile(file2)
-	content3, _ := os.ReadFile(file3)
+	content1, err := os.ReadFile(file1)
+	if err != nil {
+		t.Fatalf("Failed to read file1: %v", err)
+	}
+	content2, err := os.ReadFile(file2)
+	if err != nil {
+		t.Fatalf("Failed to read file2: %v", err)
+	}
+	content3, err := os.ReadFile(file3)
+	if err != nil {
+		t.Fatalf("Failed to read file3: %v", err)
+	}
 
 	if !strings.Contains(string(content1), `version = "~> 5.0"`) {
 		t.Error("file1 was not updated correctly")
