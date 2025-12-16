@@ -934,10 +934,11 @@ func TestProcessFilesError(t *testing.T) {
 // TestLoadConfigYAMLEdgeCases tests additional edge cases for loadConfig's YAML parsing
 func TestLoadConfigYAMLEdgeCases(t *testing.T) {
 	tests := []struct {
-		name        string
-		yamlContent string
-		expectError bool
-		expectLen   int
+		name          string
+		yamlContent   string
+		expectError   bool
+		validateField string // "From", "IgnoreVersions", or empty for no validation
+		expectLen     int
 	}{
 		{
 			name: "from as mapping should fail",
@@ -954,8 +955,9 @@ func TestLoadConfigYAMLEdgeCases(t *testing.T) {
   - source: "test"
     version: "1.0.0"
     from: ~`,
-			expectError: false,
-			expectLen:   0,
+			expectError:   false,
+			validateField: "From",
+			expectLen:     0,
 		},
 		{
 			name: "ignore_versions as single string",
@@ -963,8 +965,9 @@ func TestLoadConfigYAMLEdgeCases(t *testing.T) {
   - source: "test"
     version: "1.0.0"
     ignore_versions: "3.0.0"`,
-			expectError: false,
-			expectLen:   1,
+			expectError:   false,
+			validateField: "IgnoreVersions",
+			expectLen:     1,
 		},
 		{
 			name: "from with array containing empty strings",
@@ -975,8 +978,9 @@ func TestLoadConfigYAMLEdgeCases(t *testing.T) {
       - "1.0.0"
       - ""
       - "2.0.0"`,
-			expectError: false,
-			expectLen:   2, // Empty strings should be filtered out
+			expectError:   false,
+			validateField: "From",
+			expectLen:     2, // Empty strings should be filtered out
 		},
 	}
 
@@ -998,19 +1002,19 @@ func TestLoadConfigYAMLEdgeCases(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				// Validate expectLen when specified and no error
-				if tt.expectLen > 0 && len(modules) > 0 {
-					// For "ignore_versions as single string" test
-					if tt.name == "ignore_versions as single string" {
+				// Validate field length when specified
+				if tt.validateField != "" && len(modules) > 0 {
+					switch tt.validateField {
+					case "From":
+						if len(modules[0].From) != tt.expectLen {
+							t.Errorf("From length = %d, want %d", len(modules[0].From), tt.expectLen)
+						}
+					case "IgnoreVersions":
 						if len(modules[0].IgnoreVersions) != tt.expectLen {
 							t.Errorf("IgnoreVersions length = %d, want %d", len(modules[0].IgnoreVersions), tt.expectLen)
 						}
-					}
-					// For "from with array containing empty strings" test
-					if tt.name == "from with array containing empty strings" {
-						if len(modules[0].From) != tt.expectLen {
-							t.Errorf("From length = %d, want %d (empty strings should be filtered)", len(modules[0].From), tt.expectLen)
-						}
+					default:
+						t.Errorf("unknown validateField: %s", tt.validateField)
 					}
 				}
 			}
