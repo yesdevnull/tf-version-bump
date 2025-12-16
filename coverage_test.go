@@ -534,14 +534,21 @@ module "s3" {
 
 			// Capture stdout
 			oldStdout := os.Stdout
-			r, w, _ := os.Pipe()
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("os.Pipe failed: %v", err)
+			}
 			os.Stdout = w
 
 			totalUpdates := processFiles([]string{tfFile}, tt.updates, flags)
 
-			w.Close()
+			if err := w.Close(); err != nil {
+				t.Fatalf("failed to close pipe writer: %v", err)
+			}
 			os.Stdout = oldStdout
-			_, _ = io.ReadAll(r)
+			if _, err := io.ReadAll(r); err != nil {
+				t.Fatalf("failed to read from pipe: %v", err)
+			}
 
 			if totalUpdates != tt.expectUpdates {
 				t.Errorf("totalUpdates = %d, want %d", totalUpdates, tt.expectUpdates)
@@ -607,14 +614,21 @@ func TestProcessFilesWithFromVersionFilter(t *testing.T) {
 			}
 
 			oldStdout := os.Stdout
-			r, w, _ := os.Pipe()
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("failed to create os.Pipe: %v", err)
+			}
 			os.Stdout = w
 
 			totalUpdates := processFiles([]string{tfFile}, updates, flags)
 
-			w.Close()
+			if err := w.Close(); err != nil {
+				t.Fatalf("failed to close pipe writer: %v", err)
+			}
 			os.Stdout = oldStdout
-			_, _ = io.ReadAll(r)
+			if _, err := io.ReadAll(r); err != nil {
+				t.Fatalf("failed to read from pipe: %v", err)
+			}
 
 			if totalUpdates != tt.expectUpdates {
 				t.Errorf("totalUpdates = %d, want %d", totalUpdates, tt.expectUpdates)
@@ -658,14 +672,21 @@ func TestProcessFilesMultipleFiles(t *testing.T) {
 	}
 
 	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create os.Pipe: %v", err)
+	}
 	os.Stdout = w
 
 	totalUpdates := processFiles([]string{tfFile1, tfFile2}, updates, flags)
 
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close pipe writer: %v", err)
+	}
 	os.Stdout = oldStdout
-	_, _ = io.ReadAll(r)
+	if _, err := io.ReadAll(r); err != nil {
+		t.Fatalf("failed to read from pipe: %v", err)
+	}
 
 	if totalUpdates != 2 {
 		t.Errorf("totalUpdates = %d, want 2", totalUpdates)
@@ -729,14 +750,22 @@ func TestPrintSummary(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Capture stdout
 			oldStdout := os.Stdout
-			r, w, _ := os.Pipe()
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("failed to create os.Pipe: %v", err)
+			}
 			os.Stdout = w
 
 			printSummary(tt.totalUpdates, tt.updatesCount, tt.dryRun)
 
-			w.Close()
+			if err := w.Close(); err != nil {
+				t.Fatalf("failed to close pipe writer: %v", err)
+			}
 			os.Stdout = oldStdout
-			output, _ := io.ReadAll(r)
+			output, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatalf("failed to read from pipe: %v", err)
+			}
 
 			if !strings.Contains(string(output), tt.expectSubstr) {
 				t.Errorf("output = %q, expected to contain %q", string(output), tt.expectSubstr)
@@ -775,14 +804,22 @@ func TestProcessFilesWithVerbose(t *testing.T) {
 	}
 
 	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create os.Pipe: %v", err)
+	}
 	os.Stdout = w
 
 	totalUpdates := processFiles([]string{tfFile}, updates, flags)
 
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close pipe writer: %v", err)
+	}
 	os.Stdout = oldStdout
-	output, _ := io.ReadAll(r)
+	output, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("failed to read from pipe: %v", err)
+	}
 
 	if totalUpdates != 0 {
 		t.Errorf("totalUpdates = %d, want 0 (from filter should prevent update)", totalUpdates)
@@ -818,14 +855,22 @@ func TestProcessFilesMarkdownOutput(t *testing.T) {
 	}
 
 	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create os.Pipe: %v", err)
+	}
 	os.Stdout = w
 
 	totalUpdates := processFiles([]string{tfFile}, updates, flags)
 
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close pipe writer: %v", err)
+	}
 	os.Stdout = oldStdout
-	output, _ := io.ReadAll(r)
+	output, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("failed to read from pipe: %v", err)
+	}
 
 	if totalUpdates != 1 {
 		t.Errorf("totalUpdates = %d, want 1", totalUpdates)
@@ -893,14 +938,22 @@ func TestProcessFilesOutputMessages(t *testing.T) {
 			}
 
 			oldStdout := os.Stdout
-			r, w, _ := os.Pipe()
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("failed to create os.Pipe: %v", err)
+			}
 			os.Stdout = w
 
 			processFiles([]string{tfFile}, updates, flags)
 
-			w.Close()
+			if err := w.Close(); err != nil {
+				t.Fatalf("failed to close pipe writer: %v", err)
+			}
 			os.Stdout = oldStdout
-			output, _ := io.ReadAll(r)
+			output, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatalf("failed to read from pipe: %v", err)
+			}
 
 			if !strings.Contains(string(output), tt.expectInOut) {
 				t.Errorf("output should contain %q, got: %s", tt.expectInOut, string(output))
@@ -1098,14 +1151,21 @@ module "legacy-vpc" {
 			}
 
 			oldStdout := os.Stdout
-			r, w, _ := os.Pipe()
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("failed to create os.Pipe: %v", err)
+			}
 			os.Stdout = w
 
 			totalUpdates := processFiles([]string{tfFile}, updates, flags)
 
-			w.Close()
+			if err := w.Close(); err != nil {
+				t.Fatalf("failed to close pipe writer: %v", err)
+			}
 			os.Stdout = oldStdout
-			_, _ = io.ReadAll(r)
+			if _, err := io.ReadAll(r); err != nil {
+				t.Fatalf("failed to read from pipe: %v", err)
+			}
 
 			if totalUpdates != tt.expectUpdates {
 				t.Errorf("totalUpdates = %d, want %d", totalUpdates, tt.expectUpdates)
@@ -1115,9 +1175,10 @@ module "legacy-vpc" {
 }
 
 // resetFlags resets the flag.CommandLine to allow re-parsing
-// Note: parseFlags calls log.Fatal on validation errors (e.g., invalid flag combinations),
-// which exits the process and cannot be tested easily. These program-terminating error
-// handlers are intentionally not tested and would require code refactoring to test properly.
+// Note: parseFlags only validates the output format and calls log.Fatalf for that specific error.
+// Most validation errors for flag combinations (e.g., conflicting -config with -module flags)
+// are handled in loadModuleUpdates, not parseFlags. These program-terminating error handlers
+// are intentionally not tested and would require code refactoring to test properly.
 func resetFlags() {
 	// Create a new FlagSet to clear all flags
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
