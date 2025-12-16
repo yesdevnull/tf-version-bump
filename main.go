@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -499,16 +500,15 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 
 // updateProviderVersion updates the version attribute for a specific provider in terraform required_providers blocks
 //
-// Current implementation supports the block-based provider syntax:
+// This implementation supports both provider syntax styles:
+//
+// Block-based syntax:
 //
 //	required_providers { aws { source = "..." version = "..." } }
 //
-// Known Limitation: The attribute-based syntax is not yet supported:
+// Attribute-based syntax:
 //
 //	required_providers { aws = { source = "..." version = "..." } }
-//
-// This limitation is documented in the README. Supporting attribute-based syntax would require
-// parsing and modifying object expressions, which is more complex with the hclwrite library.
 //
 // Parameters:
 //   - filename: Path to the Terraform file to process
@@ -549,13 +549,24 @@ func updateProviderVersion(filename, providerName, version string, dryRun bool) 
 			// Look for required_providers block (it's a nested block type)
 			for _, nestedBlock := range block.Body().Blocks() {
 				if nestedBlock.Type() == "required_providers" {
-					// Iterate through provider blocks in required_providers
-					// e.g., required_providers { aws { source = "..." version = "..." } }
+					// First, try block-based syntax: required_providers { aws { source = "..." version = "..." } }
 					for _, providerBlock := range nestedBlock.Body().Blocks() {
 						if providerBlock.Type() == providerName {
 							// Update the version attribute within the provider block
 							providerBlock.Body().SetAttributeValue("version", cty.StringVal(version))
 							updated = true
+						}
+					}
+
+					// Second, try attribute-based syntax: required_providers { aws = { source = "..." version = "..." } }
+					if !updated {
+						// Check if provider exists as an attribute
+						attrs := nestedBlock.Body().Attributes()
+						if _, exists := attrs[providerName]; exists {
+							// Update the attribute by modifying the object expression
+							if updateProviderAttributeVersion(nestedBlock, providerName, version) {
+								updated = true
+							}
 						}
 					}
 				}
@@ -573,6 +584,110 @@ func updateProviderVersion(filename, providerName, version string, dryRun bool) 
 	}
 
 	return updated, nil
+}
+
+// updateProviderAttributeVersion updates the version value within a provider attribute's object expression
+// This handles the attribute-based syntax: aws = { source = "..." version = "..." }
+func updateProviderAttributeVersion(nestedBlock *hclwrite.Block, providerName, newVersion string) bool {
+	// Get the raw attribute expression as a string
+	attrs := nestedBlock.Body().Attributes()
+	if attr, exists := attrs[providerName]; exists {
+		// Get the expression as bytes
+		tokens := attr.Expr().BuildTokens(nil)
+		exprStr := string(tokens.Bytes())
+		
+		// Parse the expression using hclsyntax to understand its structure
+		expr, diags := hclsyntax.ParseExpression([]byte(exprStr), "inline", hcl.Pos{Line: 1, Column: 1})
+		if diags.HasErrors() {
+			return false
+		}
+		
+		// Check if it's an object construction expression
+		objExpr, ok := expr.(*hclsyntax.ObjectConsExpr)
+		if !ok {
+			return false
+		}
+		
+		// Build a new object with the updated version
+		// We'll reconstruct the object manually
+		newObj := make(map[string]string)
+		hasVersion := false
+		
+		for _, item := range objExpr.Items {
+			// Extract the key name
+			keyExpr, ok := item.KeyExpr.(*hclsyntax.ObjectConsKeyExpr)
+			if !ok {
+				continue
+			}
+			
+			traversal, ok := keyExpr.Wrapped.(*hclsyntax.ScopeTraversalExpr)
+			if !ok {
+				continue
+			}
+			
+			if len(traversal.Traversal) == 0 {
+				continue
+			}
+			
+			rootName, ok := traversal.Traversal[0].(hcl.TraverseRoot)
+			if !ok {
+				continue
+			}
+			
+			keyName := rootName.Name
+			
+			// Extract the value
+			if litExpr, ok := item.ValueExpr.(*hclsyntax.TemplateExpr); ok {
+				if len(litExpr.Parts) > 0 {
+					if lit, ok := litExpr.Parts[0].(*hclsyntax.LiteralValueExpr); ok {
+						value := lit.Val.AsString()
+						if keyName == "version" {
+							newObj[keyName] = newVersion
+							hasVersion = true
+						} else {
+							newObj[keyName] = value
+						}
+					}
+				}
+			}
+		}
+		
+		if !hasVersion {
+			return false
+		}
+		
+		// Reconstruct the object expression with proper formatting
+		newExprStr := "{\n"
+		// Preserve the order: source first, then version, then others
+		if source, ok := newObj["source"]; ok {
+			newExprStr += fmt.Sprintf("      source  = %q\n", source)
+		}
+		if _, ok := newObj["version"]; ok {
+			newExprStr += fmt.Sprintf("      version = %q\n", newVersion)
+		}
+		for key, value := range newObj {
+			if key != "source" && key != "version" {
+				newExprStr += fmt.Sprintf("      %s = %q\n", key, value)
+			}
+		}
+		newExprStr += "    }"
+		
+		// Set the new expression
+		newExpr, diags := hclwrite.ParseConfig([]byte(providerName+" = "+newExprStr), "inline", hcl.Pos{Line: 1, Column: 1})
+		if diags.HasErrors() {
+			return false
+		}
+		
+		// Get the attribute from the parsed expression
+		if len(newExpr.Body().Attributes()) > 0 {
+			for _, newAttr := range newExpr.Body().Attributes() {
+				nestedBlock.Body().SetAttributeRaw(providerName, newAttr.Expr().BuildTokens(nil))
+				return true
+			}
+		}
+	}
+	
+	return false
 }
 
 // updateModuleVersion parses a Terraform file, finds modules with the specified source,

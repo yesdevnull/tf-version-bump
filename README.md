@@ -603,14 +603,50 @@ terraform {
 }
 ```
 
+**Attribute-based syntax example:**
+
+Before:
+
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+  }
+}
+```
+
+After running: `tf-version-bump -pattern "*.tf" -provider aws -to "~> 5.0"`
+
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+  }
+}
+```
+
 **Notes:**
 
 - Only updates the specified provider's version
 - Other providers in the same required_providers block remain unchanged
 - Terraform required_version is not modified
 - Preserves all formatting and comments
-- Currently supports block-based provider syntax: `aws { source = "..." version = "..." }`
-- The attribute-based syntax `aws = { source = "..." version = "..." }` is not yet supported
+- Supports both block-based syntax: `aws { source = "..." version = "..." }`
+- Supports attribute-based syntax: `aws = { source = "..." version = "..." }`
 
 ## How it Works
 
