@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"io"
 	"os"
@@ -20,7 +19,6 @@ func TestParseFlagsOutputFormat(t *testing.T) {
 		name         string
 		args         []string
 		expectOutput string
-		shouldFail   bool
 	}{
 		{
 			name:         "default output format",
@@ -543,7 +541,7 @@ module "s3" {
 
 			w.Close()
 			os.Stdout = oldStdout
-			io.ReadAll(r)
+			_, _ = io.ReadAll(r)
 
 			if totalUpdates != tt.expectUpdates {
 				t.Errorf("totalUpdates = %d, want %d", totalUpdates, tt.expectUpdates)
@@ -616,7 +614,7 @@ func TestProcessFilesWithFromVersionFilter(t *testing.T) {
 
 			w.Close()
 			os.Stdout = oldStdout
-			io.ReadAll(r)
+			_, _ = io.ReadAll(r)
 
 			if totalUpdates != tt.expectUpdates {
 				t.Errorf("totalUpdates = %d, want %d", totalUpdates, tt.expectUpdates)
@@ -667,7 +665,7 @@ func TestProcessFilesMultipleFiles(t *testing.T) {
 
 	w.Close()
 	os.Stdout = oldStdout
-	io.ReadAll(r)
+	_, _ = io.ReadAll(r)
 
 	if totalUpdates != 2 {
 		t.Errorf("totalUpdates = %d, want 2", totalUpdates)
@@ -923,25 +921,18 @@ func TestProcessFilesError(t *testing.T) {
 		{Source: "test/module", Version: "1.0.0"},
 	}
 
-	// Capture stderr
-	oldStderr := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-
 	totalUpdates := processFiles([]string{"/nonexistent/path/file.tf"}, updates, flags)
 
-	w.Close()
-	os.Stderr = oldStderr
-	io.ReadAll(r)
-
 	// Should return 0 updates but handle the error gracefully
+	// Note: The actual error is logged via log.Printf which uses the default logger
+	// and cannot be easily captured in tests without redirecting the logger output
 	if totalUpdates != 0 {
 		t.Errorf("totalUpdates = %d, want 0 for non-existent file", totalUpdates)
 	}
 }
 
-// TestUnmarshalYAMLEdgeCases tests additional edge cases for UnmarshalYAML
-func TestUnmarshalYAMLEdgeCases(t *testing.T) {
+// TestLoadConfigYAMLEdgeCases tests additional edge cases for loadConfig's YAML parsing
+func TestLoadConfigYAMLEdgeCases(t *testing.T) {
 	tests := []struct {
 		name        string
 		yamlContent string
@@ -997,7 +988,7 @@ func TestUnmarshalYAMLEdgeCases(t *testing.T) {
 				t.Fatalf("failed to write config file: %v", err)
 			}
 
-			_, err := loadConfig(configFile)
+			modules, err := loadConfig(configFile)
 
 			if tt.expectError {
 				if err == nil {
@@ -1006,6 +997,21 @@ func TestUnmarshalYAMLEdgeCases(t *testing.T) {
 			} else {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
+				}
+				// Validate expectLen when specified and no error
+				if tt.expectLen > 0 && len(modules) > 0 {
+					// For "ignore_versions as single string" test
+					if tt.name == "ignore_versions as single string" {
+						if len(modules[0].IgnoreVersions) != tt.expectLen {
+							t.Errorf("IgnoreVersions length = %d, want %d", len(modules[0].IgnoreVersions), tt.expectLen)
+						}
+					}
+					// For "from with array containing empty strings" test
+					if tt.name == "from with array containing empty strings" {
+						if len(modules[0].From) != tt.expectLen {
+							t.Errorf("From length = %d, want %d (empty strings should be filtered)", len(modules[0].From), tt.expectLen)
+						}
+					}
 				}
 			}
 		})
@@ -1037,7 +1043,7 @@ module "legacy-vpc" {
 		expectUpdates int
 	}{
 		{
-			// processFiles counts file updates, not module updates
+			// processFiles returns 1 per file that had at least one module updated
 			// Both modules in one file = 1 file update
 			name:          "no ignore modules",
 			ignoreModules: nil,
@@ -1091,7 +1097,7 @@ module "legacy-vpc" {
 
 			w.Close()
 			os.Stdout = oldStdout
-			io.ReadAll(r)
+			_, _ = io.ReadAll(r)
 
 			if totalUpdates != tt.expectUpdates {
 				t.Errorf("totalUpdates = %d, want %d", totalUpdates, tt.expectUpdates)
@@ -1101,22 +1107,10 @@ module "legacy-vpc" {
 }
 
 // resetFlags resets the flag.CommandLine to allow re-parsing
+// Note: parseFlags calls log.Fatal on validation errors (e.g., invalid flag combinations),
+// which exits the process and cannot be tested easily. These program-terminating error
+// handlers are intentionally not tested and would require code refactoring to test properly.
 func resetFlags() {
 	// Create a new FlagSet to clear all flags
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-}
-
-// captureOutput is a helper to capture stdout during tests
-func captureOutput(f func()) string {
-	var buf bytes.Buffer
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	f()
-
-	w.Close()
-	os.Stdout = oldStdout
-	buf.ReadFrom(r)
-	return buf.String()
 }
