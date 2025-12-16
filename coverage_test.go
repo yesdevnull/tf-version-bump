@@ -436,12 +436,13 @@ func TestLoadModuleUpdatesConfigFile(t *testing.T) {
 		t.Fatalf("failed to write config file: %v", err)
 	}
 
-	flags := &cliFlags{
-		pattern:    "*.tf",
-		configFile: configFile,
+	// Load config directly instead of using loadModuleUpdates
+	config, err := loadConfig(configFile)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
 	}
 
-	updates := loadModuleUpdates(flags)
+	updates := config.Modules
 
 	if len(updates) != 2 {
 		t.Fatalf("expected 2 updates, got %d", len(updates))
