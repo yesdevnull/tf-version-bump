@@ -64,18 +64,20 @@ func quote(s, format string) string {
 
 // cliFlags holds all command-line flags
 type cliFlags struct {
-	pattern        string
-	moduleSource   string
-	toVersion      string
-	fromVersions   stringSliceFlag
-	ignoreVersions stringSliceFlag
-	ignoreModules  string
-	configFile     string
-	forceAdd       bool
-	dryRun         bool
-	verbose        bool
-	showVersion    bool
-	output         string
+	pattern            string
+	moduleSource       string
+	toVersion          string
+	fromVersions       stringSliceFlag
+	ignoreVersions     stringSliceFlag
+	ignoreModules      string
+	configFile         string
+	forceAdd           bool
+	dryRun             bool
+	verbose            bool
+	showVersion        bool
+	output             string
+	terraformVersion   string
+	providerName       string
 }
 
 // parseFlags parses and validates command-line flags
@@ -94,6 +96,8 @@ func parseFlags() *cliFlags {
 	flag.BoolVar(&flags.verbose, "verbose", false, "Show verbose output including skipped modules")
 	flag.BoolVar(&flags.showVersion, "version", false, "Print version information and exit")
 	flag.StringVar(&flags.output, "output", "text", "Output format: 'text' (default) or 'md' (Markdown)")
+	flag.StringVar(&flags.terraformVersion, "terraform-version", "", "Update Terraform required_version in terraform blocks")
+	flag.StringVar(&flags.providerName, "provider", "", "Provider name to update (e.g., 'aws', 'azurerm')")
 	flag.Parse()
 
 	// Validate output format
@@ -205,10 +209,37 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Load module updates
-	updates := loadModuleUpdates(flags)
+	// Validate operation modes - they are mutually exclusive
+	modesSet := 0
+	if flags.moduleSource != "" || flags.configFile != "" {
+		modesSet++
+	}
+	if flags.terraformVersion != "" {
+		modesSet++
+	}
+	if flags.providerName != "" {
+		modesSet++
+	}
+
+	if modesSet == 0 {
+		fmt.Println("Usage:")
+		fmt.Println("  Module update:     tf-version-bump -pattern <glob> -module <source> -to <version>")
+		fmt.Println("  Config file:       tf-version-bump -pattern <glob> -config <config-file>")
+		fmt.Println("  Terraform version: tf-version-bump -pattern <glob> -terraform-version <version>")
+		fmt.Println("  Provider version:  tf-version-bump -pattern <glob> -provider <name> -to <version>")
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	if modesSet > 1 {
+		log.Fatal("Error: Cannot use -module/-config, -terraform-version, and -provider flags together. Choose one operation mode.")
+	}
 
 	// Find matching files
+	if flags.pattern == "" {
+		log.Fatal("Error: -pattern flag is required")
+	}
+
 	files, err := filepath.Glob(flags.pattern)
 	if err != nil {
 		log.Fatalf("Error matching pattern: %v", err)
@@ -224,11 +255,40 @@ func main() {
 		fmt.Println("Running in dry-run mode - no files will be modified")
 	}
 
-	// Process all files
-	totalUpdates := processFiles(files, updates, flags)
+	// Handle different operation modes
+	var totalUpdates int
+
+	if flags.terraformVersion != "" {
+		// Terraform version update mode
+		totalUpdates = processTerraformVersion(files, flags.terraformVersion, flags.dryRun, flags.output)
+	} else if flags.providerName != "" {
+		// Provider version update mode
+		if flags.toVersion == "" {
+			log.Fatal("Error: -to flag is required when using -provider")
+		}
+		totalUpdates = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output)
+	} else {
+		// Module update mode (existing functionality)
+		updates := loadModuleUpdates(flags)
+		totalUpdates = processFiles(files, updates, flags)
+	}
 
 	// Print summary
-	printSummary(totalUpdates, len(updates), flags.dryRun)
+	if flags.terraformVersion != "" {
+		if flags.dryRun {
+			fmt.Printf("\nDry run: would update Terraform version in %d file(s)\n", totalUpdates)
+		} else {
+			fmt.Printf("\nSuccessfully updated Terraform version in %d file(s)\n", totalUpdates)
+		}
+	} else if flags.providerName != "" {
+		if flags.dryRun {
+			fmt.Printf("\nDry run: would update %s provider version in %d file(s)\n", quote(flags.providerName, flags.output), totalUpdates)
+		} else {
+			fmt.Printf("\nSuccessfully updated %s provider version in %d file(s)\n", quote(flags.providerName, flags.output), totalUpdates)
+		}
+	} else {
+		printSummary(totalUpdates, len(loadModuleUpdates(flags)), flags.dryRun)
+	}
 }
 
 // containsVersion checks if a version string is present in a slice of versions.
@@ -247,6 +307,199 @@ func containsVersion(versions []string, version string) bool {
 		}
 	}
 	return false
+}
+
+// processTerraformVersion updates the required_version in terraform blocks across all files
+//
+// Parameters:
+//   - files: List of file paths to process
+//   - version: Target Terraform version to set
+//   - dryRun: If true, show what would be changed without modifying files
+//   - outputFormat: Output format ("text" or "md")
+//
+// Returns:
+//   - int: Number of files that were updated (or would be updated in dry-run mode)
+func processTerraformVersion(files []string, version string, dryRun bool, outputFormat string) int {
+	totalUpdates := 0
+	for _, file := range files {
+		updated, err := updateTerraformVersion(file, version, dryRun, outputFormat)
+		if err != nil {
+			log.Printf("Error processing %s: %v", file, err)
+			continue
+		}
+		if updated {
+			prefix := "✓"
+			action := "Updated"
+			if dryRun {
+				prefix = "→"
+				action = "Would update"
+			}
+			fmt.Printf("%s %s Terraform required_version to %s in %s\n", prefix, action, quote(version, outputFormat), file)
+			totalUpdates++
+		}
+	}
+	return totalUpdates
+}
+
+// processProviderVersion updates provider versions in terraform required_providers blocks across all files
+//
+// Parameters:
+//   - files: List of file paths to process
+//   - providerName: Name of the provider to update (e.g., "aws", "azurerm")
+//   - version: Target provider version to set
+//   - dryRun: If true, show what would be changed without modifying files
+//   - outputFormat: Output format ("text" or "md")
+//
+// Returns:
+//   - int: Number of files that were updated (or would be updated in dry-run mode)
+func processProviderVersion(files []string, providerName string, version string, dryRun bool, outputFormat string) int {
+	totalUpdates := 0
+	for _, file := range files {
+		updated, err := updateProviderVersion(file, providerName, version, dryRun, outputFormat)
+		if err != nil {
+			log.Printf("Error processing %s: %v", file, err)
+			continue
+		}
+		if updated {
+			prefix := "✓"
+			action := "Updated"
+			if dryRun {
+				prefix = "→"
+				action = "Would update"
+			}
+			fmt.Printf("%s %s provider %s to version %s in %s\n", prefix, action, quote(providerName, outputFormat), quote(version, outputFormat), file)
+			totalUpdates++
+		}
+	}
+	return totalUpdates
+}
+
+// updateTerraformVersion updates the required_version attribute in terraform blocks
+//
+// Parameters:
+//   - filename: Path to the Terraform file to process
+//   - version: Target Terraform version to set
+//   - dryRun: If true, show what would be changed without modifying files
+//   - outputFormat: Output format ("text" or "md")
+//
+// Returns:
+//   - bool: true if a terraform block was updated (or would be updated in dry-run mode)
+//   - error: Any error encountered during file reading, parsing, or writing
+func updateTerraformVersion(filename, version string, dryRun bool, outputFormat string) (bool, error) {
+	// Get original file permissions to preserve them when writing
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		return false, fmt.Errorf("failed to stat file: %w", err)
+	}
+	originalMode := fileInfo.Mode()
+
+	// Read the file
+	src, err := os.ReadFile(filename)
+	if err != nil {
+		return false, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	// Parse the file with hclwrite
+	file, diags := hclwrite.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		return false, fmt.Errorf("failed to parse HCL: %s", diags.Error())
+	}
+
+	// Track if we made any changes
+	updated := false
+
+	// Iterate through all blocks in the file
+	for _, block := range file.Body().Blocks() {
+		// Look for terraform blocks
+		if block.Type() == "terraform" {
+			// Update or add the required_version attribute
+			block.Body().SetAttributeValue("required_version", cty.StringVal(version))
+			updated = true
+		}
+	}
+
+	// If we made changes, write the file back (unless in dry-run mode)
+	if updated && !dryRun {
+		output := hclwrite.Format(file.Bytes())
+		// Preserve original file permissions
+		if err := os.WriteFile(filename, output, originalMode.Perm()); err != nil {
+			return false, fmt.Errorf("failed to write file: %w", err)
+		}
+	}
+
+	return updated, nil
+}
+
+// updateProviderVersion updates the version attribute for a specific provider in terraform required_providers blocks
+//
+// Parameters:
+//   - filename: Path to the Terraform file to process
+//   - providerName: Name of the provider to update (e.g., "aws", "azurerm")
+//   - version: Target provider version to set
+//   - dryRun: If true, show what would be changed without modifying files
+//   - outputFormat: Output format ("text" or "md")
+//
+// Returns:
+//   - bool: true if a provider was updated (or would be updated in dry-run mode)
+//   - error: Any error encountered during file reading, parsing, or writing
+func updateProviderVersion(filename, providerName, version string, dryRun bool, outputFormat string) (bool, error) {
+	// Get original file permissions to preserve them when writing
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		return false, fmt.Errorf("failed to stat file: %w", err)
+	}
+	originalMode := fileInfo.Mode()
+
+	// Read the file
+	src, err := os.ReadFile(filename)
+	if err != nil {
+		return false, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	// Parse the file with hclwrite
+	file, diags := hclwrite.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		return false, fmt.Errorf("failed to parse HCL: %s", diags.Error())
+	}
+
+	// Track if we made any changes
+	updated := false
+
+	// Iterate through all blocks in the file
+	for _, block := range file.Body().Blocks() {
+		// Look for terraform blocks
+		if block.Type() == "terraform" {
+			// Look for required_providers block (it's a nested block type)
+			for _, nestedBlock := range block.Body().Blocks() {
+				if nestedBlock.Type() == "required_providers" {
+					// Providers in required_providers are defined as nested blocks
+					// e.g., required_providers { aws { ... } }
+					for _, providerBlock := range nestedBlock.Body().Blocks() {
+						if providerBlock.Type() == providerName {
+							// Update the version attribute within the provider block
+							providerBlock.Body().SetAttributeValue("version", cty.StringVal(version))
+							updated = true
+						}
+					}
+					
+					// Also check for providers defined as attributes (older syntax)
+					// This handles cases where providers might be defined differently
+					// We skip this for now as the modern syntax uses blocks
+				}
+			}
+		}
+	}
+
+	// If we made changes, write the file back (unless in dry-run mode)
+	if updated && !dryRun {
+		output := hclwrite.Format(file.Bytes())
+		// Preserve original file permissions
+		if err := os.WriteFile(filename, output, originalMode.Perm()); err != nil {
+			return false, fmt.Errorf("failed to write file: %w", err)
+		}
+	}
+
+	return updated, nil
 }
 
 // updateModuleVersion parses a Terraform file, finds modules with the specified source,
