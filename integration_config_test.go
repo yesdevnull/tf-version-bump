@@ -40,7 +40,7 @@ func TestConfigFileWithTerraformVersion(t *testing.T) {
 	// Process the file
 	files := []string{tfFile}
 	flags := &cliFlags{dryRun: false, output: "text"}
-	
+
 	count := processTerraformVersion(files, config.TerraformVersion, flags.dryRun, flags.output)
 	if count != 1 {
 		t.Errorf("Expected 1 file updated, got %d", count)
@@ -103,7 +103,7 @@ func TestConfigFileWithMultipleProviders(t *testing.T) {
 	// Process the file
 	files := []string{tfFile}
 	flags := &cliFlags{dryRun: false, output: "text"}
-	
+
 	totalUpdates := 0
 	for _, provider := range config.Providers {
 		count := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output)
@@ -227,46 +227,46 @@ modules:
 // TestConfigFileSummaryOutput tests that the summary output is correct for various combinations
 func TestConfigFileSummaryOutput(t *testing.T) {
 	tests := []struct {
-		name              string
-		terraformUpdates  int
-		providerUpdates   int
-		moduleUpdates     int
-		expectSummary     bool
+		name             string
+		terraformUpdates int
+		providerUpdates  int
+		moduleUpdates    int
+		expectSummary    bool
 	}{
 		{
-			name:              "all updates present",
-			terraformUpdates:  1,
-			providerUpdates:   2,
-			moduleUpdates:     3,
-			expectSummary:     true,
+			name:             "all updates present",
+			terraformUpdates: 1,
+			providerUpdates:  2,
+			moduleUpdates:    3,
+			expectSummary:    true,
 		},
 		{
-			name:              "only terraform updates",
-			terraformUpdates:  1,
-			providerUpdates:   0,
-			moduleUpdates:     0,
-			expectSummary:     true,
+			name:             "only terraform updates",
+			terraformUpdates: 1,
+			providerUpdates:  0,
+			moduleUpdates:    0,
+			expectSummary:    true,
 		},
 		{
-			name:              "only provider updates",
-			terraformUpdates:  0,
-			providerUpdates:   2,
-			moduleUpdates:     0,
-			expectSummary:     true,
+			name:             "only provider updates",
+			terraformUpdates: 0,
+			providerUpdates:  2,
+			moduleUpdates:    0,
+			expectSummary:    true,
 		},
 		{
-			name:              "only module updates",
-			terraformUpdates:  0,
-			providerUpdates:   0,
-			moduleUpdates:     3,
-			expectSummary:     true,
+			name:             "only module updates",
+			terraformUpdates: 0,
+			providerUpdates:  0,
+			moduleUpdates:    3,
+			expectSummary:    true,
 		},
 		{
-			name:              "no updates",
-			terraformUpdates:  0,
-			providerUpdates:   0,
-			moduleUpdates:     0,
-			expectSummary:     false,
+			name:             "no updates",
+			terraformUpdates: 0,
+			providerUpdates:  0,
+			moduleUpdates:    0,
+			expectSummary:    false,
 		},
 	}
 

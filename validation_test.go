@@ -12,34 +12,34 @@ import (
 // TestGlobPatternValidation tests various glob patterns for correctness
 func TestGlobPatternValidation(t *testing.T) {
 	tests := []struct {
-		name         string
-		pattern      string
-		shouldError  bool
-		description  string
+		name        string
+		pattern     string
+		shouldError bool
+		description string
 	}{
 		{
-			name:         "valid simple pattern",
-			pattern:      "*.tf",
-			shouldError:  false,
-			description:  "Simple wildcard pattern",
+			name:        "valid simple pattern",
+			pattern:     "*.tf",
+			shouldError: false,
+			description: "Simple wildcard pattern",
 		},
 		{
-			name:         "valid nested pattern",
-			pattern:      "**/*.tf",
-			shouldError:  false,
-			description:  "Recursive wildcard pattern",
+			name:        "valid nested pattern",
+			pattern:     "**/*.tf",
+			shouldError: false,
+			description: "Recursive wildcard pattern",
 		},
 		{
-			name:         "malformed pattern with unclosed bracket",
-			pattern:      "[abc",
-			shouldError:  true,
-			description:  "Unclosed bracket should cause error",
+			name:        "malformed pattern with unclosed bracket",
+			pattern:     "[abc",
+			shouldError: true,
+			description: "Unclosed bracket should cause error",
 		},
 		{
-			name:         "empty pattern",
-			pattern:      "",
-			shouldError:  false,  // filepath.Glob returns error for syntax, not empty
-			description:  "Empty pattern",
+			name:        "empty pattern",
+			pattern:     "",
+			shouldError: false, // filepath.Glob returns error for syntax, not empty
+			description: "Empty pattern",
 		},
 	}
 

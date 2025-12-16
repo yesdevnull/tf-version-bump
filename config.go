@@ -31,12 +31,12 @@ func (f *FromVersions) UnmarshalYAML(value *yaml.Node) error {
 		if value.Tag != "!!str" {
 			return fmt.Errorf("from field must be a string or array of strings, got %s", value.Tag)
 		}
-		
+
 		var str string
 		if err := value.Decode(&str); err != nil {
 			return fmt.Errorf("failed to decode from field as string: %w", err)
 		}
-		
+
 		if str == "" {
 			*f = FromVersions{}
 		} else {
@@ -74,13 +74,13 @@ type ProviderUpdate struct {
 // Example YAML:
 //
 //	terraform_version: ">= 1.5"
-//	
+//
 //	providers:
 //	  - name: "aws"
 //	    version: "~> 5.0"
 //	  - name: "azurerm"
 //	    version: "~> 3.5"
-//	
+//
 //	modules:
 //	  - source: "terraform-aws-modules/vpc/aws"
 //	    version: "5.0.0"

@@ -346,11 +346,11 @@ func TestExtremeWhitespace(t *testing.T) {
 }`,
 		},
 		{
-			name: "tabs everywhere",
+			name:    "tabs everywhere",
 			content: "module\t\"vpc\"\t{\n\tsource\t=\t\"terraform-aws-modules/vpc/aws\"\n\tversion\t=\t\"3.0.0\"\n}",
 		},
 		{
-			name: "mixed tabs and spaces",
+			name:    "mixed tabs and spaces",
 			content: "module  \t  \"vpc\"  \t  {\n  \t  source \t = \t \"terraform-aws-modules/vpc/aws\"\n\t  version  \t=  \t\"3.0.0\"\n}",
 		},
 	}
