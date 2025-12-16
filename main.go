@@ -195,41 +195,59 @@ func main() {
 	}
 
 	// Validate operation modes
+	validateOperationModes(flags)
+
+	// Find and validate matching files
+	files := findMatchingFiles(flags)
+
+	// Run the appropriate operation mode
+	if flags.configFile != "" {
+		runConfigFileMode(files, flags)
+	} else {
+		runCLIMode(files, flags)
+	}
+}
+
+// validateOperationModes validates that the CLI flags are properly set
+func validateOperationModes(flags *cliFlags) {
 	// Config file mode is exclusive with all other CLI flags
 	if flags.configFile != "" {
-		if flags.moduleSource != "" || flags.terraformVersion != "" || flags.providerName != "" || 
-		   len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" {
+		if flags.moduleSource != "" || flags.terraformVersion != "" || flags.providerName != "" ||
+			len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" {
 			log.Fatal("Error: Cannot use -config with other operation flags (-module, -terraform-version, -provider, -from, -ignore-version, -ignore-modules)")
 		}
-	} else {
-		// CLI mode - validate that at least one operation is specified
-		modesSet := 0
-		if flags.moduleSource != "" {
-			modesSet++
-		}
-		if flags.terraformVersion != "" {
-			modesSet++
-		}
-		if flags.providerName != "" {
-			modesSet++
-		}
-
-		if modesSet == 0 {
-			fmt.Println("Usage:")
-			fmt.Println("  Module update:     tf-version-bump -pattern <glob> -module <source> -to <version>")
-			fmt.Println("  Config file:       tf-version-bump -pattern <glob> -config <config-file>")
-			fmt.Println("  Terraform version: tf-version-bump -pattern <glob> -terraform-version <version>")
-			fmt.Println("  Provider version:  tf-version-bump -pattern <glob> -provider <name> -to <version>")
-			flag.PrintDefaults()
-			os.Exit(1)
-		}
-
-		if modesSet > 1 {
-			log.Fatal("Error: Cannot use -module, -terraform-version, and -provider flags together. Choose one operation mode or use a config file.")
-		}
+		return
 	}
 
-	// Find matching files
+	// CLI mode - validate that at least one operation is specified
+	modesSet := 0
+	if flags.moduleSource != "" {
+		modesSet++
+	}
+	if flags.terraformVersion != "" {
+		modesSet++
+	}
+	if flags.providerName != "" {
+		modesSet++
+	}
+
+	if modesSet == 0 {
+		fmt.Println("Usage:")
+		fmt.Println("  Module update:     tf-version-bump -pattern <glob> -module <source> -to <version>")
+		fmt.Println("  Config file:       tf-version-bump -pattern <glob> -config <config-file>")
+		fmt.Println("  Terraform version: tf-version-bump -pattern <glob> -terraform-version <version>")
+		fmt.Println("  Provider version:  tf-version-bump -pattern <glob> -provider <name> -to <version>")
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	if modesSet > 1 {
+		log.Fatal("Error: Cannot use -module, -terraform-version, and -provider flags together. Choose one operation mode or use a config file.")
+	}
+}
+
+// findMatchingFiles finds all files matching the pattern
+func findMatchingFiles(flags *cliFlags) []string {
 	if flags.pattern == "" {
 		log.Fatal("Error: -pattern flag is required")
 	}
@@ -249,87 +267,95 @@ func main() {
 		fmt.Println("Running in dry-run mode - no files will be modified")
 	}
 
-	// Handle different operation modes
+	return files
+}
+
+// runConfigFileMode handles config file mode operations
+func runConfigFileMode(files []string, flags *cliFlags) {
+	config, err := loadConfig(flags.configFile)
+	if err != nil {
+		log.Fatalf("Error loading config file: %v", err)
+	}
+
 	var terraformUpdates, providerUpdates, moduleUpdates int
 
-	if flags.configFile != "" {
-		// Config file mode - can contain terraform_version, providers, and/or modules
-		config, err := loadConfig(flags.configFile)
-		if err != nil {
-			log.Fatalf("Error loading config file: %v", err)
-		}
+	// Process terraform version if specified
+	if config.TerraformVersion != "" {
+		terraformUpdates = processTerraformVersion(files, config.TerraformVersion, flags.dryRun, flags.output)
+	}
 
-		// Process terraform version if specified
-		if config.TerraformVersion != "" {
-			terraformUpdates = processTerraformVersion(files, config.TerraformVersion, flags.dryRun, flags.output)
-		}
+	// Process provider updates if specified
+	for _, provider := range config.Providers {
+		count := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output)
+		providerUpdates += count
+	}
 
-		// Process provider updates if specified
-		for _, provider := range config.Providers {
-			count := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output)
-			providerUpdates += count
-		}
+	// Process module updates if specified
+	if len(config.Modules) > 0 {
+		moduleUpdates = processFiles(files, config.Modules, flags)
+	}
 
-		// Process module updates if specified
-		if len(config.Modules) > 0 {
-			moduleUpdates = processFiles(files, config.Modules, flags)
-		}
+	// Print summary
+	printConfigSummary(terraformUpdates, providerUpdates, moduleUpdates)
+}
 
-		// Print summary for config file mode
-		if terraformUpdates > 0 || providerUpdates > 0 || moduleUpdates > 0 {
-			fmt.Println("\n" + strings.Repeat("=", 50))
-			fmt.Println("Config File Update Summary")
-			fmt.Println(strings.Repeat("=", 50))
-			if terraformUpdates > 0 {
-				fmt.Printf("Terraform version: %d file(s) updated\n", terraformUpdates)
-			}
-			if providerUpdates > 0 {
-				fmt.Printf("Providers: %d update(s) applied\n", providerUpdates)
-			}
-			if moduleUpdates > 0 {
-				fmt.Printf("Modules: %d file(s) updated\n", moduleUpdates)
-			}
-		} else {
-			fmt.Println("\nNo updates were performed. Config file may be empty or contain no matching items.")
+// runCLIMode handles CLI mode operations
+func runCLIMode(files []string, flags *cliFlags) {
+	var totalUpdates int
+	var updates []ModuleUpdate
+
+	switch {
+	case flags.terraformVersion != "":
+		totalUpdates = processTerraformVersion(files, flags.terraformVersion, flags.dryRun, flags.output)
+		printTerraformSummary(totalUpdates, flags.dryRun)
+	case flags.providerName != "":
+		if flags.toVersion == "" {
+			log.Fatal("Error: -to flag is required when using -provider")
+		}
+		totalUpdates = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output)
+		printProviderSummary(flags.providerName, totalUpdates, flags.dryRun, flags.output)
+	default:
+		updates = loadModuleUpdates(flags)
+		totalUpdates = processFiles(files, updates, flags)
+		printSummary(totalUpdates, len(updates), flags.dryRun)
+	}
+}
+
+// printConfigSummary prints the summary for config file mode
+func printConfigSummary(terraformUpdates, providerUpdates, moduleUpdates int) {
+	if terraformUpdates > 0 || providerUpdates > 0 || moduleUpdates > 0 {
+		fmt.Println("\n" + strings.Repeat("=", 50))
+		fmt.Println("Config File Update Summary")
+		fmt.Println(strings.Repeat("=", 50))
+		if terraformUpdates > 0 {
+			fmt.Printf("Terraform version: %d file(s) updated\n", terraformUpdates)
+		}
+		if providerUpdates > 0 {
+			fmt.Printf("Providers: %d update(s) applied\n", providerUpdates)
+		}
+		if moduleUpdates > 0 {
+			fmt.Printf("Modules: %d file(s) updated\n", moduleUpdates)
 		}
 	} else {
-		// CLI mode - single operation
-		var totalUpdates int
-		var updates []ModuleUpdate
+		fmt.Println("\nNo updates were performed. Config file may be empty or contain no matching items.")
+	}
+}
 
-		switch {
-		case flags.terraformVersion != "":
-			// Terraform version update mode
-			totalUpdates = processTerraformVersion(files, flags.terraformVersion, flags.dryRun, flags.output)
-		case flags.providerName != "":
-			// Provider version update mode
-			if flags.toVersion == "" {
-				log.Fatal("Error: -to flag is required when using -provider")
-			}
-			totalUpdates = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output)
-		default:
-			// Module update mode (existing functionality)
-			updates = loadModuleUpdates(flags)
-			totalUpdates = processFiles(files, updates, flags)
-		}
+// printTerraformSummary prints the summary for terraform version updates
+func printTerraformSummary(totalUpdates int, dryRun bool) {
+	if dryRun {
+		fmt.Printf("\nDry run: would update Terraform version in %d file(s)\n", totalUpdates)
+	} else {
+		fmt.Printf("\nSuccessfully updated Terraform version in %d file(s)\n", totalUpdates)
+	}
+}
 
-		// Print summary for CLI mode
-		switch {
-		case flags.terraformVersion != "":
-			if flags.dryRun {
-				fmt.Printf("\nDry run: would update Terraform version in %d file(s)\n", totalUpdates)
-			} else {
-				fmt.Printf("\nSuccessfully updated Terraform version in %d file(s)\n", totalUpdates)
-			}
-		case flags.providerName != "":
-			if flags.dryRun {
-				fmt.Printf("\nDry run: would update %s provider version in %d file(s)\n", quote(flags.providerName, flags.output), totalUpdates)
-			} else {
-				fmt.Printf("\nSuccessfully updated %s provider version in %d file(s)\n", quote(flags.providerName, flags.output), totalUpdates)
-			}
-		default:
-			printSummary(totalUpdates, len(updates), flags.dryRun)
-		}
+// printProviderSummary prints the summary for provider version updates
+func printProviderSummary(providerName string, totalUpdates int, dryRun bool, outputFormat string) {
+	if dryRun {
+		fmt.Printf("\nDry run: would update %s provider version in %d file(s)\n", quote(providerName, outputFormat), totalUpdates)
+	} else {
+		fmt.Printf("\nSuccessfully updated %s provider version in %d file(s)\n", quote(providerName, outputFormat), totalUpdates)
 	}
 }
 
