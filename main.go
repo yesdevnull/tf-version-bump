@@ -595,89 +595,113 @@ func updateProviderAttributeVersion(nestedBlock *hclwrite.Block, providerName, n
 		// Get the expression as bytes
 		tokens := attr.Expr().BuildTokens(nil)
 		exprStr := string(tokens.Bytes())
-		
+
 		// Parse the expression using hclsyntax to understand its structure
 		expr, diags := hclsyntax.ParseExpression([]byte(exprStr), "inline", hcl.Pos{Line: 1, Column: 1})
 		if diags.HasErrors() {
 			return false
 		}
-		
+
 		// Check if it's an object construction expression
 		objExpr, ok := expr.(*hclsyntax.ObjectConsExpr)
 		if !ok {
 			return false
 		}
-		
+
 		// Build a new object with the updated version
 		// We'll reconstruct the object manually
 		newObj := make(map[string]string)
 		hasVersion := false
-		
+
 		for _, item := range objExpr.Items {
 			// Extract the key name
 			keyExpr, ok := item.KeyExpr.(*hclsyntax.ObjectConsKeyExpr)
 			if !ok {
 				continue
 			}
-			
+
 			traversal, ok := keyExpr.Wrapped.(*hclsyntax.ScopeTraversalExpr)
 			if !ok {
 				continue
 			}
-			
+
 			if len(traversal.Traversal) == 0 {
 				continue
 			}
-			
+
 			rootName, ok := traversal.Traversal[0].(hcl.TraverseRoot)
 			if !ok {
 				continue
 			}
-			
+
 			keyName := rootName.Name
-			
-			// Extract the value
-			if litExpr, ok := item.ValueExpr.(*hclsyntax.TemplateExpr); ok {
-				if len(litExpr.Parts) > 0 {
-					if lit, ok := litExpr.Parts[0].(*hclsyntax.LiteralValueExpr); ok {
-						value := lit.Val.AsString()
-						if keyName == "version" {
-							newObj[keyName] = newVersion
-							hasVersion = true
-						} else {
-							newObj[keyName] = value
-						}
+
+			// Extract the value - handle multiple expression types
+			var value string
+			valueExtracted := false
+
+			switch expr := item.ValueExpr.(type) {
+			case *hclsyntax.TemplateExpr:
+				// Handle template expressions (quoted strings)
+				if len(expr.Parts) > 0 {
+					if lit, ok := expr.Parts[0].(*hclsyntax.LiteralValueExpr); ok {
+						value = lit.Val.AsString()
+						valueExtracted = true
 					}
+				}
+			case *hclsyntax.LiteralValueExpr:
+				// Handle direct literal values
+				if expr.Val.Type().Equals(cty.String) {
+					value = expr.Val.AsString()
+					valueExtracted = true
+				}
+			default:
+				// Skip non-string attributes (variables, functions, complex expressions, etc.)
+				// These will not be included in the reconstructed object to avoid errors
+				continue
+			}
+
+			if valueExtracted {
+				if keyName == "version" {
+					newObj[keyName] = newVersion
+					hasVersion = true
+				} else {
+					newObj[keyName] = value
 				}
 			}
 		}
-		
+
 		if !hasVersion {
 			return false
 		}
-		
+
+		// Determine indentation from the original HCL (default to 6 spaces if unable to detect)
+		// In HCL files, required_providers block is typically indented 2 spaces,
+		// and the provider attributes inside the object are indented an additional 4 spaces (total 6)
+		indent := "      " // 6 spaces as default
+
 		// Reconstruct the object expression with proper formatting
 		newExprStr := "{\n"
 		// Preserve the order: source first, then version, then others
 		if source, ok := newObj["source"]; ok {
-			newExprStr += fmt.Sprintf("      source  = %q\n", source)
+			newExprStr += fmt.Sprintf("%ssource  = %q\n", indent, source)
 		}
 		if _, ok := newObj["version"]; ok {
-			newExprStr += fmt.Sprintf("      version = %q\n", newVersion)
+			newExprStr += fmt.Sprintf("%sversion = %q\n", indent, newVersion)
 		}
 		for key, value := range newObj {
 			if key != "source" && key != "version" {
-				newExprStr += fmt.Sprintf("      %s = %q\n", key, value)
+				newExprStr += fmt.Sprintf("%s%s = %q\n", indent, key, value)
 			}
 		}
 		newExprStr += "    }"
-		
+
 		// Set the new expression
 		newExpr, diags := hclwrite.ParseConfig([]byte(providerName+" = "+newExprStr), "inline", hcl.Pos{Line: 1, Column: 1})
 		if diags.HasErrors() {
 			return false
 		}
-		
+
 		// Get the attribute from the parsed expression
 		if len(newExpr.Body().Attributes()) > 0 {
 			for _, newAttr := range newExpr.Body().Attributes() {
@@ -686,7 +710,7 @@ func updateProviderAttributeVersion(nestedBlock *hclwrite.Block, providerName, n
 			}
 		}
 	}
-	
+
 	return false
 }
 

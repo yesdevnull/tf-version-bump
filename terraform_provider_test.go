@@ -514,17 +514,17 @@ func TestProcessProviderVersion(t *testing.T) {
 
 // TestUpdateProviderVersionAttributeSyntax tests updating provider version with attribute-based syntax
 func TestUpdateProviderVersionAttributeSyntax(t *testing.T) {
-tests := []struct {
-name         string
-inputContent string
-providerName string
-version      string
-expectUpdate bool
-checkContent func(string) bool
-}{
-{
-name: "update aws provider with attribute syntax",
-inputContent: `terraform {
+	tests := []struct {
+		name         string
+		inputContent string
+		providerName string
+		version      string
+		expectUpdate bool
+		checkContent func(string) bool
+	}{
+		{
+			name: "update aws provider with attribute syntax",
+			inputContent: `terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -532,17 +532,17 @@ inputContent: `terraform {
     }
   }
 }`,
-providerName: "aws",
-version:      "~> 5.0",
-expectUpdate: true,
-checkContent: func(content string) bool {
-return strings.Contains(content, `version = "~> 5.0"`) &&
-strings.Contains(content, `aws = {`)
-},
-},
-{
-name: "update specific provider with multiple providers (attribute syntax)",
-inputContent: `terraform {
+			providerName: "aws",
+			version:      "~> 5.0",
+			expectUpdate: true,
+			checkContent: func(content string) bool {
+				return strings.Contains(content, `version = "~> 5.0"`) &&
+					strings.Contains(content, `aws = {`)
+			},
+		},
+		{
+			name: "update specific provider with multiple providers (attribute syntax)",
+			inputContent: `terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -554,22 +554,22 @@ inputContent: `terraform {
     }
   }
 }`,
-providerName: "azurerm",
-version:      "~> 3.5",
-expectUpdate: true,
-checkContent: func(content string) bool {
-// Check azurerm was updated
-hasAzurermUpdate := strings.Contains(content, `azurerm = {`) &&
-strings.Index(content, `azurerm = {`) < strings.Index(content, `version = "~> 3.5"`)
-// Check aws was NOT updated
-hasAwsUntouched := strings.Contains(content, `aws = {`) &&
-strings.Contains(content, `version = "~> 4.0"`)
-return hasAzurermUpdate && hasAwsUntouched
-},
-},
-{
-name: "no update for non-existent provider (attribute syntax)",
-inputContent: `terraform {
+			providerName: "azurerm",
+			version:      "~> 3.5",
+			expectUpdate: true,
+			checkContent: func(content string) bool {
+				// Check azurerm was updated
+				hasAzurermUpdate := strings.Contains(content, `azurerm = {`) &&
+					strings.Index(content, `azurerm = {`) < strings.Index(content, `version = "~> 3.5"`)
+				// Check aws was NOT updated
+				hasAwsUntouched := strings.Contains(content, `aws = {`) &&
+					strings.Contains(content, `version = "~> 4.0"`)
+				return hasAzurermUpdate && hasAwsUntouched
+			},
+		},
+		{
+			name: "no update for non-existent provider (attribute syntax)",
+			inputContent: `terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -577,57 +577,57 @@ inputContent: `terraform {
     }
   }
 }`,
-providerName: "google",
-version:      "~> 4.0",
-expectUpdate: false,
-checkContent: func(content string) bool {
-return strings.Contains(content, `version = "~> 4.0"`) &&
-!strings.Contains(content, "google")
-},
-},
-}
+			providerName: "google",
+			version:      "~> 4.0",
+			expectUpdate: false,
+			checkContent: func(content string) bool {
+				return strings.Contains(content, `version = "~> 4.0"`) &&
+					!strings.Contains(content, "google")
+			},
+		},
+	}
 
-for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-// Create a temporary file
-tmpFile, err := os.CreateTemp("", "test-*.tf")
-if err != nil {
-t.Fatalf("Failed to create temp file: %v", err)
-}
-defer func() { _ = os.Remove(tmpFile.Name()) }()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a temporary file
+			tmpFile, err := os.CreateTemp("", "test-*.tf")
+			if err != nil {
+				t.Fatalf("Failed to create temp file: %v", err)
+			}
+			defer func() { _ = os.Remove(tmpFile.Name()) }()
 
-// Write input content
-if err := os.WriteFile(tmpFile.Name(), []byte(tt.inputContent), 0644); err != nil {
-t.Fatalf("Failed to write temp file: %v", err)
-}
+			// Write input content
+			if err := os.WriteFile(tmpFile.Name(), []byte(tt.inputContent), 0644); err != nil {
+				t.Fatalf("Failed to write temp file: %v", err)
+			}
 
-// Update the provider version
-updated, err := updateProviderVersion(tmpFile.Name(), tt.providerName, tt.version, false)
-if err != nil {
-t.Fatalf("updateProviderVersion failed: %v", err)
-}
+			// Update the provider version
+			updated, err := updateProviderVersion(tmpFile.Name(), tt.providerName, tt.version, false)
+			if err != nil {
+				t.Fatalf("updateProviderVersion failed: %v", err)
+			}
 
-if updated != tt.expectUpdate {
-t.Errorf("Expected updated=%v, got %v", tt.expectUpdate, updated)
-}
+			if updated != tt.expectUpdate {
+				t.Errorf("Expected updated=%v, got %v", tt.expectUpdate, updated)
+			}
 
-// Read back the content
-content, err := os.ReadFile(tmpFile.Name())
-if err != nil {
-t.Fatalf("Failed to read file: %v", err)
-}
+			// Read back the content
+			content, err := os.ReadFile(tmpFile.Name())
+			if err != nil {
+				t.Fatalf("Failed to read file: %v", err)
+			}
 
-// Check the content
-if !tt.checkContent(string(content)) {
-t.Errorf("Content check failed. Content:\n%s", string(content))
-}
-})
-}
+			// Check the content
+			if !tt.checkContent(string(content)) {
+				t.Errorf("Content check failed. Content:\n%s", string(content))
+			}
+		})
+	}
 }
 
 // TestMixedProviderSyntax tests files with both block and attribute syntax
 func TestMixedProviderSyntax(t *testing.T) {
-inputContent := `terraform {
+	inputContent := `terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -646,54 +646,54 @@ terraform {
   }
 }`
 
-tmpFile, err := os.CreateTemp("", "test-mixed-*.tf")
-if err != nil {
-t.Fatalf("Failed to create temp file: %v", err)
-}
-defer func() { _ = os.Remove(tmpFile.Name()) }()
+	tmpFile, err := os.CreateTemp("", "test-mixed-*.tf")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
-if err := os.WriteFile(tmpFile.Name(), []byte(inputContent), 0644); err != nil {
-t.Fatalf("Failed to write temp file: %v", err)
-}
+	if err := os.WriteFile(tmpFile.Name(), []byte(inputContent), 0644); err != nil {
+		t.Fatalf("Failed to write temp file: %v", err)
+	}
 
-// Update aws (attribute syntax)
-updated, err := updateProviderVersion(tmpFile.Name(), "aws", "~> 5.0", false)
-if err != nil {
-t.Fatalf("updateProviderVersion failed for aws: %v", err)
-}
-if !updated {
-t.Error("Expected aws to be updated")
-}
+	// Update aws (attribute syntax)
+	updated, err := updateProviderVersion(tmpFile.Name(), "aws", "~> 5.0", false)
+	if err != nil {
+		t.Fatalf("updateProviderVersion failed for aws: %v", err)
+	}
+	if !updated {
+		t.Error("Expected aws to be updated")
+	}
 
-content, err := os.ReadFile(tmpFile.Name())
-if err != nil {
-t.Fatalf("Failed to read file: %v", err)
-}
+	content, err := os.ReadFile(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
 
-// Check aws was updated to 5.0
-contentStr := string(content)
-awsIndex := strings.Index(contentStr, "aws = {")
-if awsIndex == -1 {
-t.Error("aws provider not found")
-}
+	// Check aws was updated to 5.0
+	contentStr := string(content)
+	awsIndex := strings.Index(contentStr, "aws = {")
+	if awsIndex == -1 {
+		t.Error("aws provider not found")
+	}
 
-// Find the version line after aws declaration
-awsSection := contentStr[awsIndex:]
-if !strings.Contains(awsSection[:200], `version = "~> 5.0"`) {
-t.Errorf("aws version was not updated correctly. Content:\n%s", contentStr)
-}
+	// Find the version line after aws declaration
+	awsSection := contentStr[awsIndex:]
+	if !strings.Contains(awsSection[:200], `version = "~> 5.0"`) {
+		t.Errorf("aws version was not updated correctly. Content:\n%s", contentStr)
+	}
 
-// Check azurerm is still 3.0
-if !strings.Contains(contentStr, `version = "~> 3.0"`) {
-t.Error("azurerm version should not have changed")
-}
+	// Check azurerm is still 3.0
+	if !strings.Contains(contentStr, `version = "~> 3.0"`) {
+		t.Error("azurerm version should not have changed")
+	}
 }
 
 // TestProcessProviderVersionAttributeSyntax tests processing multiple files with attribute syntax
 func TestProcessProviderVersionAttributeSyntax(t *testing.T) {
-tmpDir := t.TempDir()
+	tmpDir := t.TempDir()
 
-file1Content := `terraform {
+	file1Content := `terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -702,7 +702,7 @@ file1Content := `terraform {
   }
 }`
 
-file2Content := `terraform {
+	file2Content := `terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -715,47 +715,47 @@ file2Content := `terraform {
   }
 }`
 
-file1 := filepath.Join(tmpDir, "test1.tf")
-file2 := filepath.Join(tmpDir, "test2.tf")
+	file1 := filepath.Join(tmpDir, "test1.tf")
+	file2 := filepath.Join(tmpDir, "test2.tf")
 
-if err := os.WriteFile(file1, []byte(file1Content), 0644); err != nil {
-t.Fatalf("Failed to write file1: %v", err)
-}
-if err := os.WriteFile(file2, []byte(file2Content), 0644); err != nil {
-t.Fatalf("Failed to write file2: %v", err)
-}
+	if err := os.WriteFile(file1, []byte(file1Content), 0644); err != nil {
+		t.Fatalf("Failed to write file1: %v", err)
+	}
+	if err := os.WriteFile(file2, []byte(file2Content), 0644); err != nil {
+		t.Fatalf("Failed to write file2: %v", err)
+	}
 
-// Process both files
-pattern := filepath.Join(tmpDir, "*.tf")
-files, err := filepath.Glob(pattern)
-if err != nil {
-t.Fatalf("Failed to glob pattern: %v", err)
-}
+	// Process both files
+	pattern := filepath.Join(tmpDir, "*.tf")
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		t.Fatalf("Failed to glob pattern: %v", err)
+	}
 
-count := processProviderVersion(files, "aws", "~> 5.0", false, "text")
+	count := processProviderVersion(files, "aws", "~> 5.0", false, "text")
 
-if count != 2 {
-t.Errorf("Expected 2 files updated, got %d", count)
-}
+	if count != 2 {
+		t.Errorf("Expected 2 files updated, got %d", count)
+	}
 
-// Check both files were updated
-content1, err := os.ReadFile(file1)
-if err != nil {
-t.Fatalf("Failed to read file1: %v", err)
-}
-content2, err := os.ReadFile(file2)
-if err != nil {
-t.Fatalf("Failed to read file2: %v", err)
-}
+	// Check both files were updated
+	content1, err := os.ReadFile(file1)
+	if err != nil {
+		t.Fatalf("Failed to read file1: %v", err)
+	}
+	content2, err := os.ReadFile(file2)
+	if err != nil {
+		t.Fatalf("Failed to read file2: %v", err)
+	}
 
-if !strings.Contains(string(content1), `version = "~> 5.0"`) {
-t.Error("file1 was not updated correctly")
-}
-if !strings.Contains(string(content2), `version = "~> 5.0"`) {
-t.Error("file2 was not updated correctly")
-}
-// Check azurerm in file2 was not changed
-if !strings.Contains(string(content2), `version = "~> 3.0"`) {
-t.Error("azurerm in file2 should not have changed")
-}
+	if !strings.Contains(string(content1), `version = "~> 5.0"`) {
+		t.Error("file1 was not updated correctly")
+	}
+	if !strings.Contains(string(content2), `version = "~> 5.0"`) {
+		t.Error("file2 was not updated correctly")
+	}
+	// Check azurerm in file2 was not changed
+	if !strings.Contains(string(content2), `version = "~> 3.0"`) {
+		t.Error("azurerm in file2 should not have changed")
+	}
 }
