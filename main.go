@@ -67,26 +67,26 @@ func quote(s, format string) string {
 
 // cliFlags holds all command-line flags
 type cliFlags struct {
-	pattern            string
-	moduleSource       string
-	toVersion          string
-	fromVersions       stringSliceFlag
-	ignoreVersions     stringSliceFlag
-	ignoreModules      string
-	configFile         string
-	forceAdd           bool
-	dryRun             bool
-	verbose            bool
-	showVersion        bool
-	output             string
-	terraformVersion   string
-	providerName       string
+	pattern          string
+	moduleSource     string
+	toVersion        string
+	fromVersions     stringSliceFlag
+	ignoreVersions   stringSliceFlag
+	ignoreModules    string
+	configFile       string
+	forceAdd         bool
+	dryRun           bool
+	verbose          bool
+	showVersion      bool
+	output           string
+	terraformVersion string
+	providerName     string
 }
 
 // parseFlags parses and validates command-line flags
 func parseFlags() *cliFlags {
 	flags := &cliFlags{}
-	
+
 	flag.StringVar(&flags.pattern, "pattern", "", "Glob pattern for Terraform files (e.g., '*.tf' or 'modules/**/*.tf')")
 	flag.StringVar(&flags.moduleSource, "module", "", "Source of the module to update (e.g., 'terraform-aws-modules/vpc/aws')")
 	flag.StringVar(&flags.toVersion, "to", "", "Desired version number")
@@ -500,10 +500,13 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 // updateProviderVersion updates the version attribute for a specific provider in terraform required_providers blocks
 //
 // Current implementation supports the block-based provider syntax:
-//   required_providers { aws { source = "..." version = "..." } }
+//
+//	required_providers { aws { source = "..." version = "..." } }
 //
 // Known Limitation: The attribute-based syntax is not yet supported:
-//   required_providers { aws = { source = "..." version = "..." } }
+//
+//	required_providers { aws = { source = "..." version = "..." } }
+//
 // This limitation is documented in the README. Supporting attribute-based syntax would require
 // parsing and modifying object expressions, which is more complex with the hclwrite library.
 //

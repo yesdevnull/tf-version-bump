@@ -171,7 +171,7 @@ func TestStringSliceFlagSet(t *testing.T) {
 
 func TestStringSliceFlagMultipleSet(t *testing.T) {
 	var flag stringSliceFlag
-	
+
 	// Set multiple values
 	values := []string{"3.0.0", "~> 3.0", "4.0.0"}
 	for _, v := range values {
@@ -179,18 +179,18 @@ func TestStringSliceFlagMultipleSet(t *testing.T) {
 			t.Errorf("Set(%q) error = %v", v, err)
 		}
 	}
-	
+
 	// Verify all values were accumulated
 	if len(flag) != len(values) {
 		t.Errorf("flag length = %d, want %d", len(flag), len(values))
 	}
-	
+
 	for i, expected := range values {
 		if flag[i] != expected {
 			t.Errorf("flag[%d] = %q, want %q", i, flag[i], expected)
 		}
 	}
-	
+
 	// Verify String() output
 	expected := strings.Join(values, ",")
 	if got := flag.String(); got != expected {
@@ -2378,7 +2378,7 @@ module "vpc3" {
 	// Expected: vpc2 should NOT be updated (ignored), vpc3 should be updated, vpc1 should not match from filter
 	fromVersions := []string{"4.0.0", "4.5.0"}
 	ignoreVersions := []string{"4.0.0"}
-	
+
 	updated, err := updateModuleVersion(tmpfile.Name(), "terraform-aws-modules/vpc/aws", "5.0.0", fromVersions, ignoreVersions, nil, false, false, false, "text")
 	if err != nil {
 		t.Fatalf("updateModuleVersion() error = %v", err)
