@@ -536,7 +536,7 @@ module "s3" {
 			oldStdout := os.Stdout
 			r, w, err := os.Pipe()
 			if err != nil {
-				t.Fatalf("os.Pipe failed: %v", err)
+				t.Fatalf("failed to create os.Pipe: %v", err)
 			}
 			os.Stdout = w
 
