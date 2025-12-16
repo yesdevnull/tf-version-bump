@@ -427,7 +427,7 @@ func TestConfigLoadingEdgeCases(t *testing.T) {
 				t.Fatalf("Failed to create config file: %v", err)
 			}
 
-			updates, err := loadConfig(configFile)
+			config, err := loadConfig(configFile)
 
 			if tt.expectError {
 				if err == nil {
@@ -441,7 +441,7 @@ func TestConfigLoadingEdgeCases(t *testing.T) {
 			}
 
 			if tt.validate != nil {
-				tt.validate(t, updates)
+				tt.validate(t, config.Modules)
 			}
 		})
 	}
