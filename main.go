@@ -1,8 +1,11 @@
-// Package main provides a CLI tool for updating Terraform module versions across multiple files.
+// Package main provides a CLI tool for updating Terraform module versions, Terraform versions,
+// and provider versions across multiple files.
 //
-// The tool supports two modes of operation:
+// The tool supports four modes of operation:
 //  1. Single Module Mode: Update one module at a time via command-line flags
 //  2. Config File Mode: Update multiple modules using a YAML configuration file
+//  3. Terraform Version Mode: Update Terraform required_version in terraform blocks
+//  4. Provider Version Mode: Update provider versions in terraform required_providers blocks
 //
 // It uses the official HashiCorp HCL library to safely parse and modify Terraform files
 // while preserving formatting and comments.
@@ -257,6 +260,7 @@ func main() {
 
 	// Handle different operation modes
 	var totalUpdates int
+	var updates []ModuleUpdate
 
 	switch {
 	case flags.terraformVersion != "":
@@ -270,7 +274,7 @@ func main() {
 		totalUpdates = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output)
 	default:
 		// Module update mode (existing functionality)
-		updates := loadModuleUpdates(flags)
+		updates = loadModuleUpdates(flags)
 		totalUpdates = processFiles(files, updates, flags)
 	}
 
@@ -289,7 +293,7 @@ func main() {
 			fmt.Printf("\nSuccessfully updated %s provider version in %d file(s)\n", quote(flags.providerName, flags.output), totalUpdates)
 		}
 	default:
-		printSummary(totalUpdates, len(loadModuleUpdates(flags)), flags.dryRun)
+		printSummary(totalUpdates, len(updates), flags.dryRun)
 	}
 }
 
@@ -433,6 +437,14 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 
 // updateProviderVersion updates the version attribute for a specific provider in terraform required_providers blocks
 //
+// Current implementation supports the block-based provider syntax:
+//   required_providers { aws { source = "..." version = "..." } }
+//
+// Known Limitation: The attribute-based syntax is not yet supported:
+//   required_providers { aws = { source = "..." version = "..." } }
+// This limitation is documented in the README. Supporting attribute-based syntax would require
+// parsing and modifying object expressions, which is more complex with the hclwrite library.
+//
 // Parameters:
 //   - filename: Path to the Terraform file to process
 //   - providerName: Name of the provider to update (e.g., "aws", "azurerm")
@@ -472,8 +484,8 @@ func updateProviderVersion(filename, providerName, version string, dryRun bool) 
 			// Look for required_providers block (it's a nested block type)
 			for _, nestedBlock := range block.Body().Blocks() {
 				if nestedBlock.Type() == "required_providers" {
-					// Providers in required_providers are defined as nested blocks
-					// e.g., required_providers { aws { ... } }
+					// Iterate through provider blocks in required_providers
+					// e.g., required_providers { aws { source = "..." version = "..." } }
 					for _, providerBlock := range nestedBlock.Body().Blocks() {
 						if providerBlock.Type() == providerName {
 							// Update the version attribute within the provider block
@@ -481,10 +493,6 @@ func updateProviderVersion(filename, providerName, version string, dryRun bool) 
 							updated = true
 						}
 					}
-					
-					// Also check for providers defined as attributes (older syntax)
-					// This handles cases where providers might be defined differently
-					// We skip this for now as the modern syntax uses blocks
 				}
 			}
 		}
