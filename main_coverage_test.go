@@ -518,9 +518,6 @@ func TestUpdateProviderAttributeVersionVariants(t *testing.T) {
 }
 
 func TestUpdateProviderAttributeVersionGuardBranches(t *testing.T) {
-	originalParse := parseExpression
-	defer func() { parseExpression = originalParse }()
-
 	newBlock := func() *hclwrite.Block {
 		block := hclwrite.NewBlock("required_providers", nil)
 		block.Body().SetAttributeRaw("aws", hclwrite.Tokens{
@@ -531,6 +528,8 @@ func TestUpdateProviderAttributeVersionGuardBranches(t *testing.T) {
 	}
 
 	t.Run("non object key expression", func(t *testing.T) {
+		orig := parseExpression
+		t.Cleanup(func() { parseExpression = orig })
 		parseExpression = func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
 			obj := &hclsyntax.ObjectConsExpr{
 				Items: []hclsyntax.ObjectConsItem{
@@ -548,6 +547,8 @@ func TestUpdateProviderAttributeVersionGuardBranches(t *testing.T) {
 	})
 
 	t.Run("empty traversal", func(t *testing.T) {
+		orig := parseExpression
+		t.Cleanup(func() { parseExpression = orig })
 		parseExpression = func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
 			obj := &hclsyntax.ObjectConsExpr{
 				Items: []hclsyntax.ObjectConsItem{
@@ -569,6 +570,8 @@ func TestUpdateProviderAttributeVersionGuardBranches(t *testing.T) {
 	})
 
 	t.Run("non root traversal", func(t *testing.T) {
+		orig := parseExpression
+		t.Cleanup(func() { parseExpression = orig })
 		parseExpression = func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
 			obj := &hclsyntax.ObjectConsExpr{
 				Items: []hclsyntax.ObjectConsItem{
@@ -592,6 +595,8 @@ func TestUpdateProviderAttributeVersionGuardBranches(t *testing.T) {
 	})
 
 	t.Run("literal value branch", func(t *testing.T) {
+		orig := parseExpression
+		t.Cleanup(func() { parseExpression = orig })
 		parseExpression = func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
 			obj := &hclsyntax.ObjectConsExpr{
 				Items: []hclsyntax.ObjectConsItem{
@@ -615,6 +620,8 @@ func TestUpdateProviderAttributeVersionGuardBranches(t *testing.T) {
 	})
 
 	t.Run("default branch value", func(t *testing.T) {
+		orig := parseExpression
+		t.Cleanup(func() { parseExpression = orig })
 		parseExpression = func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
 			obj := &hclsyntax.ObjectConsExpr{
 				Items: []hclsyntax.ObjectConsItem{
