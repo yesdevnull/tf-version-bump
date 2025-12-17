@@ -4,12 +4,52 @@
   "title": "tf-version-bump Configuration",
   "description": "Configuration file for tf-version-bump to specify Terraform module version updates",
   "type": "object",
-  "required": ["modules"],
   "properties": {
+    "terraform_version": {
+      "type": "string",
+      "description": "Optional: Terraform required_version constraint to set in terraform blocks",
+      "minLength": 1,
+      "pattern": "^\\s*(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?)(?:\\s*(?:,\\s*|\\s+)(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?))*\\s*$",
+      "examples": [
+        ">= 1.5",
+        "~> 1.6.0",
+        ">= 1.5, < 2.0"
+      ]
+    },
+    "providers": {
+      "type": "array",
+      "description": "Optional: List of provider version updates to apply in terraform required_providers blocks",
+      "items": {
+        "type": "object",
+        "required": ["name", "version"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Provider name (e.g., aws, azurerm, google)",
+            "minLength": 1,
+            "examples": [
+              "aws",
+              "azurerm",
+              "google"
+            ]
+          },
+          "version": {
+            "type": "string",
+            "description": "Target provider version constraint",
+            "minLength": 1,
+            "pattern": "^\\s*(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?)(?:\\s*(?:,\\s*|\\s+)(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?))*\\s*$",
+            "examples": [
+              "~> 5.0",
+              ">= 4.0, < 6.0"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "modules": {
       "type": "array",
       "description": "List of Terraform modules to update",
-      "minItems": 1,
       "items": {
         "type": "object",
         "required": ["source", "version"],
@@ -28,9 +68,9 @@
           },
           "version": {
             "type": "string",
-            "description": "Target version to update the module to. Supports full SemVer 2.0.0 specification including pre-release and build metadata",
+            "description": "Target version or constraint to update the module to. Supports full SemVer 2.0.0 specification, pre-release/build metadata, and Terraform version constraint operators",
             "minLength": 1,
-            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
+            "pattern": "^\\s*(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?)(?:\\s*(?:,\\s*|\\s+)(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?))*\\s*$",
             "examples": [
               "5.0.0",
               "1.2.3",
@@ -38,15 +78,18 @@
               "2.0.0-alpha",
               "1.0.0-beta.1",
               "3.5.0-rc.2+build.123",
-              "4.1.0+20240115"
+              "4.1.0+20240115",
+              "~> 5.0",
+              ">= 4.0, < 6.0"
             ]
           },
           "from": {
             "oneOf": [
               {
                 "type": "string",
-                "description": "Single version to update from. Supports full SemVer 2.0.0 specification including pre-release and build metadata",
+                "description": "Single version or constraint to update from. Supports full SemVer 2.0.0 specification including pre-release and build metadata",
                 "minLength": 1,
+                "pattern": "^\\s*(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?)(?:\\s*(?:,\\s*|\\s+)(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?))*\\s*$",
                 "examples": [
                   "4.0.0",
                   "~> 3.0"
@@ -57,7 +100,8 @@
                 "description": "List of versions to update from. Module will be updated if current version matches any in this list",
                 "items": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "^\\s*(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?)(?:\\s*(?:,\\s*|\\s+)(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?))*\\s*$"
                 },
                 "minItems": 1,
                 "examples": [
@@ -74,6 +118,7 @@
                 "type": "string",
                 "description": "Single version to skip during updates",
                 "minLength": 1,
+                "pattern": "^\\s*(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?)(?:\\s*(?:,\\s*|\\s+)(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?))*\\s*$",
                 "examples": [
                   "3.14.0",
                   "~> 3.0"
@@ -84,7 +129,8 @@
                 "description": "List of versions to skip during updates. Module will be skipped if current version matches any in this list",
                 "items": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "^\\s*(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?)(?:\\s*(?:,\\s*|\\s+)(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?))*\\s*$"
                 },
                 "minItems": 1,
                 "examples": [
@@ -114,6 +160,21 @@
   },
   "additionalProperties": false,
   "examples": [
+    {
+      "terraform_version": ">= 1.5",
+      "providers": [
+        {
+          "name": "aws",
+          "version": "~> 5.0"
+        }
+      ],
+      "modules": [
+        {
+          "source": "terraform-aws-modules/vpc/aws",
+          "version": "5.0.0"
+        }
+      ]
+    },
     {
       "modules": [
         {
