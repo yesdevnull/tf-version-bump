@@ -63,10 +63,11 @@ func TestParseFlagsInvalidOutput(t *testing.T) {
 	}, func() {
 		defer func() { _ = recover() }()
 		parseFlags()
-		if *code != 1 {
-			t.Fatalf("expected exit code 1, got %d", *code)
-		}
 	})
+
+	if *code != 1 {
+		t.Fatalf("expected exit code 1, got %d", *code)
+	}
 }
 
 func TestLoadModuleUpdatesMissingRequired(t *testing.T) {
@@ -93,6 +94,7 @@ func TestMainVersionFlag(t *testing.T) {
 		t.Fatalf("failed to create pipe: %v", err)
 	}
 	os.Stdout = w
+	defer func() { os.Stdout = origStdout }()
 
 	done := make(chan struct{})
 	go func() {
@@ -494,7 +496,7 @@ func TestUpdateProviderAttributeVersionVariants(t *testing.T) {
 			expectResult: true,
 		},
 		{
-			name: "parse error on reconstruction",
+			name: "parse error on reconstruction due to invalid provider name",
 			setup: func(block *hclwrite.Block) {
 				block.Body().SetAttributeRaw("invalid provider", hclwrite.Tokens{
 					&hclwrite.Token{Type: hclsyntax.TokenOBrace, Bytes: []byte("{")},
