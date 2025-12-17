@@ -471,6 +471,7 @@ go test -v -race -run TestExample
 
 ### Coverage Goals
 
+- **Minimum coverage**: Maintain at least 80% test coverage for all changes
 - **Coverage tracking**: Run `make test-coverage` to view current coverage
 - **Critical paths**: High coverage for config parsing, version updating
 - **Edge cases**: Extensive tests for unusual HCL formatting, Unicode, errors
@@ -552,8 +553,9 @@ When modifying the codebase:
 2. **Understand the context**: Check related test files
 3. **Maintain compatibility**: Don't break existing CLI flags or config format
 4. **Update tests**: Add/modify tests for any functional changes
-5. **Run tests locally**: `make test-coverage` before committing
-6. **Check linting**: Run `golangci-lint run`
+5. **Ensure coverage**: Maintain at least 80% test coverage for all changes
+6. **Run tests locally**: `make test-coverage` before committing
+7. **Check linting**: Run `golangci-lint run`
 
 ### Adding New Features
 
@@ -575,6 +577,7 @@ When modifying the codebase:
    - Add unit tests for new functions
    - Add integration tests for end-to-end workflows
    - Test edge cases and error conditions
+   - Ensure at least 80% test coverage is maintained
 
 4. **Documentation**:
    - Update README.md with usage examples
