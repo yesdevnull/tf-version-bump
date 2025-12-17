@@ -12,22 +12,21 @@ type versionSchema struct {
 }
 
 type configSchema struct {
-	Required   []string `json:"required"`
+	Required    []string `json:"required"`
+	Definitions struct {
+		VersionConstraint versionSchema `json:"versionConstraint"`
+	} `json:"definitions"`
 	Properties struct {
 		Modules struct {
 			Items struct {
-				Properties struct {
-					Version versionSchema `json:"version"`
-				} `json:"properties"`
+				Properties map[string]json.RawMessage `json:"properties"`
 			} `json:"items"`
 		} `json:"modules"`
-		TerraformVersion versionSchema `json:"terraform_version"`
+		TerraformVersion json.RawMessage `json:"terraform_version"`
 		Providers        struct {
 			Items struct {
-				Required   []string `json:"required"`
-				Properties struct {
-					Version versionSchema `json:"version"`
-				} `json:"properties"`
+				Required   []string                   `json:"required"`
+				Properties map[string]json.RawMessage `json:"properties"`
 			} `json:"items"`
 		} `json:"providers"`
 	} `json:"properties"`
@@ -52,13 +51,16 @@ func loadConfigSchema(t *testing.T) configSchema {
 func TestConfigSchemaIncludesProviderAndTerraformOptions(t *testing.T) {
 	schema := loadConfigSchema(t)
 
-	if schema.Properties.TerraformVersion.Pattern == "" {
-		t.Fatalf("terraform_version pattern is missing in schema")
+	if schema.Definitions.VersionConstraint.Pattern == "" {
+		t.Fatalf("version constraint pattern definition is missing in schema")
 	}
 
-	providerPattern := schema.Properties.Providers.Items.Properties.Version.Pattern
-	if providerPattern == "" {
-		t.Fatalf("provider version pattern is missing in schema")
+	providerVersion, ok := schema.Properties.Providers.Items.Properties["version"]
+	if !ok {
+		t.Fatalf("provider version schema is missing")
+	}
+	if !referencesVersionConstraint(t, providerVersion) {
+		t.Fatalf("provider version should reference the shared version constraint definition")
 	}
 
 	if !contains(schema.Properties.Providers.Items.Required, "name") {
@@ -66,6 +68,21 @@ func TestConfigSchemaIncludesProviderAndTerraformOptions(t *testing.T) {
 	}
 	if !contains(schema.Properties.Providers.Items.Required, "version") {
 		t.Errorf("provider schema should require 'version'")
+	}
+
+	if len(schema.Properties.Modules.Items.Properties) == 0 {
+		t.Fatalf("module properties are missing from schema")
+	}
+	if moduleVersion, ok := schema.Properties.Modules.Items.Properties["version"]; ok {
+		if !referencesVersionConstraint(t, moduleVersion) {
+			t.Fatalf("module version should reference the shared version constraint definition")
+		}
+	} else {
+		t.Fatalf("module version schema is missing")
+	}
+
+	if !referencesVersionConstraint(t, schema.Properties.TerraformVersion) {
+		t.Fatalf("terraform_version should reference the shared version constraint definition")
 	}
 
 	for _, field := range schema.Required {
@@ -78,20 +95,10 @@ func TestConfigSchemaIncludesProviderAndTerraformOptions(t *testing.T) {
 func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
 	schema := loadConfigSchema(t)
 
-	modulePattern := schema.Properties.Modules.Items.Properties.Version.Pattern
-	providerPattern := schema.Properties.Providers.Items.Properties.Version.Pattern
-	terraformPattern := schema.Properties.TerraformVersion.Pattern
+	modulePattern := schema.Definitions.VersionConstraint.Pattern
 
 	if modulePattern == "" {
 		t.Fatalf("module version pattern is missing in schema")
-	}
-
-	if modulePattern != providerPattern {
-		t.Fatalf("provider version pattern should match module version pattern")
-	}
-
-	if modulePattern != terraformPattern {
-		t.Fatalf("terraform version pattern should match module version pattern")
 	}
 
 	re, err := regexp.Compile(modulePattern)
@@ -123,5 +130,37 @@ func contains(list []string, target string) bool {
 			return true
 		}
 	}
+	return false
+}
+
+func referencesVersionConstraint(t *testing.T, raw json.RawMessage) bool {
+	t.Helper()
+
+	if len(raw) == 0 {
+		return false
+	}
+
+	var node map[string]any
+	if err := json.Unmarshal(raw, &node); err != nil {
+		t.Fatalf("failed to parse schema node: %v", err)
+	}
+
+	if ref, ok := node["$ref"].(string); ok && ref == "#/definitions/versionConstraint" {
+		return true
+	}
+
+	allOf, ok := node["allOf"].([]any)
+	if !ok {
+		return false
+	}
+
+	for _, entry := range allOf {
+		if entryMap, ok := entry.(map[string]any); ok {
+			if ref, ok := entryMap["$ref"].(string); ok && ref == "#/definitions/versionConstraint" {
+				return true
+			}
+		}
+	}
+
 	return false
 }
