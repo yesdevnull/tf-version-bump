@@ -10,6 +10,7 @@
       "minLength": 1,
       "pattern": "^\\s*(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?)(?:\\s*(?:,\\s*|\\s+)(?:(?:~>|>=|<=|>|<|=|!=)?\\s*v?[0-9]+(?:\\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?))*\\s*$",
       "description": "Terraform-compatible version constraint supporting SemVer, pre-release/build metadata, and operators like ~>, >=, <=, and != with optional chained constraints",
+      "$comment": "Pattern: optional operator (~>, >=, <=, >, <, =, !=), optional whitespace, version (1-3 numeric segments with optional pre-release/build), followed by zero or more additional constraints separated by commas or whitespace.",
       "examples": [
         "5.0.0",
         "v1.0.0",
@@ -179,6 +180,17 @@
       }
     }
   },
+  "anyOf": [
+    {
+      "required": ["terraform_version"]
+    },
+    {
+      "required": ["providers"]
+    },
+    {
+      "required": ["modules"]
+    }
+  ],
   "additionalProperties": false,
   "examples": [
     {
