@@ -9,6 +9,9 @@ import (
 
 type versionSchema struct {
 	Pattern string `json:"pattern"`
+	OneOf   []struct {
+		Pattern string `json:"pattern"`
+	} `json:"oneOf"`
 }
 
 type configSchema struct {
@@ -52,7 +55,7 @@ func loadConfigSchema(t *testing.T) configSchema {
 func TestConfigSchemaIncludesProviderAndTerraformOptions(t *testing.T) {
 	schema := loadConfigSchema(t)
 
-	if schema.Definitions.VersionConstraint.Pattern == "" {
+	if schema.Definitions.VersionConstraint.Pattern == "" && len(schema.Definitions.VersionConstraint.OneOf) == 0 {
 		t.Fatalf("version constraint pattern definition is missing in schema")
 	}
 
@@ -103,16 +106,7 @@ func TestConfigSchemaIncludesProviderAndTerraformOptions(t *testing.T) {
 func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
 	schema := loadConfigSchema(t)
 
-	modulePattern := schema.Definitions.VersionConstraint.Pattern
-
-	if modulePattern == "" {
-		t.Fatalf("module version pattern is missing in schema")
-	}
-
-	re, err := regexp.Compile(modulePattern)
-	if err != nil {
-		t.Fatalf("failed to compile module version pattern: %v", err)
-	}
+	regexes := compileConstraintRegexps(t, schema.Definitions.VersionConstraint)
 
 	validConstraints := []string{
 		"1.2.3",
@@ -126,7 +120,14 @@ func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
 	}
 
 	for _, constraint := range validConstraints {
-		if !re.MatchString(constraint) {
+		matched := false
+		for _, re := range regexes {
+			if re.MatchString(constraint) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
 			t.Errorf("expected schema pattern to accept %q", constraint)
 		}
 	}
@@ -197,4 +198,35 @@ func requiredOptionsFromAnyOf(t *testing.T, clauses []json.RawMessage) map[strin
 	}
 
 	return required
+}
+
+func compileConstraintRegexps(t *testing.T, schema versionSchema) []*regexp.Regexp {
+	t.Helper()
+
+	patterns := make([]string, 0, 1+len(schema.OneOf))
+
+	if schema.Pattern != "" {
+		patterns = append(patterns, schema.Pattern)
+	}
+
+	for _, option := range schema.OneOf {
+		if option.Pattern != "" {
+			patterns = append(patterns, option.Pattern)
+		}
+	}
+
+	if len(patterns) == 0 {
+		t.Fatalf("no patterns found in version constraint schema")
+	}
+
+	regexes := make([]*regexp.Regexp, 0, len(patterns))
+	for _, pattern := range patterns {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			t.Fatalf("failed to compile pattern %q: %v", pattern, err)
+		}
+		regexes = append(regexes, re)
+	}
+
+	return regexes
 }
