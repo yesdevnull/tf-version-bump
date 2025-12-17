@@ -311,6 +311,9 @@ func TestRunCLIModeProviderMissingVersion(t *testing.T) {
 }
 
 func TestUpdateTerraformVersionReadError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("skipping read error test on root")
+	}
 	tmpDir := t.TempDir()
 	file := filepath.Join(tmpDir, "unreadable.tf")
 	if err := os.WriteFile(file, []byte("content"), 0222); err != nil {
@@ -324,6 +327,9 @@ func TestUpdateTerraformVersionReadError(t *testing.T) {
 }
 
 func TestUpdateTerraformVersionWriteError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("skipping write error test on root")
+	}
 	tmpDir := t.TempDir()
 	file := filepath.Join(tmpDir, "main.tf")
 	content := `terraform { required_version = ">= 0.13" }`
@@ -338,6 +344,9 @@ func TestUpdateTerraformVersionWriteError(t *testing.T) {
 }
 
 func TestUpdateProviderVersionReadError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("skipping read error test on root")
+	}
 	tmpDir := t.TempDir()
 	file := filepath.Join(tmpDir, "provider.tf")
 	if err := os.WriteFile(file, []byte("content"), 0222); err != nil {
@@ -351,6 +360,9 @@ func TestUpdateProviderVersionReadError(t *testing.T) {
 }
 
 func TestUpdateProviderVersionWriteError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("skipping write error test on root")
+	}
 	tmpDir := t.TempDir()
 	file := filepath.Join(tmpDir, "provider.tf")
 	content := `terraform {
