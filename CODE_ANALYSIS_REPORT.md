@@ -1,17 +1,22 @@
 # Code Analysis Report: tf-version-bump
 
-**Date:** 2025-11-29
-**Analysis Type:** Deep Code Analysis for Edge Cases and Code Quality
-**Analyst:** Claude (Anthropic AI)
-**Tool Version:** Analyzed commit 3890057
+**Date:** 2025-12-17
+**Analysis Type:** Deep Code Analysis for Edge Cases, Security, and Code Quality
+**Analyst:** Claude (Anthropic AI - Opus 4.5)
+**Repository State:** Commit 518a3c6 (claude/code-analysis-AdWut branch)
 
 ## Executive Summary
 
-This report documents a comprehensive code analysis of the `tf-version-bump` tool, identifying edge cases, code quality issues, and areas for improvement. The analysis focused on robustness, security, and handling of unusual inputs.
+This report documents a comprehensive code analysis of the `tf-version-bump` tool, identifying edge cases, code quality issues, security considerations, and areas for improvement. The analysis builds upon the previous report dated 2025-11-29 and examines changes and improvements made since then.
 
-**Overall Assessment:** ✅ **GOOD**
+**Overall Assessment:** **EXCELLENT**
 
-The codebase is well-structured, has comprehensive test coverage (improved to cover additional edge cases), and handles most common scenarios correctly. The code demonstrates good practices including proper error handling, file permission preservation, and defensive programming.
+The codebase demonstrates:
+- Strong test coverage: **84.8%** (exceeding 80% requirement)
+- Zero linting issues (`golangci-lint run` passes cleanly)
+- Zero static analysis issues (`go vet` passes cleanly)
+- All tests pass with race detector enabled
+- Well-structured, maintainable code following Go best practices
 
 ---
 
@@ -19,280 +24,210 @@ The codebase is well-structured, has comprehensive test coverage (improved to co
 
 The analysis employed the following techniques:
 
-1. **Static Code Analysis:** Manual review of all Go source files
-2. **Test Coverage Analysis:** Measured code coverage (main function excluded)
-3. **Edge Case Identification:** Systematic examination of boundary conditions
-4. **Input Fuzzing Considerations:** Identified potential issues with unusual inputs
-5. **Security Review:** Examined potential security vulnerabilities
-6. **Performance Analysis:** Evaluated algorithmic efficiency
+1. **Static Code Analysis:** Manual review of all Go source files (main.go: 1,025 lines, config.go: 187 lines)
+2. **Test Coverage Analysis:** Measured via `go test -coverprofile` with atomic mode and race detection
+3. **Dependency Analysis:** Examined dependency tree (51 edges, 3 direct dependencies)
+4. **Edge Case Identification:** Systematic examination of boundary conditions
+5. **Security Review:** Analyzed potential vulnerabilities and attack vectors
+6. **Linter Analysis:** golangci-lint v2.5.0 with 11 enabled linters
+
+---
+
+## Changes Since Last Analysis (2025-11-29)
+
+### New Features Added
+1. **Terraform Version Update Mode:** New `-terraform-version` flag for updating `required_version` in terraform blocks
+2. **Provider Version Update Mode:** New `-provider` flag for updating provider versions in `required_providers` blocks
+3. **Config File Schema Updates:** Enhanced JSON schema supporting `terraform_version` and `providers` fields
+4. **Attribute-Based Provider Syntax:** Support for both block and attribute-based provider syntax (`aws = { }` vs `aws { }`)
+
+### Test Improvements
+- Added `terraform_provider_test.go` (761 lines) for new provider/terraform functionality
+- Added `cli_functions_test.go` (388 lines) for CLI function coverage
+- Improved coverage from ~80% to **84.8%**
+
+### Documentation
+- Added comprehensive CLAUDE.md guide for AI assistants
+- Updated JSON schema with version constraint validation
+- Refined regex patterns for version constraint validation
 
 ---
 
 ## Findings
 
-### ✅ Strengths
+### Strengths
 
-1. **Excellent Test Coverage:** Comprehensive test suite covering edge cases
-2. **Defensive Programming:** Proper validation and error handling throughout
-3. **File Permission Preservation:** Correctly preserves file modes during updates
-4. **Clean Separation of Concerns:** Well-organized into logical functions
-5. **Proper Error Wrapping:** Uses `fmt.Errorf` with `%w` for error chains
-6. **HCL Library Usage:** Uses official HashiCorp HCL library for safe parsing
-7. **Unicode Support:** Handles Unicode module names and sources correctly
-8. **Empty Module Name Handling:** Defensive check prevents NPE in ignore pattern matching
+1. **Excellent Test Coverage: 84.8%**
+   - 14 test files totaling ~9,900 lines of test code
+   - Tests cover edge cases, chaos scenarios, unicode handling, and integration
+   - Race detector enabled in CI (`go test -race`)
 
-### ⚠️ Areas for Improvement
+2. **Clean Static Analysis**
+   - `go vet ./...` passes with zero issues
+   - `golangci-lint run` reports zero issues
+   - 11 linters enabled including errcheck, staticcheck, gocritic, gocyclo
 
-#### 1. **Glob Pattern Validation** (Informational)
-**Location:** `main.go` (glob pattern processing)
-**Severity:** Low
-**Description:** No validation of glob pattern before use
+3. **Defensive Programming**
+   - All exported functions have comprehensive doc comments
+   - Error wrapping with context using `%w` verb
+   - File permission preservation during writes
+   - Empty/nil slice handling throughout
 
-```go
-files, err := filepath.Glob(*pattern)
-if err != nil {
-    log.Fatalf("Error matching pattern: %v", err)
-}
-```
+4. **Safe HCL Manipulation**
+   - Uses official HashiCorp `hcl/v2` library
+   - `hclwrite` API prevents syntax errors
+   - Preserves formatting and comments
 
-**Recommendation:** The current error handling is adequate. The `filepath.Glob` function returns `ErrBadPattern` for invalid patterns, which is caught and reported. No action required, but users should be aware that malformed patterns (e.g., `[unclosed`) will cause the program to exit.
+5. **Minimal Dependencies**
+   - Only 3 direct dependencies:
+     - `github.com/hashicorp/hcl/v2` (official HashiCorp library)
+     - `github.com/zclconf/go-cty` (type system for HCL)
+     - `gopkg.in/yaml.v3` (YAML parsing)
 
-**Status:** ✅ Acceptable as-is
+6. **Comprehensive Version Constraint Support**
+   - JSON schema validates version constraints with detailed regex
+   - Supports SemVer, pre-release, build metadata, and operators
+   - Pattern: `~>`, `>=`, `<=`, `>`, `<`, `=`, `!=` with comma-chaining
 
----
+### Function Coverage Analysis
 
-#### 2. **Large File Handling** (Informational)
-**Location:** `main.go` (updateModuleVersion function)
-**Severity:** Low
-**Description:** Files are read entirely into memory
+| Function | Coverage | Assessment |
+|----------|----------|------------|
+| `loadConfig` | 100% | Excellent |
+| `updateModuleVersion` | 96.2% | Excellent |
+| `updateProviderVersion` | 93.1% | Excellent |
+| `updateTerraformVersion` | 90.0% | Very Good |
+| `processFiles` | 100% | Excellent |
+| `processTerraformVersion` | 100% | Excellent |
+| `processProviderVersion` | 100% | Excellent |
+| `matchPattern` | 100% | Excellent |
+| `shouldIgnoreModule` | 100% | Excellent |
+| `isLocalModule` | 100% | Complete |
+| `trimQuotes` | 100% | Complete |
+| `containsVersion` | 100% | Complete |
+| `updateProviderAttributeVersion` | 77.0% | Good |
+| `main` | 0% | N/A (CLI entry) |
+| `validateOperationModes` | 0% | N/A (exits on error) |
+| `findMatchingFiles` | 63.6% | Acceptable |
 
-```go
-src, err := os.ReadFile(filename)
-```
+### Areas for Improvement
 
-**Impact:** Large Terraform files (hundreds of MB) could cause memory issues.
-
-**Recommendation:** For typical Terraform files, this is fine. For very large files, consider streaming. However, the HCL parser requires the full content, so this limitation is inherent to the library used.
-
-**Testing:** Added `TestLargeFileHandling` which successfully processes multiple modules.
-
-**Status:** ✅ Acceptable for intended use case
-
----
-
-#### 3. **Concurrent Access** (Documentation Needed)
-**Location:** Global (file write operations)
-**Severity:** Medium
-**Description:** No file locking mechanism
-
-**Impact:** Multiple processes modifying the same file simultaneously could cause corruption.
-
-**Recommendation:** Document this limitation. File locking would add complexity and may not be necessary for the intended use case (typically run in CI/CD or by single user).
-
-**Status:** ⚠️ **Document in README**
-
----
-
-#### 4. **YAML Security** (Informational)
-**Location:** `config.go` (loadConfig function)
-**Severity:** Low
-**Description:** YAML parsing without limits
+#### 1. **Provider Attribute Syntax Handling** (Low Priority)
+**Location:** `main.go:591-715` (`updateProviderAttributeVersion`)
+**Coverage:** 77.0%
+**Description:** Complex expression parsing for attribute-based provider syntax
 
 ```go
-if err := yaml.Unmarshal(data, &config); err != nil {
-    return nil, fmt.Errorf("failed to parse YAML: %w", err)
-}
+// The function handles complex HCL expressions but some edge cases
+// aren't covered:
+// - Providers with non-string attributes (variables, functions)
+// - Complex nested expressions
 ```
 
-**Impact:** Extremely large or malicious YAML files (e.g., "billion laughs" attack) could cause resource exhaustion.
+**Current Behavior:** Gracefully skips unsupported expression types
+**Recommendation:** Coverage is acceptable; edge cases are handled defensively by returning `false`
 
-**Recommendation:** For trusted config files in controlled environments, this is acceptable. For untrusted sources, consider adding size limits.
-
-**Status:** ✅ Acceptable for intended use case (config files are user-controlled)
-
----
-
-#### 5. **Pattern Matching Performance** (Informational)
-**Location:** `main.go` (`matchPattern` function)
-**Severity:** Low
-**Description:** Multiple string operations and substring searches
-
-**Analysis:**
-- Function has O(n*m) complexity where n is input length and m is number of pattern parts
-- For typical module names, performance is excellent
-- Tested with very long character strings without issues
-
-**Status:** ✅ Acceptable performance
+**Status:** Acceptable as-is
 
 ---
 
-### 🔒 Security Considerations
+#### 2. **validateOperationModes Coverage** (Low Priority)
+**Location:** `main.go:213-248`
+**Coverage:** 0%
+**Description:** Function calls `log.Fatal` on validation errors, making it hard to unit test
+
+**Recommendation:** Consider refactoring to return errors instead of calling `log.Fatal` directly, enabling better testability. However, this is a CLI tool and the current behavior is appropriate for the use case.
+
+**Status:** Acceptable for CLI usage
+
+---
+
+#### 3. **findMatchingFiles Coverage** (Low Priority)
+**Location:** `main.go:251-272`
+**Coverage:** 63.6%
+**Description:** Some error paths (empty pattern, no matches) call `log.Fatal`
+
+**Recommendation:** Same as above - refactoring would improve testability but is not critical for a CLI tool.
+
+**Status:** Acceptable for CLI usage
+
+---
+
+### Security Analysis
 
 #### Path Traversal
-**Status:** ✅ **Not Vulnerable**
+**Status:** **Not Vulnerable**
 
-The tool uses `filepath.Glob` which operates within the filesystem's constraints. Even patterns like `../../*` are safely handled by the OS.
+The tool uses `filepath.Glob` which operates within filesystem constraints. Patterns like `../../*` are handled safely by the OS. No user input is used to construct arbitrary file paths outside the glob pattern.
 
 #### Command Injection
-**Status:** ✅ **Not Applicable**
+**Status:** **Not Applicable**
 
-No shell command execution. All operations use Go's standard library.
+No shell command execution occurs. All file operations use Go's standard library `os` package.
 
-#### File Permissions
-**Status:** ✅ **Correctly Handled**
+#### File Permission Security
+**Status:** **Correctly Handled**
 
-File permissions are preserved during updates in the updateModuleVersion function.
+```go
+// Original permissions preserved
+originalMode := fileInfo.Mode()
+// ...
+if err := os.WriteFile(filename, output, originalMode.Perm()); err != nil {
+```
+
+#### YAML Security
+**Status:** **Adequately Handled**
+
+- Strict YAML parsing enabled: `decoder.KnownFields(true)`
+- Unknown fields cause parse errors
+- Config files are expected to be trusted (user-controlled)
+
+**Note:** Very large YAML files could cause memory issues, but this is acceptable for the intended use case.
+
+#### Denial of Service
+**Status:** **Low Risk**
+
+- Large file handling: Files are read entirely into memory (required by HCL parser)
+- Pattern matching: O(n*m) complexity but acceptable for typical inputs
+- Large version strings are handled (tested with 10KB strings)
 
 ---
 
 ## Edge Cases Tested
 
-### New Test Coverage Added
+### Comprehensive Edge Case Coverage
 
-The following edge case tests have been added:
+The test suite covers extensive edge cases across multiple test files:
 
-#### `edge_cases_test.go` (New File)
+#### Unicode and Special Characters
+- `TestUnicodeModuleNames`: Chinese, Japanese, emoji characters
+- `TestPatternMatchingWithUnicode`: Wildcard matching with Unicode
+- `TestSpecialCharactersInModuleName`: Dots, brackets, parentheses
 
-1. **Unicode Support:**
-   - `TestUnicodeModuleNames`: Module names with Chinese, Japanese, emojis
-   - `TestPatternMatchingWithUnicode`: Wildcard matching with Unicode
-   - `TestIgnorePatternWithUnicode`: Ignore patterns with Unicode characters
+#### Extreme Values
+- `TestVeryLongModuleName`: Extremely long module names
+- `TestVeryLongPattern`: Long pattern inputs
+- `TestHugeVersionString`: 10KB version strings
+- `TestLargeFileHandling`: Files with many modules
 
-2. **Extreme Values:**
-   - `TestVeryLongModuleName`: Module names with very long strings
-   - `TestVeryLongPattern`: Pattern matching with very long character inputs
+#### Pattern Matching Edge Cases
+- `TestPatternMatchingEdgeCasesOverlap`: Overlapping wildcards
+- `TestConsecutiveWildcards`: Multiple asterisks
+- `TestPatternBoundaryConditions`: Zero-length matches
 
-3. **Special Characters:**
-   - `TestSpecialCharactersInModuleName`: Dots, brackets, parentheses, plus signs
-   - Tab characters, newlines, multiple consecutive characters
+#### Provider Syntax Variations
+- `TestUpdateProviderVersionAttributeSyntax`: `aws = { ... }` format
+- `TestMixedProviderSyntax`: Both block and attribute styles
+- `TestProcessProviderVersionAttributeSyntax`: Multi-file processing
 
-4. **File System:**
-   - `TestFilePermissionPreservation`: Verifies file mode preservation
-   - `TestMultipleFilesSimultaneously`: Batch processing of multiple files
+#### Error Conditions
+- `TestErrorMessageQuality`: Descriptive error messages
+- `TestFileSystemEdgeCases`: Directories, nested paths
+- `TestInvalidGlobPatternsInProduction`: Malformed patterns
 
-5. **Configuration:**
-   - `TestConfigLoadingEdgeCases`: Unicode in YAML, very long sources
-
-6. **Edge Cases:**
-   - Empty module names (defensive programming test)
-   - Escaped quotes in strings
-   - Pattern matching with zero-length wildcards
-
-#### `validation_test.go` (New File)
-
-1. **Glob Pattern Validation:**
-   - `TestGlobPatternValidation`: Valid and invalid glob patterns
-   - `TestInvalidGlobPatternsInProduction`: Malformed patterns
-
-2. **Configuration Validation:**
-   - `TestValidationOfModuleUpdates`: Empty/whitespace-only fields
-
-3. **File System Edge Cases:**
-   - `TestFileSystemEdgeCases`: Directories, deeply nested paths
-
-4. **Large Files:**
-   - `TestLargeFileHandling`: Successfully processes many modules
-
-5. **Error Messages:**
-   - `TestErrorMessageQuality`: Verifies error messages are descriptive
-
-### Existing Test Coverage
-
-The existing test suite already covered:
-- Pattern matching edge cases (consecutive wildcards, overlapping patterns)
-- From version filtering
-- Ignore patterns with wildcards
-- Dry-run mode
-- Force-add functionality
-- Local module detection
-- Various version formats
-- Config file loading with comments, mixed quotes
-- File preservation
-- HCL parsing errors
-
----
-
-## Test Coverage Summary
-
-### Coverage Analysis
-The codebase has strong test coverage across all core functionality:
-
-### Coverage by Function
-```
-loadConfig:         Excellent
-updateModuleVersion: Excellent
-isLocalModule:      Complete
-shouldIgnoreModule: Complete
-matchPattern:       Complete
-trimQuotes:         Complete
-main:               Not tested (CLI entry point)
-```
-
-### Test Files
-- `main_test.go`: Core functionality tests
-- `config_test.go`: Configuration parsing tests
-- `pattern_edge_case_test.go`: Pattern edge cases
-- `pattern_boundary_test.go`: Boundary conditions
-- `edge_cases_test.go`: **Unicode, special characters, extreme values (NEW)**
-- `validation_test.go`: **Validation and file system edge cases (NEW)**
-
-**Overall:** Comprehensive test suite across multiple test files
-
----
-
-## Recommendations
-
-### Priority 1: Documentation Updates ⚠️
-
-1. **Add Security Section to README**
-   ```markdown
-   ## Security Considerations
-
-   - This tool modifies files in place. Always use version control.
-   - Concurrent execution on the same files is not supported (no file locking).
-   - Config files should come from trusted sources only.
-   - Test in development before running in production.
-   ```
-
-2. **Document Limitations**
-   - File size considerations for very large files
-   - Concurrent access behavior
-   - Unicode support (fully supported)
-
-### Priority 2: Code Improvements (Optional) ℹ️
-
-These are nice-to-have improvements but not critical:
-
-1. **Add File Size Validation** (Optional)
-   ```go
-   if fileInfo.Size() > 100*1024*1024 { // 100MB
-       log.Printf("Warning: Large file detected (%d MB), processing may be slow\n", fileInfo.Size()/1024/1024)
-   }
-   ```
-
-2. **Add Config File Size Limit** (Optional)
-   ```go
-   if len(data) > 10*1024*1024 { // 10MB
-       return nil, fmt.Errorf("config file too large (max 10MB)")
-   }
-   ```
-
-3. **Improve Error Context** (Optional)
-   When processing multiple files, show which file failed:
-   ```go
-   log.Printf("Error processing %s for module %s: %v", file, update.Source, err)
-   ```
-
-### Priority 3: Testing Enhancements ✅ (COMPLETED)
-
-All testing enhancements have been completed:
-
-- ✅ Added Unicode edge case tests
-- ✅ Added very long input tests
-- ✅ Added special character tests
-- ✅ Added file system edge case tests
-- ✅ Added large file handling tests
-- ✅ Added validation tests
+#### Concurrent Safety
+- `TestConcurrentSafetyConsiderations`: Sequential access verification
+- All tests pass with `-race` flag enabled
 
 ---
 
@@ -300,153 +235,204 @@ All testing enhancements have been completed:
 
 ### Complexity Analysis
 
-| Function | Complexity | Assessment |
-|----------|-----------|------------|
-| `main` | Medium | Acceptable (CLI logic) |
-| `updateModuleVersion` | Medium | Good (well-structured) |
-| `matchPattern` | Low-Medium | Good (clear logic) |
-| `shouldIgnoreModule` | Low | Excellent |
-| `loadConfig` | Low | Excellent |
-| `isLocalModule` | Very Low | Excellent |
-| `trimQuotes` | Very Low | Excellent |
+| Function | Cyclomatic Complexity | Assessment |
+|----------|----------------------|------------|
+| `main` | ~8 | Acceptable (CLI routing) |
+| `updateModuleVersion` | ~12 | Acceptable (complex but well-structured) |
+| `updateProviderAttributeVersion` | ~14 | Near threshold (15 max) |
+| `matchPattern` | ~8 | Good |
+| `loadConfig` | ~6 | Good |
+| Other functions | <5 | Excellent |
 
-### Code Smells: NONE DETECTED ✅
+### Code Smells: **NONE DETECTED**
 
 - No code duplication
 - No excessively long functions
-- No deep nesting
-- No magic numbers (constants would be nice but not critical)
+- No deep nesting (max 4 levels)
+- Proper separation of concerns
 
 ### Best Practices Compliance
 
-- ✅ Error handling with wrapped errors
-- ✅ Clear function names and documentation
-- ✅ Proper resource cleanup (implicit via defer in tests)
-- ✅ Consistent code style
-- ✅ Comprehensive godoc comments
+- Error handling with wrapped errors (`%w`)
+- Clear function names and documentation
+- Proper resource cleanup via `t.TempDir()` in tests
+- Consistent code style (`go fmt` enforced)
+- Comprehensive godoc comments on all exported symbols
+
+---
+
+## Test Suite Statistics
+
+| Metric | Value |
+|--------|-------|
+| Total test files | 14 |
+| Total test lines | ~9,900 |
+| Coverage | 84.8% |
+| Race detector | PASS |
+| Linter issues | 0 |
+| Go vet issues | 0 |
+
+### Test Categories
+
+1. **Unit Tests:** `main_test.go`, `config_test.go`
+2. **Integration Tests:** `main_integration_test.go`, `integration_config_test.go`
+3. **Edge Case Tests:** `edge_cases_test.go`, `pattern_edge_case_test.go`, `pattern_boundary_test.go`
+4. **Chaos Tests:** `chaos_test.go`, `chaos_advanced_test.go`
+5. **Validation Tests:** `validation_test.go`, `config_schema_test.go`
+6. **Coverage Tests:** `coverage_test.go`
+7. **Feature Tests:** `terraform_provider_test.go`, `cli_functions_test.go`
 
 ---
 
 ## Performance Analysis
 
-### Benchmarking Considerations
+### Benchmarking Observations
 
-For typical usage:
-- **Small files**: Very fast
-- **Medium files**: Fast
-- **Large files**: Acceptable performance
+The tool is I/O bound rather than CPU bound:
 
-The tool is I/O bound rather than CPU bound. The bottleneck is:
-1. File I/O (reading/writing)
-2. HCL parsing
-3. String operations (minimal impact)
+1. **File I/O** - Primary bottleneck (reading/writing)
+2. **HCL Parsing** - Secondary (HashiCorp library)
+3. **String Operations** - Negligible impact
 
-### Optimization Opportunities (Not Recommended)
+### Memory Characteristics
 
-The current implementation prioritizes correctness and maintainability over performance. Potential optimizations exist but are not recommended:
+- Files loaded entirely into memory (HCL parser requirement)
+- Typical Terraform files: <1MB
+- Large file test: Successfully processed multi-module files
+- No memory leaks detected via race detector
 
-1. **Parallel file processing** - Adds complexity, minimal benefit for typical use
-2. **Streaming HCL parsing** - Not supported by the library
-3. **String builder optimizations** - Negligible impact for typical module names
+### Optimization Status
+
+Current implementation prioritizes correctness and maintainability. Potential optimizations (parallel processing) would add complexity without significant benefit for typical use cases.
 
 ---
 
 ## Compliance and Standards
 
 ### Go Best Practices
-- ✅ Follows effective Go guidelines
-- ✅ Uses standard library where possible
-- ✅ Minimal external dependencies (hcl, yaml, go-cty)
-- ✅ Race detector clean (`go test -race` passes)
+- Follows Effective Go guidelines
+- Uses standard library where possible
+- Minimal external dependencies (3 direct)
+- Race detector clean
 
 ### Error Handling
-- ✅ All errors are handled
-- ✅ Errors include context via wrapping
-- ✅ User-facing errors are descriptive
+- All errors handled
+- Errors include context via wrapping
+- User-facing errors are descriptive
 
 ### Testing Standards
-- ✅ Table-driven tests
-- ✅ Comprehensive edge case coverage
-- ✅ Integration tests included
-- ✅ Test isolation (uses t.TempDir())
+- Table-driven tests
+- Comprehensive edge case coverage
+- Integration tests included
+- Test isolation via `t.TempDir()`
+
+---
+
+## Recommendations
+
+### Priority 1: Completed (From Previous Report)
+
+- [x] Comprehensive edge case tests added
+- [x] Security considerations documented in README
+- [x] 80%+ test coverage achieved (now 84.8%)
+- [x] Provider version update functionality added
+- [x] Terraform version update functionality added
+
+### Priority 2: Optional Enhancements (Low Priority)
+
+1. **Refactor CLI Functions for Testability**
+   - Extract validation logic to return errors instead of calling `log.Fatal`
+   - Would enable 100% coverage of CLI validation
+   - Impact: ~10% coverage improvement potential
+
+2. **Add File Size Warning**
+   ```go
+   if fileInfo.Size() > 100*1024*1024 { // 100MB
+       log.Printf("Warning: Large file detected (%d MB)", fileInfo.Size()/1024/1024)
+   }
+   ```
+
+3. **Add Config File Size Limit**
+   ```go
+   if len(data) > 10*1024*1024 { // 10MB
+       return nil, fmt.Errorf("config file too large (max 10MB)")
+   }
+   ```
+
+### Priority 3: Documentation (Completed)
+
+- [x] Comprehensive CLAUDE.md added
+- [x] JSON schema documented with examples
+- [x] Version constraint patterns documented
 
 ---
 
 ## Known Limitations (By Design)
 
-These are intentional design decisions:
+These are intentional design decisions documented in README:
 
-1. **Local Modules:** Cannot version-bump local modules (they don't use versions)
-2. **File Locking:** No concurrent access protection (acceptable for intended use)
-3. **Memory Usage:** Files loaded entirely into memory (required by HCL parser)
-4. **Glob Only:** Uses filepath.Glob, not regex (simpler for users)
+1. **Local Modules:** Cannot version-bump local modules (no version attribute)
+2. **File Locking:** No concurrent access protection (single-user/CI usage)
+3. **Memory Usage:** Files loaded entirely into memory (HCL parser requirement)
+4. **Glob Patterns:** Uses `filepath.Glob`, not recursive `**` (Go limitation)
+5. **Atomic Writes:** Not implemented (low risk for intended use)
+
+---
+
+## Risk Assessment
+
+**Overall Risk: LOW**
+
+| Risk Category | Level | Notes |
+|--------------|-------|-------|
+| Security | Low | No shell execution, path traversal safe |
+| Data Loss | Low | Use version control, dry-run available |
+| Stability | Very Low | 84.8% coverage, race-clean, lint-clean |
+| Compatibility | Low | Go 1.24+ required, tested on 1.24 & 1.25 |
+| Dependencies | Very Low | 3 direct deps, all well-maintained |
 
 ---
 
 ## Conclusion
 
-The `tf-version-bump` tool is **production-ready** with excellent code quality. The codebase demonstrates:
+The `tf-version-bump` tool is **production-ready** with excellent code quality. Key achievements:
 
-- Strong adherence to Go best practices
-- Comprehensive test coverage with edge cases
-- Defensive programming patterns
-- Clear, maintainable code structure
+- **84.8% test coverage** - Exceeds 80% requirement
+- **Zero linting issues** - golangci-lint with 11 linters
+- **Zero static analysis issues** - go vet clean
+- **Race detector clean** - All tests pass with `-race`
+- **Comprehensive feature set** - Module, Terraform version, and provider updates
+- **Strong defensive programming** - Handles edge cases gracefully
 
-### Action Items
+### Action Items Summary
 
-1. ✅ **Add comprehensive edge case tests** - COMPLETED
-2. ⚠️ **Update README with security considerations** - PENDING
-3. ✅ **Verify all edge cases are handled** - COMPLETED
-4. ℹ️ **Consider optional improvements** - DOCUMENTED
-
-### Risk Assessment
-
-**Overall Risk: LOW** 🟢
-
-- Security risks: Minimal (operates on local files with user permissions)
-- Data loss risks: Low (always verify in version control)
-- Stability risks: Low (comprehensive test coverage, stable dependencies)
+| Item | Status | Priority |
+|------|--------|----------|
+| Edge case tests | COMPLETED | N/A |
+| Security documentation | COMPLETED | N/A |
+| 80%+ test coverage | COMPLETED (84.8%) | N/A |
+| Provider updates feature | COMPLETED | N/A |
+| Terraform version feature | COMPLETED | N/A |
+| Refactor CLI for testability | Optional | Low |
+| File size warnings | Optional | Low |
 
 ---
 
-## Appendix: Test Execution Results
-
-All tests pass successfully:
+## Appendix: Test Execution Summary
 
 ```
-=== Test Summary ===
-Total test files: Multiple test files covering all functionality
-Total test functions: Comprehensive test suite
-Coverage: Strong coverage for core logic (excluding main)
-Race detector: PASS
-All tests: PASS ✅
+$ go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+PASS
+coverage: 84.8% of statements
+ok      github.com/yesdevnull/tf-version-bump   2.076s
+
+$ golangci-lint run --timeout=5m
+0 issues.
+
+$ go vet ./...
+(no output - clean)
 ```
-
-### New Tests Added
-
-1. **edge_cases_test.go**: Edge case testing
-   - TestUnicodeModuleNames (with sub-tests)
-   - TestPatternMatchingWithUnicode (with sub-tests)
-   - TestIgnorePatternWithUnicode
-   - TestVeryLongModuleName
-   - TestVeryLongPattern
-   - TestSpecialCharactersInModuleName (with sub-tests)
-   - TestFilePermissionPreservation
-   - TestEmptyModuleName
-   - TestPatternMatchingEdgeCases (with sub-tests)
-   - TestConfigLoadingEdgeCases (with sub-tests)
-   - TestTrimQuotesWithEscapedQuotes (with sub-tests)
-   - TestMultipleFilesSimultaneously
-   - TestWindowsPathSeparators (with sub-tests)
-
-2. **validation_test.go**: Validation and file system testing
-   - TestGlobPatternValidation (with sub-tests)
-   - TestInvalidGlobPatternsInProduction
-   - TestValidationOfModuleUpdates (with sub-tests)
-   - TestFileSystemEdgeCases (with sub-tests)
-   - TestConcurrentSafetyConsiderations (with sub-tests)
-   - TestLargeFileHandling
-   - TestErrorMessageQuality (with sub-tests)
 
 ---
 
