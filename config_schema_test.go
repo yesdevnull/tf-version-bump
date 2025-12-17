@@ -116,7 +116,7 @@ func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
 		">= 1.2, < 2.0",
 		"!= 1.0.0",
 		"<=1.4.0",
-		">= 1.5 < 2.0",
+		">= 1.5, < 2.0",
 	}
 
 	for _, constraint := range validConstraints {
