@@ -72,7 +72,7 @@ tf-version-bump/
 ├── .golangci.yml                    # Linter configuration
 ├── go.mod                           # Go module dependencies
 ├── README.md                        # User-facing documentation
-└── AGENTS.md                        # Comprehensive AI agent guide
+└── AGENTS.md                        # Quick start guide for AI agents
 
 ```
 
