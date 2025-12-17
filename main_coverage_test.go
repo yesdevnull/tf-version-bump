@@ -22,6 +22,7 @@ type exitCall struct {
 
 func stubExit(t *testing.T) (func(), *int) {
 	t.Helper()
+	hookMu.Lock()
 	original := exitFunc
 	code := -1
 	exitFunc = func(c int) {
@@ -30,6 +31,7 @@ func stubExit(t *testing.T) (func(), *int) {
 	}
 	return func() {
 		exitFunc = original
+		hookMu.Unlock()
 	}, &code
 }
 
@@ -86,7 +88,10 @@ func TestMainVersionFlag(t *testing.T) {
 
 	var buf bytes.Buffer
 	origStdout := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
 	os.Stdout = w
 
 	done := make(chan struct{})
@@ -100,7 +105,9 @@ func TestMainVersionFlag(t *testing.T) {
 		main()
 	})
 
-	_ = w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close pipe writer: %v", err)
+	}
 	<-done
 	os.Stdout = origStdout
 
@@ -537,10 +544,18 @@ func TestUpdateProviderAttributeVersionGuardBranches(t *testing.T) {
 		return block
 	}
 
+	setParseExpression := func(fn func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics)) func() {
+		hookMu.Lock()
+		prev := parseExpression
+		parseExpression = fn
+		return func() {
+			parseExpression = prev
+			hookMu.Unlock()
+		}
+	}
+
 	t.Run("non object key expression", func(t *testing.T) {
-		orig := parseExpression
-		t.Cleanup(func() { parseExpression = orig })
-		parseExpression = func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
+		restore := setParseExpression(func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
 			obj := &hclsyntax.ObjectConsExpr{
 				Items: []hclsyntax.ObjectConsItem{
 					{
@@ -550,16 +565,15 @@ func TestUpdateProviderAttributeVersionGuardBranches(t *testing.T) {
 				},
 			}
 			return obj, hcl.Diagnostics{}
-		}
+		})
+		t.Cleanup(restore)
 		if updateProviderAttributeVersion(newBlock(), "aws", "1.0.0") {
 			t.Fatalf("expected false result")
 		}
 	})
 
 	t.Run("empty traversal", func(t *testing.T) {
-		orig := parseExpression
-		t.Cleanup(func() { parseExpression = orig })
-		parseExpression = func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
+		restore := setParseExpression(func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
 			obj := &hclsyntax.ObjectConsExpr{
 				Items: []hclsyntax.ObjectConsItem{
 					{
@@ -573,16 +587,15 @@ func TestUpdateProviderAttributeVersionGuardBranches(t *testing.T) {
 				},
 			}
 			return obj, hcl.Diagnostics{}
-		}
+		})
+		t.Cleanup(restore)
 		if updateProviderAttributeVersion(newBlock(), "aws", "1.0.0") {
 			t.Fatalf("expected false result")
 		}
 	})
 
 	t.Run("non root traversal", func(t *testing.T) {
-		orig := parseExpression
-		t.Cleanup(func() { parseExpression = orig })
-		parseExpression = func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
+		restore := setParseExpression(func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
 			obj := &hclsyntax.ObjectConsExpr{
 				Items: []hclsyntax.ObjectConsItem{
 					{
@@ -598,16 +611,15 @@ func TestUpdateProviderAttributeVersionGuardBranches(t *testing.T) {
 				},
 			}
 			return obj, hcl.Diagnostics{}
-		}
+		})
+		t.Cleanup(restore)
 		if updateProviderAttributeVersion(newBlock(), "aws", "1.0.0") {
 			t.Fatalf("expected false result")
 		}
 	})
 
 	t.Run("literal value branch", func(t *testing.T) {
-		orig := parseExpression
-		t.Cleanup(func() { parseExpression = orig })
-		parseExpression = func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
+		restore := setParseExpression(func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
 			obj := &hclsyntax.ObjectConsExpr{
 				Items: []hclsyntax.ObjectConsItem{
 					{
@@ -623,16 +635,15 @@ func TestUpdateProviderAttributeVersionGuardBranches(t *testing.T) {
 				},
 			}
 			return obj, hcl.Diagnostics{}
-		}
+		})
+		t.Cleanup(restore)
 		if !updateProviderAttributeVersion(newBlock(), "aws", "2.0.0") {
 			t.Fatalf("expected update to succeed")
 		}
 	})
 
 	t.Run("default branch value", func(t *testing.T) {
-		orig := parseExpression
-		t.Cleanup(func() { parseExpression = orig })
-		parseExpression = func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
+		restore := setParseExpression(func([]byte, string, hcl.Pos) (hclsyntax.Expression, hcl.Diagnostics) {
 			obj := &hclsyntax.ObjectConsExpr{
 				Items: []hclsyntax.ObjectConsItem{
 					{
@@ -653,7 +664,8 @@ func TestUpdateProviderAttributeVersionGuardBranches(t *testing.T) {
 				},
 			}
 			return obj, hcl.Diagnostics{}
-		}
+		})
+		t.Cleanup(restore)
 		if updateProviderAttributeVersion(newBlock(), "aws", "2.0.0") {
 			t.Fatalf("expected update to fail due to missing version")
 		}

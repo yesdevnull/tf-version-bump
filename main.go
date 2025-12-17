@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -33,6 +34,7 @@ var (
 )
 
 var (
+	hookMu   sync.Mutex // guards test hook variables
 	exitFunc = os.Exit
 	fatalf   = func(format string, v ...interface{}) {
 		log.Printf(format, v...)
