@@ -226,10 +226,12 @@ func TestValidateOperationModesFailures(t *testing.T) {
 }
 
 func TestValidateOperationModesConfigOnly(t *testing.T) {
+	t.Helper()
 	validateOperationModes(&cliFlags{configFile: "config.yml"})
 }
 
 func TestValidateOperationModesProviderOnly(t *testing.T) {
+	t.Helper()
 	validateOperationModes(&cliFlags{providerName: "aws"})
 }
 
