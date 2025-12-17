@@ -132,20 +132,24 @@ func TestExample(t *testing.T) {
     testFile := filepath.Join(tmpDir, "test.tf")
 
     // Setup
+    initial := `module "vpc" { source = "aws/vpc" version = "1.0.0" }`
     os.WriteFile(testFile, []byte(initial), 0644)
 
     // Execute
-    err := processFile(testFile, ...)
+    updated, err := updateModuleVersion(testFile, "aws/vpc", "2.0.0", nil, nil, nil, false, false)
 
     // Assert
     if err != nil {
-        t.Fatalf("processFile failed: %v", err)
+        t.Fatalf("updateModuleVersion failed: %v", err)
+    }
+    if !updated {
+        t.Error("Expected module to be updated")
     }
 
     // Verify
     result, _ := os.ReadFile(testFile)
-    if !strings.Contains(string(result), expected) {
-        t.Errorf("Expected %s, got %s", expected, result)
+    if !strings.Contains(string(result), `version = "2.0.0"`) {
+        t.Errorf("Version not updated correctly, got: %s", result)
     }
 }
 ```
