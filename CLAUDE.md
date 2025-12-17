@@ -62,8 +62,7 @@ tf-version-bump/
 │   │   ├── lint.yml                 # golangci-lint checks
 │   │   ├── codeql.yml               # Security analysis
 │   │   └── release.yml              # GoReleaser with SLSA provenance
-│   ├── dependabot.yml               # Automated dependency updates
-│   └── copilot-instructions.md      # Detailed AI assistant instructions
+│   └── dependabot.yml               # Automated dependency updates
 │
 ├── docs/
 │   └── RELEASING.md                 # Release process documentation
@@ -88,7 +87,26 @@ tf-version-bump/
 
 ## Development Workflows
 
+### Prerequisites
+
+Before any build or test operation, always download and verify dependencies:
+
+```bash
+go mod download
+go mod verify
+```
+
+These commands:
+- Download dependencies to `~/go/pkg/mod/`
+- Verify integrity against `go.sum`
+- Take ~5-10 seconds on first run
+- Are cached for subsequent runs
+
+**Note**: While `go build` and `go test` will auto-download dependencies if not present, explicit download is recommended for CI/CD reliability.
+
 ### Building
+
+**Standard build** (creates binary in current directory):
 
 ```bash
 # Build locally (creates ./tf-version-bump binary)
@@ -103,14 +121,54 @@ go install .
 make install
 ```
 
+**Build timing**: Takes ~0.5-1 second
+**Binary location**: Created in current directory
+**Git ignore**: Binary is gitignored automatically
+
+**Cross-platform builds** (as used in CI):
+
+```bash
+# Linux
+GOOS=linux GOARCH=amd64 go build -o tf-version-bump-linux-amd64
+GOOS=linux GOARCH=arm64 go build -o tf-version-bump-linux-arm64
+
+# macOS
+GOOS=darwin GOARCH=amd64 go build -o tf-version-bump-darwin-amd64
+GOOS=darwin GOARCH=arm64 go build -o tf-version-bump-darwin-arm64
+
+# Windows
+GOOS=windows GOARCH=amd64 go build -o tf-version-bump-windows-amd64.exe
+GOOS=windows GOARCH=arm64 go build -o tf-version-bump-windows-arm64.exe
+```
+
+- All cross-platform builds work without additional setup
+- Each build takes ~0.5-1 second
+
+**Clean build** (remove cached artifacts):
+
+```bash
+go clean
+go build -o tf-version-bump
+```
+
 ### Testing
+
+**Standard test run**:
 
 ```bash
 # Run all tests
 go test -v ./...
 # or
 make test
+```
 
+- Takes ~5 seconds
+- Runs all tests in verbose mode
+- All tests should pass
+
+**Full test run with race detector and coverage** (REQUIRED for CI):
+
+```bash
 # Run tests with race detection
 go test -v -race ./...
 # or
@@ -121,25 +179,72 @@ go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 go tool cover -func=coverage.out
 # or
 make test-coverage
+```
 
-# Generate HTML coverage report
+- Takes ~5-10 seconds
+- Enables race condition detection
+- Generates `coverage.out` file (gitignored)
+- Current coverage: ~90%+ of statements
+- **This is the REQUIRED test command for CI validation**
+
+**Quick test without verbosity**:
+
+```bash
+go test ./...
+```
+
+- Takes ~5 seconds
+- Less output, faster for quick checks
+
+**Generate HTML coverage report**:
+
+```bash
 make coverage-html  # Creates coverage.html
+# or
+go test -coverprofile=coverage.out
+go tool cover -html=coverage.out -o coverage.html
 ```
 
 ### Linting
 
-```bash
-# Install golangci-lint (if not already installed)
-# See: https://golangci-lint.run/usage/install/
+**Install golangci-lint** (one-time setup):
 
-# Run linter
-golangci-lint run
+```bash
+# Install specific version used in CI
+curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.5.0
+```
+
+- Installs to `~/go/bin/golangci-lint`
+- Version v2.5.0 matches CI workflow
+- Takes ~30-60 seconds
+
+**Run linter**:
+
+```bash
+golangci-lint run --timeout=5m
+
+# Or if ~/go/bin is not in PATH:
+$(go env GOPATH)/bin/golangci-lint run --timeout=5m
 
 # Run linter with auto-fix
 golangci-lint run --fix
 ```
 
-The project uses `.golangci.yml` for configuration. CI runs linting automatically.
+- Takes ~10-30 seconds
+- Timeout is 5 minutes (configured in `.golangci.yml` and CI)
+- Should report "0 issues" on clean code
+
+**Linter Configuration** (`.golangci.yml`):
+
+The project uses `.golangci.yml` for configuration with the following settings:
+
+- **Enabled linters** (11 total): errcheck, govet, ineffassign, staticcheck, unused, gocritic, gocyclo, misspell, unconvert, unparam, whitespace
+- **Cyclomatic complexity threshold**: 15
+- **Test linting**: Enabled (`run.tests: true`)
+- **Issue limit**: No maximum (`issues.max-same-issues: 0`)
+- **Timeout**: 5 minutes
+
+CI runs linting automatically on every push/PR.
 
 ### Running the Tool
 
@@ -518,6 +623,160 @@ make test-coverage
 golangci-lint run
 ```
 
+### Complete Validation Sequence
+
+Run this before committing changes:
+
+```bash
+go mod download && go mod verify
+go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+golangci-lint run --timeout=5m
+go build -o tf-version-bump
+```
+
+**Quick check** (for rapid iteration):
+
+```bash
+go test ./... && go build -o tf-version-bump
+```
+
+---
+
+## CI/CD Pipeline
+
+The repository uses GitHub Actions with workflows that run on push to main and on pull requests.
+
+### Test Job
+
+- **Runs on**: Ubuntu Latest
+- **Strategy**: Matrix build with Go 1.24 and 1.25
+- **Steps**:
+  1. Checkout code
+  2. Setup Go with matrix version
+  3. Cache Go modules (uses `go.sum` hash)
+  4. `go mod download`
+  5. `go mod verify`
+  6. `go test -v -race -coverprofile=coverage.out -covermode=atomic ./...`
+  7. Upload coverage to Codecov (only on Go 1.25)
+
+### Build Job
+
+- **Runs on**: Ubuntu Latest
+- **Depends on**: Test job completion
+- **Go version**: 1.25
+- **Platforms**: Builds for 6 platforms:
+  - Linux (amd64, arm64)
+  - macOS (amd64, arm64)
+  - Windows (amd64, arm64)
+- **Artifacts**: Uploads build artifacts with 30-day retention
+
+### Lint Job
+
+- **Runs on**: Ubuntu Latest (runs in parallel with test/build)
+- **Go version**: 1.25
+- **Linter**: golangci-lint v2.5.0
+- **Command**: `golangci-lint run --timeout=5m`
+- **Triggers**: Only on Go file changes and dependency files
+
+**All three jobs must pass for CI to succeed.**
+
+### Additional Workflows
+
+- **CodeQL**: Security analysis workflow for Go security scanning
+- **Release**: Automated release with GoReleaser and SLSA provenance (triggered by tags)
+- **Dependabot**: Weekly automated PRs for Go modules and GitHub Actions updates
+
+---
+
+## Common Gotchas and Tips
+
+### For AI Agents Making Changes
+
+1. **Always run full validation**: Race detector catches concurrency bugs that might not appear in normal tests
+2. **Test with actual examples**: Use files in `examples/` for manual testing
+3. **Restore examples after testing**: Run `git checkout examples/` after manual tests
+4. **Check error messages**: The tool provides helpful warnings to stderr
+5. **Remember quote handling**: HCL attributes include quotes in token output - use `trimQuotes()` helper
+6. **Binary gitignored**: Don't commit `tf-version-bump` binary
+7. **Coverage file gitignored**: `coverage.out` won't be tracked
+8. **Go module cache**: Delete with `go clean -modcache` if issues arise
+9. **Linter version matters**: CI uses v2.5.0; match this version locally
+10. **HCL formatting**: `hclwrite.Format()` may change whitespace (this is expected behavior)
+11. **Error wrapping**: Use `fmt.Errorf()` with `%w` verb for error chains
+
+### Development Best Practices
+
+1. **No file locking**: Don't run multiple instances on same files
+2. **Memory-based processing**: Large files (>100MB) may cause issues (unlikely in practice)
+3. **Glob patterns**: `**` doesn't work on all systems; use explicit patterns with caution
+4. **Version requirements**: Code must work with Go 1.24 and 1.25
+5. **Race detector**: All code must pass race detector (`-race` flag)
+6. **Backwards compatibility**: Consider impact on existing users when changing CLI flags or config format
+7. **Dependencies**: Keep dependency list minimal (currently only 3 external packages)
+
+### Debugging Tips
+
+```bash
+# Verbose testing with output
+go test -v -run TestFunctionName
+
+# Run single test case
+go test -v -run TestFunctionName/specific_test_case
+
+# Generate coverage report and view in browser
+go test -coverprofile=coverage.out
+go tool cover -html=coverage.out
+
+# Check what linter would do
+golangci-lint run --print-issued-lines=true -v
+
+# Trace file operations with strace (Linux)
+strace -e openat ./tf-version-bump -pattern "*.tf" -module "test" -to "1.0"
+```
+
+---
+
+## Quick Reference
+
+### Essential Commands
+
+```bash
+# Full validation (run before committing)
+go mod download && go mod verify && \
+go test -v -race -coverprofile=coverage.out -covermode=atomic ./... && \
+golangci-lint run --timeout=5m && \
+go build -o tf-version-bump
+
+# Quick check
+go test ./... && go build -o tf-version-bump
+
+# Run linter only
+golangci-lint run --timeout=5m
+
+# Build for multiple platforms
+for GOOS in linux darwin windows; do
+    for GOARCH in amd64 arm64; do
+        GOOS=$GOOS GOARCH=$GOARCH go build -o "tf-version-bump-$GOOS-$GOARCH"
+    done
+done
+
+# Run the tool with various options
+./tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0"
+./tf-version-bump -pattern "**/*.tf" -config "updates.yml"
+./tf-version-bump -pattern "*.tf" -module "..." -to "..." -force-add
+./tf-version-bump -pattern "*.tf" -module "..." -to "..." -dry-run
+./tf-version-bump -pattern "*.tf" -terraform-version ">= 1.5"
+./tf-version-bump -pattern "*.tf" -provider aws -to "~> 5.0"
+```
+
+### Repository Statistics
+
+- **Repository Size**: ~6.3 MB
+- **Lines of Code**: main.go (900+), config.go (187), tests (thousands)
+- **Test Coverage**: ~90%+
+- **Dependencies**: 3 direct (hcl/v2, go-cty, yaml.v3)
+- **Go Version**: 1.24+ required, CI tests on 1.24 and 1.25
+
 ---
 
 ## Important Files Reference
@@ -558,10 +817,9 @@ golangci-lint run
 | File | Audience |
 |------|----------|
 | `README.md` | End users (comprehensive CLI documentation) |
-| `AGENTS.md` | AI agents (detailed technical guide) |
-| `CLAUDE.md` | AI assistants (this file - development guide) |
+| `AGENTS.md` | AI agents (quick start guide) |
+| `CLAUDE.md` | AI assistants (this file - comprehensive development guide) |
 | `docs/RELEASING.md` | Maintainers (release process) |
-| `.github/copilot-instructions.md` | AI coding assistants (build/test instructions) |
 
 ### Example Files
 
