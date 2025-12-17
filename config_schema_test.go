@@ -117,6 +117,9 @@ func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
 		"!= 1.0.0",
 		"<=1.4.0",
 		">= 1.5, < 2.0",
+		">= 1",
+		"~> 2",
+		"< 3",
 	}
 
 	for _, constraint := range validConstraints {
@@ -129,6 +132,26 @@ func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
 		}
 		if !matched {
 			t.Errorf("expected schema pattern to accept %q", constraint)
+		}
+	}
+
+	invalidConstraints := []string{
+		"",
+		"invalid",
+		"1.2.3.4",
+		">= 1.0.0.0",
+		"~> abc",
+		"1.2,",
+		",1.2",
+		"1 2",
+	}
+
+	for _, constraint := range invalidConstraints {
+		for _, re := range regexes {
+			if re.MatchString(constraint) {
+				t.Errorf("expected schema pattern to reject %q", constraint)
+				break
+			}
 		}
 	}
 }
