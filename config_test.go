@@ -514,6 +514,21 @@ func TestLoadConfigWithFromField(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "config with empty from string",
+			configYAML: `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    from: ""
+`,
+			expectError: false,
+			expectCount: 1,
+			validate: func(t *testing.T, updates []ModuleUpdate) {
+				if len(updates[0].From) != 0 {
+					t.Errorf("Expected empty from slice for empty string, got %v", updates[0].From)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -659,6 +674,17 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
     version: "5.0.0"
     from:
       version: "3.0.0"
+`,
+			expectError: true,
+		},
+		{
+			name: "config with from array containing non-string",
+			configYAML: `modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    from:
+      - "4.0.0"
+      - { invalid: "object" }
 `,
 			expectError: true,
 		},

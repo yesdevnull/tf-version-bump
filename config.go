@@ -32,10 +32,7 @@ func (f *FromVersions) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("from field must be a string or array of strings, got %s", value.Tag)
 		}
 
-		var str string
-		if err := value.Decode(&str); err != nil {
-			return fmt.Errorf("failed to decode from field as string: %w", err)
-		}
+		str := value.Value
 
 		if str == "" {
 			*f = FromVersions{}
