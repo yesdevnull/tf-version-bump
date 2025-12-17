@@ -12,7 +12,8 @@ type versionSchema struct {
 }
 
 type configSchema struct {
-	Required    []string `json:"required"`
+	Required    []string          `json:"required"`
+	AnyOf       []json.RawMessage `json:"anyOf"`
 	Definitions struct {
 		VersionConstraint versionSchema `json:"versionConstraint"`
 	} `json:"definitions"`
@@ -68,6 +69,13 @@ func TestConfigSchemaIncludesProviderAndTerraformOptions(t *testing.T) {
 	}
 	if !contains(schema.Properties.Providers.Items.Required, "version") {
 		t.Errorf("provider schema should require 'version'")
+	}
+
+	requiredAnyOf := requiredOptionsFromAnyOf(t, schema.AnyOf)
+	for _, key := range []string{"modules", "providers", "terraform_version"} {
+		if !requiredAnyOf[key] {
+			t.Fatalf("schema anyOf should require at least one of modules/providers/terraform_version, missing %s", key)
+		}
 	}
 
 	if len(schema.Properties.Modules.Items.Properties) == 0 {
@@ -163,4 +171,30 @@ func referencesVersionConstraint(t *testing.T, raw json.RawMessage) bool {
 	}
 
 	return false
+}
+
+func requiredOptionsFromAnyOf(t *testing.T, clauses []json.RawMessage) map[string]bool {
+	t.Helper()
+
+	required := map[string]bool{}
+
+	for _, clause := range clauses {
+		var node map[string]any
+		if err := json.Unmarshal(clause, &node); err != nil {
+			t.Fatalf("failed to parse anyOf clause: %v", err)
+		}
+
+		reqList, ok := node["required"].([]any)
+		if !ok {
+			continue
+		}
+
+		for _, item := range reqList {
+			if name, ok := item.(string); ok {
+				required[name] = true
+			}
+		}
+	}
+
+	return required
 }
