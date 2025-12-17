@@ -312,7 +312,7 @@ func TestRunCLIModeProviderMissingVersion(t *testing.T) {
 
 func TestUpdateTerraformVersionReadError(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("skipping read error test on root")
+		t.Skip("skipping read error test when running as root")
 	}
 	tmpDir := t.TempDir()
 	file := filepath.Join(tmpDir, "unreadable.tf")
@@ -328,7 +328,7 @@ func TestUpdateTerraformVersionReadError(t *testing.T) {
 
 func TestUpdateTerraformVersionWriteError(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("skipping write error test on root")
+		t.Skip("skipping write error test when running as root")
 	}
 	tmpDir := t.TempDir()
 	file := filepath.Join(tmpDir, "main.tf")
@@ -345,7 +345,7 @@ func TestUpdateTerraformVersionWriteError(t *testing.T) {
 
 func TestUpdateProviderVersionReadError(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("skipping read error test on root")
+		t.Skip("skipping read error test when running as root")
 	}
 	tmpDir := t.TempDir()
 	file := filepath.Join(tmpDir, "provider.tf")
@@ -361,7 +361,7 @@ func TestUpdateProviderVersionReadError(t *testing.T) {
 
 func TestUpdateProviderVersionWriteError(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("skipping write error test on root")
+		t.Skip("skipping write error test when running as root")
 	}
 	tmpDir := t.TempDir()
 	file := filepath.Join(tmpDir, "provider.tf")
