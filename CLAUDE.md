@@ -47,7 +47,7 @@ This repository is an experiment for generative AI coding tools. It may contain 
 tf-version-bump/
 ├── main.go                          # Main entry point, CLI parsing, core logic (900+ lines)
 ├── config.go                        # YAML config loading and validation (187 lines)
-├── *_test.go                        # Comprehensive test suite (50+ test files)
+├── *_test.go                        # Comprehensive test suite (14 test files)
 │
 ├── schema/
 │   └── config-schema.json           # JSON Schema for YAML validation
