@@ -30,7 +30,7 @@ golangci-lint run --timeout=5m
 tf-version-bump/
 ├── main.go                  # Core logic
 ├── config.go                # YAML config handling
-├── *_test.go                # Comprehensive tests (14 test files)
+├── *_test.go                # Comprehensive tests (Go tests)
 ├── schema/config-schema.json # YAML validation schema
 ├── examples/                # Sample configs and .tf files
 ├── .github/workflows/       # CI/CD pipelines
