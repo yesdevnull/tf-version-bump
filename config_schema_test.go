@@ -112,7 +112,7 @@ func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
 		"1.2.3",
 		"v1.0.0",
 		"~> 3.0",
-		"~>3.0.0-beta.1+build.5",
+		"~> 3.0.0-beta.1+build.5",
 		">= 1.2, < 2.0",
 		"!= 1.0.0",
 		"<=1.4.0",
