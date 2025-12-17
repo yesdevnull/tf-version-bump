@@ -32,6 +32,15 @@ var (
 	date    = "unknown"
 )
 
+var (
+	exitFunc = os.Exit
+	fatalf   = func(format string, v ...interface{}) {
+		log.Printf(format, v...)
+		exitFunc(1)
+	}
+	parseExpression = hclsyntax.ParseExpression
+)
+
 // stringSliceFlag is a custom flag type that allows a flag to be specified multiple times
 type stringSliceFlag []string
 
@@ -106,7 +115,7 @@ func parseFlags() *cliFlags {
 
 	// Validate output format
 	if flags.output != "text" && flags.output != "md" {
-		log.Fatalf("Error: Invalid output format '%s'. Must be 'text' or 'md'", flags.output)
+		fatalf("Error: Invalid output format '%s'. Must be 'text' or 'md'", flags.output)
 	}
 
 	return flags
@@ -120,7 +129,7 @@ func loadModuleUpdates(flags *cliFlags) []ModuleUpdate {
 		fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -to <version> [-from <version>]... [-ignore-version <version>]... [-ignore-modules <patterns>]")
 		fmt.Println("  Config file:    tf-version-bump -pattern <glob> -config <config-file>")
 		flag.PrintDefaults()
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// Parse ignore patterns from comma-separated list
@@ -192,7 +201,7 @@ func main() {
 		fmt.Printf("tf-version-bump %s\n", version)
 		fmt.Printf("  commit: %s\n", commit)
 		fmt.Printf("  built:  %s\n", date)
-		os.Exit(0)
+		exitFunc(0)
 	}
 
 	// Validate operation modes
@@ -215,7 +224,7 @@ func validateOperationModes(flags *cliFlags) {
 	if flags.configFile != "" {
 		if flags.moduleSource != "" || flags.terraformVersion != "" || flags.providerName != "" ||
 			flags.toVersion != "" || len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" {
-			log.Fatal("Error: Cannot use -config with other operation flags (-module, -to, -terraform-version, -provider, -from, -ignore-version, -ignore-modules)")
+			fatalf("Error: Cannot use -config with other operation flags (-module, -to, -terraform-version, -provider, -from, -ignore-version, -ignore-modules)")
 		}
 		return
 	}
@@ -239,27 +248,27 @@ func validateOperationModes(flags *cliFlags) {
 		fmt.Println("  Terraform version: tf-version-bump -pattern <glob> -terraform-version <version>")
 		fmt.Println("  Provider version:  tf-version-bump -pattern <glob> -provider <name> -to <version>")
 		flag.PrintDefaults()
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if modesSet > 1 {
-		log.Fatal("Error: Cannot use -module, -terraform-version, and -provider flags together. Choose one operation mode or use a config file.")
+		fatalf("Error: Cannot use -module, -terraform-version, and -provider flags together. Choose one operation mode or use a config file.")
 	}
 }
 
 // findMatchingFiles finds all files matching the pattern
 func findMatchingFiles(flags *cliFlags) []string {
 	if flags.pattern == "" {
-		log.Fatal("Error: -pattern flag is required")
+		fatalf("Error: -pattern flag is required")
 	}
 
 	files, err := filepath.Glob(flags.pattern)
 	if err != nil {
-		log.Fatalf("Error matching pattern: %v", err)
+		fatalf("Error matching pattern: %v", err)
 	}
 
 	if len(files) == 0 {
-		log.Fatalf("No files matched pattern: %s", flags.pattern)
+		fatalf("No files matched pattern: %s", flags.pattern)
 	}
 
 	fmt.Printf("Found %d file(s) matching pattern %s\n", len(files), quote(flags.pattern, flags.output))
@@ -275,7 +284,7 @@ func findMatchingFiles(flags *cliFlags) []string {
 func runConfigFileMode(files []string, flags *cliFlags) {
 	config, err := loadConfig(flags.configFile)
 	if err != nil {
-		log.Fatalf("Error loading config file: %v", err)
+		fatalf("Error loading config file: %v", err)
 	}
 
 	var terraformUpdates, providerUpdates, moduleUpdates int
@@ -311,7 +320,7 @@ func runCLIMode(files []string, flags *cliFlags) {
 		printTerraformSummary(totalUpdates, flags.dryRun)
 	case flags.providerName != "":
 		if flags.toVersion == "" {
-			log.Fatal("Error: -to flag is required when using -provider")
+			fatalf("Error: -to flag is required when using -provider")
 		}
 		totalUpdates = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output)
 		printProviderSummary(flags.providerName, totalUpdates, flags.dryRun, flags.output)
@@ -597,7 +606,7 @@ func updateProviderAttributeVersion(nestedBlock *hclwrite.Block, providerName, n
 		exprStr := string(tokens.Bytes())
 
 		// Parse the expression using hclsyntax to understand its structure
-		expr, diags := hclsyntax.ParseExpression([]byte(exprStr), "inline", hcl.Pos{Line: 1, Column: 1})
+		expr, diags := parseExpression([]byte(exprStr), "inline", hcl.Pos{Line: 1, Column: 1})
 		if diags.HasErrors() {
 			return false
 		}
