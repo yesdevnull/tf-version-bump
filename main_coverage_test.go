@@ -226,12 +226,20 @@ func TestValidateOperationModesFailures(t *testing.T) {
 }
 
 func TestValidateOperationModesConfigOnly(t *testing.T) {
-	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("validateOperationModes panicked: %v", r)
+		}
+	}()
 	validateOperationModes(&cliFlags{configFile: "config.yml"})
 }
 
 func TestValidateOperationModesProviderOnly(t *testing.T) {
-	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("validateOperationModes panicked: %v", r)
+		}
+	}()
 	validateOperationModes(&cliFlags{providerName: "aws"})
 }
 
