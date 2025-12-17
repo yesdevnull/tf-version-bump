@@ -785,7 +785,7 @@ done
 
 | File | Purpose | Key Functions |
 |------|---------|---------------|
-| `main.go` | Main entry point, CLI logic, HCL processing | `main()`, `processFile()`, `updateModuleVersion()`, `updateTerraformVersion()`, `updateProviderVersion()` |
+| `main.go` | Main entry point, CLI logic, HCL processing | `main()`, `processFiles()`, `updateModuleVersion()`, `updateTerraformVersion()`, `updateProviderVersion()` |
 | `config.go` | YAML config loading and validation | `loadConfig()`, `UnmarshalYAML()` for `FromVersions` |
 
 ### Test Files (Selected)
