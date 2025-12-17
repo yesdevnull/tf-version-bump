@@ -322,7 +322,7 @@ type ModuleUpdate struct {
 
 **Key Functions**:
 
-- `processFile()`: Main file processing loop
+- `processFiles()`: Main file processing loop
 - `updateModuleVersion()`: Updates a single module block
 - `updateTerraformVersion()`: Updates terraform required_version
 - `updateProviderVersion()`: Updates provider versions
@@ -495,9 +495,12 @@ func TestUpdateModule(t *testing.T) {
     os.WriteFile(testFile, []byte(initial), 0644)
 
     // Run update
-    err := processFile(testFile, ...)
+    updated, err := updateModuleVersion(testFile, "aws/vpc", "2.0.0", nil, nil, nil, false, false)
     if err != nil {
-        t.Fatalf("processFile failed: %v", err)
+        t.Fatalf("updateModuleVersion failed: %v", err)
+    }
+    if !updated {
+        t.Error("Expected module to be updated")
     }
 
     // Read and verify result
