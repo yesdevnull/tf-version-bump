@@ -184,7 +184,6 @@ make test-coverage
 - Takes ~5-10 seconds
 - Enables race condition detection
 - Generates `coverage.out` file (gitignored)
-- Current coverage: ~90%+ of statements
 - **This is the REQUIRED test command for CI validation**
 
 **Quick test without verbosity**:
@@ -472,8 +471,8 @@ go test -v -race -run TestExample
 
 ### Coverage Goals
 
-- **Current coverage**: ~90%+ (check with `make test-coverage`)
-- **Critical paths**: 100% coverage for config parsing, version updating
+- **Coverage tracking**: Run `make test-coverage` to view current coverage
+- **Critical paths**: High coverage for config parsing, version updating
 - **Edge cases**: Extensive tests for unusual HCL formatting, Unicode, errors
 
 ### Test Data
@@ -775,7 +774,6 @@ done
 ### Repository Statistics
 
 - **Repository Size**: ~6.3 MB
-- **Test Coverage**: ~90%+
 - **Dependencies**: 3 direct (hcl/v2, go-cty, yaml.v3)
 - **Go Version**: 1.24+ required, CI tests on 1.24 and 1.25
 
