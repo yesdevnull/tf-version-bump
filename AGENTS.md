@@ -28,9 +28,9 @@ golangci-lint run --timeout=5m
 
 ```
 tf-version-bump/
-├── main.go                  # Core logic (900+ lines)
-├── config.go                # YAML config handling (187 lines)
-├── *_test.go                # Comprehensive tests (50+ files)
+├── main.go                  # Core logic
+├── config.go                # YAML config handling
+├── *_test.go                # Comprehensive tests (14 test files)
 ├── schema/config-schema.json # YAML validation schema
 ├── examples/                # Sample configs and .tf files
 ├── .github/workflows/       # CI/CD pipelines
@@ -39,13 +39,13 @@ tf-version-bump/
 
 ## Core Files
 
-| File | Purpose | Lines |
-|------|---------|-------|
-| `main.go` | CLI parsing, HCL processing, version updates | 900+ |
-| `config.go` | YAML config loading and validation | 187 |
-| `main_test.go` | Core functionality tests | Large |
-| `config_test.go` | Config validation tests | Large |
-| `schema/config-schema.json` | JSON Schema for YAML | 258 |
+| File | Purpose |
+|------|---------|
+| `main.go` | CLI parsing, HCL processing, version updates |
+| `config.go` | YAML config loading and validation |
+| `main_test.go` | Core functionality tests |
+| `config_test.go` | Config validation tests |
+| `schema/config-schema.json` | JSON Schema for YAML |
 
 ## Essential Commands
 
