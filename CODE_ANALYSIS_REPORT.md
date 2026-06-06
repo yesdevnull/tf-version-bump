@@ -388,7 +388,7 @@ These are intentional design decisions documented in README:
 | Security | Low | No shell execution, path traversal safe |
 | Data Loss | Low | Use version control, dry-run available |
 | Stability | Very Low | 84.8% coverage, race-clean, lint-clean |
-| Compatibility | Low | Go 1.24+ required, tested on 1.24 & 1.25 |
+| Compatibility | Low | Go 1.25+ required, tested on 1.25 & 1.26 |
 | Dependencies | Very Low | 3 direct deps, all well-maintained |
 
 ---

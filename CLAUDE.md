@@ -32,7 +32,7 @@ This repository is an experiment for generative AI coding tools. It may contain 
 
 ### Core Technologies
 
-- **Language**: Go 1.24+
+- **Language**: Go 1.25+
 - **HCL Parsing**: `github.com/hashicorp/hcl/v2` (official HashiCorp library)
 - **Config Files**: YAML with strict validation (`gopkg.in/yaml.v3`)
 - **Build**: Standard Go toolchain + GoReleaser for releases
@@ -58,7 +58,7 @@ tf-version-bump/
 │
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml                   # Main CI: test + build (Go 1.24, 1.25)
+│   │   ├── ci.yml                   # Main CI: test + build (Go 1.25, 1.26)
 │   │   ├── lint.yml                 # golangci-lint checks
 │   │   ├── codeql.yml               # Security analysis
 │   │   └── release.yml              # GoReleaser with SLSA provenance
@@ -654,7 +654,7 @@ The repository uses GitHub Actions with workflows that run on push to main and o
 ### Test Job
 
 - **Runs on**: Ubuntu Latest
-- **Strategy**: Matrix build with Go 1.24 and 1.25
+- **Strategy**: Matrix build with Go 1.25 and 1.26
 - **Steps**:
   1. Checkout code
   2. Setup Go with matrix version
@@ -714,7 +714,7 @@ The repository uses GitHub Actions with workflows that run on push to main and o
 1. **No file locking**: Don't run multiple instances on same files
 2. **Memory-based processing**: Large files (>100MB) may cause issues (unlikely in practice)
 3. **Glob patterns**: `**` doesn't work on all systems; use explicit patterns with caution
-4. **Version requirements**: Code must work with Go 1.24 and 1.25
+4. **Version requirements**: Code must work with Go 1.25 and 1.26 (CI tests both)
 5. **Race detector**: All code must pass race detector (`-race` flag)
 6. **Backwards compatibility**: Consider impact on existing users when changing CLI flags or config format
 7. **Dependencies**: Keep dependency list minimal (currently only 3 external packages)
@@ -778,7 +778,7 @@ done
 
 - **Repository Size**: ~6.3 MB
 - **Dependencies**: 3 direct (hcl/v2, go-cty, yaml.v3)
-- **Go Version**: 1.24+ required, CI tests on 1.24 and 1.25
+- **Go Version**: 1.25+ required, CI tests on 1.25 and 1.26
 
 ---
 
