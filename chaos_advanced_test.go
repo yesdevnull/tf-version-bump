@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,7 +36,7 @@ func TestRecursiveGlobPatterns(t *testing.T) {
 	}
 
 	for _, dir := range dirs {
-		err := os.MkdirAll(filepath.Join(tmpDir, dir), 0755)
+		err := os.MkdirAll(filepath.Join(tmpDir, dir), 0o755)
 		if err != nil {
 			t.Fatalf("Failed to create directory %s: %v", dir, err)
 		}
@@ -56,7 +57,7 @@ func TestRecursiveGlobPatterns(t *testing.T) {
 
 	for _, file := range files {
 		fullPath := filepath.Join(tmpDir, file)
-		err := os.WriteFile(fullPath, []byte(content), 0644)
+		err := os.WriteFile(fullPath, []byte(content), 0o644)
 		if err != nil {
 			t.Fatalf("Failed to create file %s: %v", file, err)
 		}
@@ -65,7 +66,7 @@ func TestRecursiveGlobPatterns(t *testing.T) {
 	// Demonstrate that ** is NOT supported as recursive wildcard by filepath.Glob
 	// The ** pattern acts like a single-level wildcard (similar to *), not recursive.
 	// So "**/*.tf" matches one directory level down, not all nested levels.
-	pattern := filepath.Join(tmpDir, "**/*.tf")
+	pattern := filepath.Join(tmpDir, "**", "*.tf")
 	matchedFiles, err := filepath.Glob(pattern)
 	if err != nil {
 		t.Fatalf("Unexpected error from filepath.Glob: %v", err)
@@ -122,7 +123,7 @@ module "vpc-prod-legacy" {
   version = "3.0.0"
 }`
 
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestHugeVersionString(t *testing.T) {
   source  = "terraform-aws-modules/vpc/aws"
   version = "1.0.0"
 }`
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -200,7 +201,7 @@ func TestInterpolationInSource(t *testing.T) {
   source  = "terraform-aws-modules/${var.module_name}/aws"
   version = "3.0.0"
 }`
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -242,7 +243,7 @@ func TestMultilineAttributes(t *testing.T) {
     description for the VPC module
   EOT
 }`
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -274,15 +275,15 @@ func TestIgnorePatternPerformanceWithManyModules(t *testing.T) {
 	// Create file with many modules
 	var contentBuilder strings.Builder
 	for i := 0; i < 100; i++ {
-		contentBuilder.WriteString(fmt.Sprintf(`module "vpc-%d" {
+		fmt.Fprintf(&contentBuilder, `module "vpc-%d" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }
 
-`, i))
+`, i)
 	}
 
-	err := os.WriteFile(testFile, []byte(contentBuilder.String()), 0644)
+	err := os.WriteFile(testFile, []byte(contentBuilder.String()), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -351,7 +352,7 @@ module       "vpc"        {
 
 
 `
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -385,7 +386,7 @@ func TestConfigWithDuplicateSources(t *testing.T) {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }`
-	err := os.WriteFile(testFile, []byte(tfContent), 0644)
+	err := os.WriteFile(testFile, []byte(tfContent), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -399,7 +400,7 @@ func TestConfigWithDuplicateSources(t *testing.T) {
   - source: "terraform-aws-modules/s3-bucket/aws"
     version: "4.0.0"`
 
-	err = os.WriteFile(configFile, []byte(configContent), 0644)
+	err = os.WriteFile(configFile, []byte(configContent), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create config: %v", err)
 	}
@@ -473,7 +474,7 @@ func TestSourceWithEscapedCharacters(t *testing.T) {
   source  = "` + source + `"
   version = "3.0.0"
 }`
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -505,7 +506,7 @@ func TestVeryLongModuleSource(t *testing.T) {
   source  = "` + longSource + `"
   version = "3.0.0"
 }`
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -529,7 +530,7 @@ func TestFromVersionNotMatching(t *testing.T) {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }`
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -568,7 +569,7 @@ func TestIgnorePatternWhitespaceTrimming(t *testing.T) {
       - "  staging-*  "
       - "	dev-*	"`
 
-	err := os.WriteFile(configFile, []byte(content), 0644)
+	err := os.WriteFile(configFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create config: %v", err)
 	}
@@ -604,7 +605,7 @@ func TestDryRunModificationTime(t *testing.T) {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }`
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -639,7 +640,7 @@ func TestDryRunModificationTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to read file after dry-run: %v", err)
 	}
-	if string(newBytes) != string(originalBytes) {
+	if !bytes.Equal(newBytes, originalBytes) {
 		t.Error("Dry-run should not change file content")
 	}
 

@@ -179,7 +179,7 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) int {
 }
 
 // printSummary prints the final summary of updates
-func printSummary(totalUpdates int, updatesCount int, dryRun bool) {
+func printSummary(totalUpdates, updatesCount int, dryRun bool) {
 	if dryRun {
 		if updatesCount > 1 {
 			fmt.Printf("\nDry run: would apply %d update(s) across all files\n", totalUpdates)
@@ -432,7 +432,7 @@ func processTerraformVersion(files []string, version string, dryRun bool, output
 //
 // Returns:
 //   - int: Number of files that were updated (or would be updated in dry-run mode)
-func processProviderVersion(files []string, providerName string, version string, dryRun bool, outputFormat string) int {
+func processProviderVersion(files []string, providerName, version string, dryRun bool, outputFormat string) int {
 	totalUpdates := 0
 	for _, file := range files {
 		updated, err := updateProviderVersion(file, providerName, version, dryRun)
@@ -555,33 +555,8 @@ func updateProviderVersion(filename, providerName, version string, dryRun bool) 
 
 	// Iterate through all blocks in the file
 	for _, block := range file.Body().Blocks() {
-		// Look for terraform blocks
-		if block.Type() == "terraform" {
-			// Look for required_providers block (it's a nested block type)
-			for _, nestedBlock := range block.Body().Blocks() {
-				if nestedBlock.Type() == "required_providers" {
-					// First, try block-based syntax: required_providers { aws { source = "..." version = "..." } }
-					for _, providerBlock := range nestedBlock.Body().Blocks() {
-						if providerBlock.Type() == providerName {
-							// Update the version attribute within the provider block
-							providerBlock.Body().SetAttributeValue("version", cty.StringVal(version))
-							updated = true
-						}
-					}
-
-					// Second, try attribute-based syntax: required_providers { aws = { source = "..." version = "..." } }
-					if !updated {
-						// Check if provider exists as an attribute
-						attrs := nestedBlock.Body().Attributes()
-						if _, exists := attrs[providerName]; exists {
-							// Update the attribute by modifying the object expression
-							if updateProviderAttributeVersion(nestedBlock, providerName, version) {
-								updated = true
-							}
-						}
-					}
-				}
-			}
+		if updateProviderTerraformBlock(block, providerName, version) {
+			updated = true
 		}
 	}
 
@@ -597,132 +572,167 @@ func updateProviderVersion(filename, providerName, version string, dryRun bool) 
 	return updated, nil
 }
 
-// updateProviderAttributeVersion updates the version value within a provider attribute's object expression
-// This handles the attribute-based syntax: aws = { source = "..." version = "..." }
-func updateProviderAttributeVersion(nestedBlock *hclwrite.Block, providerName, newVersion string) bool {
-	// Get the raw attribute expression as a string
-	attrs := nestedBlock.Body().Attributes()
-	if attr, exists := attrs[providerName]; exists {
-		// Get the expression as bytes
-		tokens := attr.Expr().BuildTokens(nil)
-		exprStr := string(tokens.Bytes())
+func updateProviderTerraformBlock(block *hclwrite.Block, providerName, version string) bool {
+	if block.Type() != "terraform" {
+		return false
+	}
 
-		// Parse the expression using hclsyntax to understand its structure
-		expr, diags := parseExpression([]byte(exprStr), "inline", hcl.Pos{Line: 1, Column: 1})
-		if diags.HasErrors() {
-			return false
+	updated := false
+	for _, nestedBlock := range block.Body().Blocks() {
+		if nestedBlock.Type() != "required_providers" {
+			continue
 		}
-
-		// Check if it's an object construction expression
-		objExpr, ok := expr.(*hclsyntax.ObjectConsExpr)
-		if !ok {
-			return false
+		if updateProviderBlockSyntax(nestedBlock, providerName, version) {
+			updated = true
+			continue
 		}
-
-		// Build a new object with the updated version
-		// We'll reconstruct the object manually
-		newObj := make(map[string]string)
-		hasVersion := false
-
-		for _, item := range objExpr.Items {
-			// Extract the key name
-			keyExpr, ok := item.KeyExpr.(*hclsyntax.ObjectConsKeyExpr)
-			if !ok {
-				continue
-			}
-
-			traversal, ok := keyExpr.Wrapped.(*hclsyntax.ScopeTraversalExpr)
-			if !ok {
-				continue
-			}
-
-			if len(traversal.Traversal) == 0 {
-				continue
-			}
-
-			rootName, ok := traversal.Traversal[0].(hcl.TraverseRoot)
-			if !ok {
-				continue
-			}
-
-			keyName := rootName.Name
-
-			// Extract the value - handle multiple expression types
-			var value string
-			valueExtracted := false
-
-			switch expr := item.ValueExpr.(type) {
-			case *hclsyntax.TemplateExpr:
-				// Handle template expressions (quoted strings)
-				if len(expr.Parts) > 0 {
-					if lit, ok := expr.Parts[0].(*hclsyntax.LiteralValueExpr); ok {
-						value = lit.Val.AsString()
-						valueExtracted = true
-					}
-				}
-			case *hclsyntax.LiteralValueExpr:
-				// Handle direct literal values
-				if expr.Val.Type().Equals(cty.String) {
-					value = expr.Val.AsString()
-					valueExtracted = true
-				}
-			default:
-				// Skip non-string attributes (variables, functions, complex expressions, etc.)
-				// These will not be included in the reconstructed object to avoid errors
-				continue
-			}
-
-			if valueExtracted {
-				if keyName == "version" {
-					newObj[keyName] = newVersion
-					hasVersion = true
-				} else {
-					newObj[keyName] = value
-				}
-			}
-		}
-
-		if !hasVersion {
-			return false
-		}
-
-		// Determine indentation from the original HCL (default to 6 spaces if unable to detect)
-		// In HCL files, required_providers block is typically indented 2 spaces,
-		// and the provider attributes inside the object are indented an additional 4 spaces (total 6)
-		indent := "      " // 6 spaces as default
-
-		// Reconstruct the object expression with proper formatting
-		newExprStr := "{\n"
-		// Preserve the order: source first, then version, then others
-		if source, ok := newObj["source"]; ok {
-			newExprStr += fmt.Sprintf("%ssource  = %q\n", indent, source)
-		}
-		if _, ok := newObj["version"]; ok {
-			newExprStr += fmt.Sprintf("%sversion = %q\n", indent, newVersion)
-		}
-		for key, value := range newObj {
-			if key != "source" && key != "version" {
-				newExprStr += fmt.Sprintf("%s%s = %q\n", indent, key, value)
-			}
-		}
-		newExprStr += "    }"
-
-		// Set the new expression
-		newExpr, diags := hclwrite.ParseConfig([]byte(providerName+" = "+newExprStr), "inline", hcl.Pos{Line: 1, Column: 1})
-		if diags.HasErrors() {
-			return false
-		}
-
-		// Get the attribute from the parsed expression
-		if len(newExpr.Body().Attributes()) > 0 {
-			for _, newAttr := range newExpr.Body().Attributes() {
-				nestedBlock.Body().SetAttributeRaw(providerName, newAttr.Expr().BuildTokens(nil))
-				return true
-			}
+		if updateProviderAttributeVersion(nestedBlock, providerName, version) {
+			updated = true
 		}
 	}
 
+	return updated
+}
+
+func updateProviderBlockSyntax(nestedBlock *hclwrite.Block, providerName, version string) bool {
+	updated := false
+	for _, providerBlock := range nestedBlock.Body().Blocks() {
+		if providerBlock.Type() != providerName {
+			continue
+		}
+		providerBlock.Body().SetAttributeValue("version", cty.StringVal(version))
+		updated = true
+	}
+
+	return updated
+}
+
+// updateProviderAttributeVersion updates the version value within a provider attribute's object expression
+// This handles the attribute-based syntax: aws = { source = "..." version = "..." }
+func updateProviderAttributeVersion(nestedBlock *hclwrite.Block, providerName, newVersion string) bool {
+	objExpr, ok := providerAttributeObject(nestedBlock, providerName)
+	if !ok {
+		return false
+	}
+
+	newObj, hasVersion := providerObjectValues(objExpr, newVersion)
+	if !hasVersion {
+		return false
+	}
+
+	newExprStr := buildProviderObjectExpr(newObj, newVersion)
+	newExpr, diags := hclwrite.ParseConfig([]byte(providerName+" = "+newExprStr), "inline", hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		return false
+	}
+
+	for _, newAttr := range newExpr.Body().Attributes() {
+		nestedBlock.Body().SetAttributeRaw(providerName, newAttr.Expr().BuildTokens(nil))
+		return true
+	}
+
 	return false
+}
+
+func providerAttributeObject(nestedBlock *hclwrite.Block, providerName string) (*hclsyntax.ObjectConsExpr, bool) {
+	attr, exists := nestedBlock.Body().Attributes()[providerName]
+	if !exists {
+		return nil, false
+	}
+
+	tokens := attr.Expr().BuildTokens(nil)
+	expr, diags := parseExpression(tokens.Bytes(), "inline", hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		return nil, false
+	}
+
+	objExpr, ok := expr.(*hclsyntax.ObjectConsExpr)
+	return objExpr, ok
+}
+
+func providerObjectValues(objExpr *hclsyntax.ObjectConsExpr, newVersion string) (map[string]string, bool) {
+	newObj := make(map[string]string)
+	hasVersion := false
+
+	for _, item := range objExpr.Items {
+		keyName, ok := providerObjectItemKey(item)
+		if !ok {
+			continue
+		}
+
+		value, ok := providerObjectItemStringValue(item)
+		if !ok {
+			continue
+		}
+
+		if keyName == "version" {
+			newObj[keyName] = newVersion
+			hasVersion = true
+			continue
+		}
+		newObj[keyName] = value
+	}
+
+	return newObj, hasVersion
+}
+
+func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
+	keyExpr, ok := item.KeyExpr.(*hclsyntax.ObjectConsKeyExpr)
+	if !ok {
+		return "", false
+	}
+
+	traversal, ok := keyExpr.Wrapped.(*hclsyntax.ScopeTraversalExpr)
+	if !ok || len(traversal.Traversal) == 0 {
+		return "", false
+	}
+
+	rootName, ok := traversal.Traversal[0].(hcl.TraverseRoot)
+	if !ok {
+		return "", false
+	}
+
+	return rootName.Name, true
+}
+
+func providerObjectItemStringValue(item hclsyntax.ObjectConsItem) (string, bool) {
+	switch expr := item.ValueExpr.(type) {
+	case *hclsyntax.TemplateExpr:
+		if len(expr.Parts) == 0 {
+			return "", false
+		}
+		lit, ok := expr.Parts[0].(*hclsyntax.LiteralValueExpr)
+		if !ok {
+			return "", false
+		}
+		return lit.Val.AsString(), true
+	case *hclsyntax.LiteralValueExpr:
+		if !expr.Val.Type().Equals(cty.String) {
+			return "", false
+		}
+		return expr.Val.AsString(), true
+	default:
+		return "", false
+	}
+}
+
+func buildProviderObjectExpr(newObj map[string]string, newVersion string) string {
+	indent := "      "
+	newExprStr := "{\n"
+
+	if source, ok := newObj["source"]; ok {
+		newExprStr += fmt.Sprintf("%ssource  = %q\n", indent, source)
+	}
+	if _, ok := newObj["version"]; ok {
+		newExprStr += fmt.Sprintf("%sversion = %q\n", indent, newVersion)
+	}
+	for key, value := range newObj {
+		if key != "source" && key != "version" {
+			newExprStr += fmt.Sprintf("%s%s = %q\n", indent, key, value)
+		}
+	}
+
+	return newExprStr + "    }"
 }
 
 // updateModuleVersion parses a Terraform file, finds modules with the specified source,
@@ -753,7 +763,7 @@ func updateProviderAttributeVersion(nestedBlock *hclwrite.Block, providerName, n
 // Returns:
 //   - bool: true if at least one module was updated (or would be updated in dry-run mode), false otherwise
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateModuleVersion(filename, moduleSource, version string, fromVersions []string, ignoreVersions []string, ignorePatterns []string, forceAdd bool, dryRun bool, verbose bool, outputFormat string) (bool, error) {
+func updateModuleVersion(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (bool, error) {
 	// Get original file permissions to preserve them when writing
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
@@ -775,84 +785,22 @@ func updateModuleVersion(filename, moduleSource, version string, fromVersions []
 
 	// Track if we made any changes
 	updated := false
+	opts := moduleUpdateOptions{
+		filename:       filename,
+		moduleSource:   moduleSource,
+		version:        version,
+		fromVersions:   fromVersions,
+		ignoreVersions: ignoreVersions,
+		ignorePatterns: ignorePatterns,
+		forceAdd:       forceAdd,
+		verbose:        verbose,
+		outputFormat:   outputFormat,
+	}
 
 	// Iterate through all blocks in the file
 	for _, block := range file.Body().Blocks() {
-		// Look for module blocks with matching source
-		if block.Type() == "module" {
-			// Get the module name from block labels
-			moduleName := ""
-			if len(block.Labels()) > 0 {
-				moduleName = block.Labels()[0]
-			}
-
-			// Get the source attribute
-			sourceAttr := block.Body().GetAttribute("source")
-			if sourceAttr != nil {
-				// Extract the source value
-				sourceTokens := sourceAttr.Expr().BuildTokens(nil)
-				sourceValue := string(sourceTokens.Bytes())
-
-				// Remove whitespace and quotes from the source value
-				sourceValue = trimQuotes(strings.TrimSpace(sourceValue))
-
-				// Skip local modules - they don't have versions
-				if isLocalModule(sourceValue) && sourceValue == moduleSource {
-					fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) is a local module and cannot be version-bumped, skipping\n",
-						quote(moduleName, outputFormat), filename, quote(moduleSource, outputFormat))
-					continue
-				}
-
-				// Check if this module's source matches
-				if sourceValue == moduleSource {
-					// Check if module name matches any ignore pattern
-					if shouldIgnoreModule(moduleName, ignorePatterns) {
-						if verbose {
-							fmt.Printf("  ⊗ Skipped module %s in %s (matches ignore pattern)\n", quote(moduleName, outputFormat), filename)
-						}
-						continue
-					}
-
-					// Check if the module has a version attribute
-					versionAttr := block.Body().GetAttribute("version")
-					if versionAttr == nil {
-						if !forceAdd {
-							// Module doesn't have a version attribute - print warning and skip
-							fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) has no version attribute, skipping\n",
-								quote(moduleName, outputFormat), filename, quote(moduleSource, outputFormat))
-							continue
-						}
-						// forceAdd is true, so we'll add the version attribute below
-					} else {
-						// Get the current version for filtering
-						versionTokens := versionAttr.Expr().BuildTokens(nil)
-						currentVersion := string(versionTokens.Bytes())
-						currentVersion = trimQuotes(strings.TrimSpace(currentVersion))
-
-						// Check if current version matches any ignore-version filter
-						if len(ignoreVersions) > 0 && containsVersion(ignoreVersions, currentVersion) {
-							// Current version matches an ignore-version filter, skip this module
-							if verbose {
-								fmt.Printf("  ⊗ Skipped module %s in %s (current version %s matches 'ignore-version' filter %v)\n", quote(moduleName, outputFormat), filename, quote(currentVersion, outputFormat), ignoreVersions)
-							}
-							continue
-						}
-
-						// If fromVersions is specified, check if current version matches any in the list
-						if len(fromVersions) > 0 && !containsVersion(fromVersions, currentVersion) {
-							// Current version doesn't match any fromVersion, skip this module
-							if verbose {
-								fmt.Printf("  ⊗ Skipped module %s in %s (current version %s does not match any 'from' filter %v)\n", quote(moduleName, outputFormat), filename, quote(currentVersion, outputFormat), fromVersions)
-							}
-							continue
-						}
-					}
-
-					// Update or add the version attribute
-					block.Body().SetAttributeValue("version", cty.StringVal(version))
-					updated = true
-				}
-			}
+		if updateModuleBlock(block, &opts) {
+			updated = true
 		}
 	}
 
@@ -866,6 +814,95 @@ func updateModuleVersion(filename, moduleSource, version string, fromVersions []
 	}
 
 	return updated, nil
+}
+
+type moduleUpdateOptions struct {
+	filename       string
+	moduleSource   string
+	version        string
+	fromVersions   []string
+	ignoreVersions []string
+	ignorePatterns []string
+	forceAdd       bool
+	verbose        bool
+	outputFormat   string
+}
+
+func updateModuleBlock(block *hclwrite.Block, opts *moduleUpdateOptions) bool {
+	if block.Type() != "module" {
+		return false
+	}
+
+	moduleName := moduleBlockName(block)
+	sourceValue, ok := moduleSourceValue(block)
+	if !ok || sourceValue != opts.moduleSource {
+		return false
+	}
+
+	if isLocalModule(sourceValue) {
+		fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) is a local module and cannot be version-bumped, skipping\n",
+			quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat))
+		return false
+	}
+
+	if shouldIgnoreModule(moduleName, opts.ignorePatterns) {
+		if opts.verbose {
+			fmt.Printf("  ⊗ Skipped module %s in %s (matches ignore pattern)\n", quote(moduleName, opts.outputFormat), opts.filename)
+		}
+		return false
+	}
+
+	versionAttr := block.Body().GetAttribute("version")
+	if versionAttr == nil {
+		if !opts.forceAdd {
+			fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) has no version attribute, skipping\n",
+				quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat))
+			return false
+		}
+	} else if shouldSkipModuleVersion(moduleName, attributeStringValue(versionAttr), opts) {
+		return false
+	}
+
+	block.Body().SetAttributeValue("version", cty.StringVal(opts.version))
+	return true
+}
+
+func moduleBlockName(block *hclwrite.Block) string {
+	if len(block.Labels()) == 0 {
+		return ""
+	}
+	return block.Labels()[0]
+}
+
+func moduleSourceValue(block *hclwrite.Block) (string, bool) {
+	sourceAttr := block.Body().GetAttribute("source")
+	if sourceAttr == nil {
+		return "", false
+	}
+	return attributeStringValue(sourceAttr), true
+}
+
+func attributeStringValue(attr *hclwrite.Attribute) string {
+	tokens := attr.Expr().BuildTokens(nil)
+	return trimQuotes(strings.TrimSpace(string(tokens.Bytes())))
+}
+
+func shouldSkipModuleVersion(moduleName, currentVersion string, opts *moduleUpdateOptions) bool {
+	if len(opts.ignoreVersions) > 0 && containsVersion(opts.ignoreVersions, currentVersion) {
+		if opts.verbose {
+			fmt.Printf("  ⊗ Skipped module %s in %s (current version %s matches 'ignore-version' filter %v)\n", quote(moduleName, opts.outputFormat), opts.filename, quote(currentVersion, opts.outputFormat), opts.ignoreVersions)
+		}
+		return true
+	}
+
+	if len(opts.fromVersions) > 0 && !containsVersion(opts.fromVersions, currentVersion) {
+		if opts.verbose {
+			fmt.Printf("  ⊗ Skipped module %s in %s (current version %s does not match any 'from' filter %v)\n", quote(moduleName, opts.outputFormat), opts.filename, quote(currentVersion, opts.outputFormat), opts.fromVersions)
+		}
+		return true
+	}
+
+	return false
 }
 
 // isLocalModule checks if a module source is a local path.
@@ -958,57 +995,59 @@ func matchPattern(name, pattern string) bool {
 	// Split pattern by '*' to get the literal parts
 	parts := strings.Split(pattern, "*")
 
-	// Check if name starts with first part (if not empty)
-	if parts[0] != "" && !strings.HasPrefix(name, parts[0]) {
+	if !patternBoundsMatch(name, parts) {
 		return false
 	}
 
-	// Check if name ends with last part (if not empty)
-	if parts[len(parts)-1] != "" && !strings.HasSuffix(name, parts[len(parts)-1]) {
+	pos, ok := orderedMiddlePartsEnd(name, parts)
+	return ok && suffixDoesNotOverlap(name, parts, pos)
+}
+
+func patternBoundsMatch(name string, parts []string) bool {
+	first := parts[0]
+	last := parts[len(parts)-1]
+
+	if first != "" && !strings.HasPrefix(name, first) {
+		return false
+	}
+	if last != "" && !strings.HasSuffix(name, last) {
 		return false
 	}
 
-	// Ensure there's enough length for both prefix and suffix when both are present
-	if parts[0] != "" && parts[len(parts)-1] != "" {
-		minLength := len(parts[0]) + len(parts[len(parts)-1])
-		if len(name) < minLength {
-			return false
-		}
-	}
+	return first == "" || last == "" || len(name) >= len(first)+len(last)
+}
 
-	// For middle parts, check they appear in order
+func orderedMiddlePartsEnd(name string, parts []string) (int, bool) {
 	pos := 0
 	for i, part := range parts {
 		if part == "" {
 			continue
 		}
-		// Skip the first part check (already done above)
 		if i == 0 {
 			pos = len(part)
 			continue
 		}
-		// Skip the last part check (already done above)
 		if i == len(parts)-1 {
 			break
 		}
-		// Find the part in the remaining string
+
 		idx := strings.Index(name[pos:], part)
 		if idx == -1 {
-			return false
+			return 0, false
 		}
 		pos += idx + len(part)
 	}
 
-	// Ensure middle parts don't overlap with the suffix
-	// The suffix must start at or after the current position
-	if parts[len(parts)-1] != "" {
-		suffixStart := len(name) - len(parts[len(parts)-1])
-		if pos > suffixStart {
-			return false
-		}
+	return pos, true
+}
+
+func suffixDoesNotOverlap(name string, parts []string, pos int) bool {
+	last := parts[len(parts)-1]
+	if last == "" {
+		return true
 	}
 
-	return true
+	return pos <= len(name)-len(last)
 }
 
 // trimQuotes removes surrounding single or double quotes from a string.

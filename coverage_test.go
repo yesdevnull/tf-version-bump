@@ -432,7 +432,7 @@ func TestLoadModuleUpdatesConfigFile(t *testing.T) {
     version: "4.0.0"
 `
 	configFile := filepath.Join(tmpDir, "config.yml")
-	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(configContent), 0o644); err != nil {
 		t.Fatalf("failed to write config file: %v", err)
 	}
 
@@ -479,7 +479,7 @@ module "s3" {
 }
 `
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("failed to write tf file: %v", err)
 	}
 
@@ -524,7 +524,7 @@ module "s3" {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Reset the file for each test
-			if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+			if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 				t.Fatalf("failed to reset tf file: %v", err)
 			}
 
@@ -573,7 +573,7 @@ func TestProcessFilesWithFromVersionFilter(t *testing.T) {
 }
 `
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("failed to write tf file: %v", err)
 	}
 
@@ -602,7 +602,7 @@ func TestProcessFilesWithFromVersionFilter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Reset the file
-			if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+			if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 				t.Fatalf("failed to reset tf file: %v", err)
 			}
 
@@ -666,10 +666,10 @@ func TestProcessFilesMultipleFiles(t *testing.T) {
 	tfFile1 := filepath.Join(tmpDir, "main1.tf")
 	tfFile2 := filepath.Join(tmpDir, "main2.tf")
 
-	if err := os.WriteFile(tfFile1, []byte(tfContent1), 0644); err != nil {
+	if err := os.WriteFile(tfFile1, []byte(tfContent1), 0o644); err != nil {
 		t.Fatalf("failed to write tf file 1: %v", err)
 	}
-	if err := os.WriteFile(tfFile2, []byte(tfContent2), 0644); err != nil {
+	if err := os.WriteFile(tfFile2, []byte(tfContent2), 0o644); err != nil {
 		t.Fatalf("failed to write tf file 2: %v", err)
 	}
 
@@ -805,7 +805,7 @@ func TestProcessFilesWithVerbose(t *testing.T) {
 }
 `
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("failed to write tf file: %v", err)
 	}
 
@@ -867,7 +867,7 @@ func TestProcessFilesMarkdownOutput(t *testing.T) {
 }
 `
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("failed to write tf file: %v", err)
 	}
 
@@ -951,7 +951,7 @@ func TestProcessFilesOutputMessages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Reset the file
-			if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+			if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 				t.Fatalf("failed to reset tf file: %v", err)
 			}
 
@@ -1077,7 +1077,7 @@ func TestLoadConfigYAMLEdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			configFile := filepath.Join(tmpDir, "config.yml")
-			if err := os.WriteFile(configFile, []byte(tt.yamlContent), 0644); err != nil {
+			if err := os.WriteFile(configFile, []byte(tt.yamlContent), 0o644); err != nil {
 				t.Fatalf("failed to write config file: %v", err)
 			}
 
@@ -1130,7 +1130,7 @@ module "legacy-vpc" {
 }
 `
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("failed to write tf file: %v", err)
 	}
 
@@ -1169,7 +1169,7 @@ module "legacy-vpc" {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Reset the file
-			if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+			if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 				t.Fatalf("failed to reset tf file: %v", err)
 			}
 

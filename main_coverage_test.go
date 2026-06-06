@@ -20,19 +20,19 @@ type exitCall struct {
 	code int
 }
 
-func stubExit(t *testing.T) (func(), *int) {
+func stubExit(t *testing.T) (restore func(), code *int) {
 	t.Helper()
 	hookMu.Lock()
 	original := exitFunc
-	code := -1
+	exitCode := -1
 	exitFunc = func(c int) {
-		code = c
+		exitCode = c
 		panic(exitCall{code: c})
 	}
 	return func() {
 		exitFunc = original
 		hookMu.Unlock()
-	}, &code
+	}, &exitCode
 }
 
 func withFlagArgs(t *testing.T, args []string, fn func()) {
@@ -130,7 +130,7 @@ func TestMainExecutionPath(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(`module "example" { source = "example/module" version = "1.0.0" }`), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(`module "example" { source = "example/module" version = "1.0.0" }`), 0o644); err != nil {
 		t.Fatalf("failed to write terraform file: %v", err)
 	}
 
@@ -164,12 +164,12 @@ func TestMainConfigFilePath(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(`terraform { required_version = ">= 0.13" }`), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(`terraform { required_version = ">= 0.13" }`), 0o644); err != nil {
 		t.Fatalf("failed to create terraform file: %v", err)
 	}
 
 	configFile := filepath.Join(tmpDir, "config.yml")
-	if err := os.WriteFile(configFile, []byte(`terraform_version: ">= 1.2"`), 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(`terraform_version: ">= 1.2"`), 0o644); err != nil {
 		t.Fatalf("failed to write config: %v", err)
 	}
 
@@ -289,7 +289,7 @@ func TestFindMatchingFilesFailures(t *testing.T) {
 func TestFindMatchingFilesDryRunMessage(t *testing.T) {
 	tmpDir := t.TempDir()
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte("# test"), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte("# test"), 0o644); err != nil {
 		t.Fatalf("failed to write file: %v", err)
 	}
 
@@ -335,7 +335,7 @@ func TestUpdateTerraformVersionReadError(t *testing.T) {
 	}
 	tmpDir := t.TempDir()
 	file := filepath.Join(tmpDir, "unreadable.tf")
-	if err := os.WriteFile(file, []byte("content"), 0222); err != nil {
+	if err := os.WriteFile(file, []byte("content"), 0o222); err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
 
@@ -352,7 +352,7 @@ func TestUpdateTerraformVersionWriteError(t *testing.T) {
 	tmpDir := t.TempDir()
 	file := filepath.Join(tmpDir, "main.tf")
 	content := `terraform { required_version = ">= 0.13" }`
-	if err := os.WriteFile(file, []byte(content), 0444); err != nil {
+	if err := os.WriteFile(file, []byte(content), 0o444); err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
 
@@ -368,7 +368,7 @@ func TestUpdateProviderVersionReadError(t *testing.T) {
 	}
 	tmpDir := t.TempDir()
 	file := filepath.Join(tmpDir, "provider.tf")
-	if err := os.WriteFile(file, []byte("content"), 0222); err != nil {
+	if err := os.WriteFile(file, []byte("content"), 0o222); err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
 
@@ -392,7 +392,7 @@ func TestUpdateProviderVersionWriteError(t *testing.T) {
     }
   }
 }`
-	if err := os.WriteFile(file, []byte(content), 0444); err != nil {
+	if err := os.WriteFile(file, []byte(content), 0o444); err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
 
@@ -681,7 +681,7 @@ func TestUpdateModuleVersionVerboseIgnore(t *testing.T) {
   source  = "example/module"
   version = "1.0.0"
 }`
-	if err := os.WriteFile(tfFile, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(content), 0o644); err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
 

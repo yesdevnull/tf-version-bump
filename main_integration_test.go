@@ -112,7 +112,7 @@ func TestProcessTerraformVersionWithErrors(t *testing.T) {
 
 	// Create a file with invalid HCL
 	invalidFile := filepath.Join(tmpDir, "invalid.tf")
-	if err := os.WriteFile(invalidFile, []byte("this is not valid HCL {{{"), 0644); err != nil {
+	if err := os.WriteFile(invalidFile, []byte("this is not valid HCL {{{"), 0o644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -132,7 +132,7 @@ func TestProcessTerraformVersionDryRun(t *testing.T) {
   required_version = ">= 1.0"
 }`
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -160,7 +160,7 @@ func TestProcessProviderVersionWithErrors(t *testing.T) {
 
 	// Create a file with invalid HCL
 	invalidFile := filepath.Join(tmpDir, "invalid.tf")
-	if err := os.WriteFile(invalidFile, []byte("this is not valid HCL {{{"), 0644); err != nil {
+	if err := os.WriteFile(invalidFile, []byte("this is not valid HCL {{{"), 0o644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -185,7 +185,7 @@ func TestProcessProviderVersionDryRun(t *testing.T) {
   }
 }`
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -220,7 +220,7 @@ func TestProcessProviderVersionMarkdownOutput(t *testing.T) {
   }
 }`
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -251,7 +251,7 @@ func TestUpdateTerraformVersionNoTerraformBlock(t *testing.T) {
   instance_type = "t2.micro"
 }`
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -270,7 +270,7 @@ func TestUpdateTerraformVersionInvalidFile(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	invalidFile := filepath.Join(tmpDir, "invalid.tf")
-	if err := os.WriteFile(invalidFile, []byte("this is not valid HCL {{{"), 0644); err != nil {
+	if err := os.WriteFile(invalidFile, []byte("this is not valid HCL {{{"), 0o644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -304,7 +304,7 @@ func TestUpdateProviderVersionNoProviderBlock(t *testing.T) {
   required_version = ">= 1.0"
 }`
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -323,7 +323,7 @@ func TestUpdateProviderVersionInvalidFile(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	invalidFile := filepath.Join(tmpDir, "invalid.tf")
-	if err := os.WriteFile(invalidFile, []byte("this is not valid HCL {{{"), 0644); err != nil {
+	if err := os.WriteFile(invalidFile, []byte("this is not valid HCL {{{"), 0o644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -362,7 +362,7 @@ func TestUpdateProviderVersionDifferentProvider(t *testing.T) {
   }
 }`
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
