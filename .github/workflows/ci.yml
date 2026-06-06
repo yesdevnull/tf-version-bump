@@ -16,19 +16,19 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: ['1.24', '1.25']
+        go-version: ['1.24', '1.25', '1.26']
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
     - name: Set up Go
-      uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c
+      uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
       with:
         go-version: ${{ matrix.go-version }}
 
     - name: Cache Go modules
-      uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+      uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
       with:
         path: |
           ~/.cache/go-build
@@ -48,7 +48,7 @@ jobs:
 
     - name: Upload coverage to Codecov
       if: matrix.go-version == '1.25'
-      uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
+      uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
       with:
         files: ./coverage.out
         flags: unittests
@@ -62,10 +62,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
     - name: Set up Go
-      uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c
+      uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
       with:
         go-version: '1.25'
 
@@ -85,7 +85,7 @@ jobs:
         GOOS=windows GOARCH=arm64 go build -o tf-version-bump-windows-arm64.exe .
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:
         name: binaries
         path: |
