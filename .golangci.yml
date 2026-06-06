@@ -17,15 +17,14 @@ linters:
     - unconvert
     - unparam
     - whitespace
-
-linters-settings:
-  gocyclo:
-    min-complexity: 15
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
+  settings:
+    gocyclo:
+      min-complexity: 15
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
 
 issues:
   max-same-issues: 0
