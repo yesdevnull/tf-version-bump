@@ -54,7 +54,7 @@ func TestUnicodeModuleNames(t *testing.T) {
 			tmpDir := t.TempDir()
 			tmpFile := filepath.Join(tmpDir, "test.tf")
 
-			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0644)
+			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
@@ -148,7 +148,7 @@ module "vpc-prod" {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(inputContent), 0644)
+	err := os.WriteFile(tmpFile, []byte(inputContent), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -171,10 +171,10 @@ module "vpc-prod" {
 
 	// Count version occurrences - should be 1 old, 1 new
 	old := strings.Count(string(content), `version = "3.0.0"`)
-	new := strings.Count(string(content), `version = "5.0.0"`)
+	newCount := strings.Count(string(content), `version = "5.0.0"`)
 
-	if old != 1 || new != 1 {
-		t.Errorf("Expected 1 old version and 1 new version, got %d old and %d new", old, new)
+	if old != 1 || newCount != 1 {
+		t.Errorf("Expected 1 old version and 1 new version, got %d old and %d new", old, newCount)
 	}
 }
 
@@ -189,7 +189,7 @@ func TestVeryLongModuleName(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(inputContent), 0644)
+	err := os.WriteFile(tmpFile, []byte(inputContent), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestSpecialCharactersInModuleName(t *testing.T) {
 			tmpDir := t.TempDir()
 			tmpFile := filepath.Join(tmpDir, "test.tf")
 
-			err := os.WriteFile(tmpFile, []byte(inputContent), 0644)
+			err := os.WriteFile(tmpFile, []byte(inputContent), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
@@ -279,7 +279,7 @@ func TestFilePermissionPreservation(t *testing.T) {
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
 	// Create file with specific permissions (read-only for owner, others have no access)
-	err := os.WriteFile(tmpFile, []byte(inputContent), 0600)
+	err := os.WriteFile(tmpFile, []byte(inputContent), 0o600)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestConfigLoadingEdgeCases(t *testing.T) {
 			tmpDir := t.TempDir()
 			configFile := filepath.Join(tmpDir, "config.yml")
 
-			err := os.WriteFile(configFile, []byte(tt.configYAML), 0644)
+			err := os.WriteFile(configFile, []byte(tt.configYAML), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create config file: %v", err)
 			}
@@ -495,7 +495,7 @@ func TestMultipleFilesSimultaneously(t *testing.T) {
   version = "3.0.0"
 }`
 		filename := filepath.Join(tmpDir, fmt.Sprintf("test%d.tf", i))
-		err := os.WriteFile(filename, []byte(content), 0644)
+		err := os.WriteFile(filename, []byte(content), 0o644)
 		if err != nil {
 			t.Fatalf("Failed to create file %s: %v", filename, err)
 		}

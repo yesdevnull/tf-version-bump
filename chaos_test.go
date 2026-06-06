@@ -30,7 +30,7 @@ func TestNullBytesInFile(t *testing.T) {
 
 	// Create file with null byte in the middle
 	content := "module \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\x00\n  version = \"3.0.0\"\n}"
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestBinaryFileContent(t *testing.T) {
 
 	// Create file with binary content that looks like it might have HCL
 	binaryContent := []byte{0xFF, 0xFE, 0x00, 0x00, 'm', 'o', 'd', 'u', 'l', 'e'}
-	err := os.WriteFile(testFile, binaryContent, 0644)
+	err := os.WriteFile(testFile, binaryContent, 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestUTF8BOM(t *testing.T) {
 	// Prepend UTF-8 BOM to content
 	fullContent := []byte{0xEF, 0xBB, 0xBF}
 	fullContent = append(fullContent, []byte(content)...)
-	err := os.WriteFile(testFile, fullContent, 0644)
+	err := os.WriteFile(testFile, fullContent, 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestMixedLineEndings(t *testing.T) {
 
 	// Mix of CRLF and LF
 	content := "module \"vpc\" {\r\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.0.0\"\r\n}"
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestSymbolicLinks(t *testing.T) {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }`
-	err := os.WriteFile(realFile, []byte(content), 0644)
+	err := os.WriteFile(realFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create real file: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestReadOnlyFile(t *testing.T) {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }`
-	err := os.WriteFile(testFile, []byte(content), 0444) // Read-only
+	err := os.WriteFile(testFile, []byte(content), 0o444) // Read-only
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestExtremelyNestedModuleSource(t *testing.T) {
   source  = "` + deepSource + `"
   version = "3.0.0"
 }`
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestModuleSourceWithQueryParams(t *testing.T) {
   source  = "` + tt.source + `"
   version = "3.0.0"
 }`
-			err := os.WriteFile(testFile, []byte(content), 0644)
+			err := os.WriteFile(testFile, []byte(content), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create test file: %v", err)
 			}
@@ -302,7 +302,7 @@ func TestInvalidVersionFormats(t *testing.T) {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }`
-			err := os.WriteFile(testFile, []byte(content), 0644)
+			err := os.WriteFile(testFile, []byte(content), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create test file: %v", err)
 			}
@@ -360,7 +360,7 @@ func TestExtremeWhitespace(t *testing.T) {
 			tmpDir := t.TempDir()
 			testFile := filepath.Join(tmpDir, "test.tf")
 
-			err := os.WriteFile(testFile, []byte(tt.content), 0644)
+			err := os.WriteFile(testFile, []byte(tt.content), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create test file: %v", err)
 			}
@@ -393,7 +393,7 @@ module "vpc" {
   version = "4.0.0"
 }`
 
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestVeryLargeIgnoreList(t *testing.T) {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }`
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -498,7 +498,7 @@ func TestConfigWithEmptyModulesList(t *testing.T) {
 
 	// Config with empty modules list
 	content := `modules: []`
-	err := os.WriteFile(configFile, []byte(content), 0644)
+	err := os.WriteFile(configFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create config: %v", err)
 	}
@@ -522,7 +522,7 @@ func TestConfigWithNullValues(t *testing.T) {
 	content := `modules:
   - source: null
     version: "1.0.0"`
-	err := os.WriteFile(configFile, []byte(content), 0644)
+	err := os.WriteFile(configFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create config: %v", err)
 	}
@@ -550,7 +550,7 @@ func TestFileWithOnlyComments(t *testing.T) {
 // Yet another comment
 /* Multi-line
    comment */`
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -578,7 +578,7 @@ func TestNestedQuotesInAttributes(t *testing.T) {
     Name = "VPC with \"quotes\""
   }
 }`
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -618,7 +618,7 @@ func TestTrailingWhitespace(t *testing.T) {
 
 	// File with trailing spaces and tabs
 	content := "module \"vpc\" {  \t  \n  source  = \"terraform-aws-modules/vpc/aws\"  \n  version = \"3.0.0\"  \t\n}  \t  "
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -643,7 +643,7 @@ func TestFromVersionWithSpecialChars(t *testing.T) {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0-rc.1+build.123"
 }`
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}

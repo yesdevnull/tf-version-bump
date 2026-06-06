@@ -375,7 +375,7 @@ module "s3" {
 			tmpDir := t.TempDir()
 			tmpFile := filepath.Join(tmpDir, "test.tf")
 
-			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0644)
+			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
@@ -434,7 +434,7 @@ resource "aws_instance" "example" {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	err := os.WriteFile(tmpFile, []byte(input), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -496,7 +496,7 @@ func TestUpdateModuleVersionEmptyFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "empty.tf")
 
-	err := os.WriteFile(tmpFile, []byte(""), 0644)
+	err := os.WriteFile(tmpFile, []byte(""), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestUpdateModuleVersionMultipleVersionFormats(t *testing.T) {
 			tmpDir := t.TempDir()
 			tmpFile := filepath.Join(tmpDir, "test.tf")
 
-			err := os.WriteFile(tmpFile, []byte(input), 0644)
+			err := os.WriteFile(tmpFile, []byte(input), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
@@ -555,7 +555,7 @@ func TestUpdateModuleVersionMultipleVersionFormats(t *testing.T) {
 				t.Fatalf("Failed to read updated file: %v", err)
 			}
 
-			expectedVersion := fmt.Sprintf(`version = "%s"`, tt.version)
+			expectedVersion := fmt.Sprintf("version = %q", tt.version)
 			if !strings.Contains(string(content), expectedVersion) {
 				t.Errorf("Expected version %q not found in content:\n%s", expectedVersion, string(content))
 			}
@@ -573,7 +573,7 @@ func TestUpdateModuleVersionGitSource(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	err := os.WriteFile(tmpFile, []byte(input), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -612,7 +612,7 @@ variable "region" {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	err := os.WriteFile(tmpFile, []byte(input), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -643,7 +643,7 @@ module "registry_module" {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	err := os.WriteFile(tmpFile, []byte(input), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -696,7 +696,7 @@ module "vpc3" {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	err := os.WriteFile(tmpFile, []byte(input), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -758,7 +758,7 @@ module "registry_module" {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	err := os.WriteFile(tmpFile, []byte(input), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -798,7 +798,7 @@ module "registry_module" {
 }`
 
 	tmpFile2 := filepath.Join(tmpDir, "test2.tf")
-	err = os.WriteFile(tmpFile2, []byte(input2), 0644)
+	err = os.WriteFile(tmpFile2, []byte(input2), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -868,7 +868,7 @@ func TestUpdateModuleVersionLocalModulesSkipped(t *testing.T) {
 			tmpDir := t.TempDir()
 			tmpFile := filepath.Join(tmpDir, "test.tf")
 
-			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0644)
+			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
@@ -931,7 +931,7 @@ output "vpc_id" {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	err := os.WriteFile(tmpFile, []byte(input), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -1114,7 +1114,7 @@ module "s3" {
 			tmpDir := t.TempDir()
 			tmpFile := filepath.Join(tmpDir, "test.tf")
 
-			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0644)
+			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
@@ -1164,7 +1164,7 @@ module "vpc" {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(inputContent), 0644)
+	err := os.WriteFile(tmpFile, []byte(inputContent), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -1270,7 +1270,7 @@ module "valid" {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	err := os.WriteFile(tmpFile, []byte(input), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -1335,7 +1335,7 @@ func TestUpdateModuleVersionSpecialCharactersInSource(t *testing.T) {
 			tmpDir := t.TempDir()
 			tmpFile := filepath.Join(tmpDir, "test.tf")
 
-			err := os.WriteFile(tmpFile, []byte(input), 0644)
+			err := os.WriteFile(tmpFile, []byte(input), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
@@ -1354,7 +1354,7 @@ func TestUpdateModuleVersionSpecialCharactersInSource(t *testing.T) {
 				t.Fatalf("Failed to read file: %v", err)
 			}
 
-			expectedVersion := fmt.Sprintf(`version = "%s"`, tt.version)
+			expectedVersion := fmt.Sprintf("version = %q", tt.version)
 			if !strings.Contains(string(content), expectedVersion) {
 				t.Errorf("Expected version %q not found in content", expectedVersion)
 			}
@@ -1372,7 +1372,7 @@ func TestUpdateModuleVersionLongVersionString(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	err := os.WriteFile(tmpFile, []byte(input), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -1394,7 +1394,7 @@ func TestUpdateModuleVersionLongVersionString(t *testing.T) {
 		t.Fatalf("Failed to read file: %v", err)
 	}
 
-	expectedVersion := fmt.Sprintf(`version = "%s"`, longVersion)
+	expectedVersion := fmt.Sprintf("version = %q", longVersion)
 	if !strings.Contains(string(content), expectedVersion) {
 		t.Error("Long version string was not set correctly")
 	}
@@ -1410,7 +1410,7 @@ func TestUpdateModuleVersionAbsolutePathLocalModule(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	err := os.WriteFile(tmpFile, []byte(input), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -1447,7 +1447,7 @@ func TestUpdateModuleVersionModuleWithNoLabels(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	err := os.WriteFile(tmpFile, []byte(input), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -1502,7 +1502,7 @@ func TestUpdateModuleVersionWhitespaceVariations(t *testing.T) {
 			tmpDir := t.TempDir()
 			tmpFile := filepath.Join(tmpDir, "test.tf")
 
-			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0644)
+			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
@@ -1540,7 +1540,7 @@ func TestUpdateModuleVersionRegistryModuleWithoutVersionNoForceAdd(t *testing.T)
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(input), 0644)
+	err := os.WriteFile(tmpFile, []byte(input), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -2559,7 +2559,7 @@ func TestOutputFormatText(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(inputContent), 0644)
+	err := os.WriteFile(tmpFile, []byte(inputContent), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -2615,7 +2615,7 @@ func TestOutputFormatMarkdown(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(inputContent), 0644)
+	err := os.WriteFile(tmpFile, []byte(inputContent), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}

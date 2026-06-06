@@ -96,7 +96,7 @@ terraform {
 			tmpDir := t.TempDir()
 			tmpFile := filepath.Join(tmpDir, "test.tf")
 
-			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0644)
+			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
@@ -145,7 +145,7 @@ func TestUpdateTerraformVersionDryRun(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(inputContent), 0644)
+	err := os.WriteFile(tmpFile, []byte(inputContent), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestUpdateProviderVersion(t *testing.T) {
 			tmpDir := t.TempDir()
 			tmpFile := filepath.Join(tmpDir, "test.tf")
 
-			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0644)
+			err := os.WriteFile(tmpFile, []byte(tt.inputContent), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
 			}
@@ -337,7 +337,7 @@ func TestUpdateProviderVersionDryRun(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.tf")
 
-	err := os.WriteFile(tmpFile, []byte(inputContent), 0644)
+	err := os.WriteFile(tmpFile, []byte(inputContent), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -392,13 +392,13 @@ module "vpc" {
 	file2 := filepath.Join(tmpDir, "vpc.tf")
 	file3 := filepath.Join(tmpDir, "s3.tf")
 
-	if err := os.WriteFile(file1, []byte(file1Content), 0644); err != nil {
+	if err := os.WriteFile(file1, []byte(file1Content), 0o644); err != nil {
 		t.Fatalf("Failed to create file1: %v", err)
 	}
-	if err := os.WriteFile(file2, []byte(file2Content), 0644); err != nil {
+	if err := os.WriteFile(file2, []byte(file2Content), 0o644); err != nil {
 		t.Fatalf("Failed to create file2: %v", err)
 	}
-	if err := os.WriteFile(file3, []byte(file3Content), 0644); err != nil {
+	if err := os.WriteFile(file3, []byte(file3Content), 0o644); err != nil {
 		t.Fatalf("Failed to create file3: %v", err)
 	}
 
@@ -467,13 +467,13 @@ func TestProcessProviderVersion(t *testing.T) {
 	file2 := filepath.Join(tmpDir, "vpc.tf")
 	file3 := filepath.Join(tmpDir, "s3.tf")
 
-	if err := os.WriteFile(file1, []byte(file1Content), 0644); err != nil {
+	if err := os.WriteFile(file1, []byte(file1Content), 0o644); err != nil {
 		t.Fatalf("Failed to create file1: %v", err)
 	}
-	if err := os.WriteFile(file2, []byte(file2Content), 0644); err != nil {
+	if err := os.WriteFile(file2, []byte(file2Content), 0o644); err != nil {
 		t.Fatalf("Failed to create file2: %v", err)
 	}
-	if err := os.WriteFile(file3, []byte(file3Content), 0644); err != nil {
+	if err := os.WriteFile(file3, []byte(file3Content), 0o644); err != nil {
 		t.Fatalf("Failed to create file3: %v", err)
 	}
 
@@ -597,7 +597,7 @@ func TestUpdateProviderVersionAttributeSyntax(t *testing.T) {
 			defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 			// Write input content
-			if err := os.WriteFile(tmpFile.Name(), []byte(tt.inputContent), 0644); err != nil {
+			if err := os.WriteFile(tmpFile.Name(), []byte(tt.inputContent), 0o644); err != nil {
 				t.Fatalf("Failed to write temp file: %v", err)
 			}
 
@@ -652,7 +652,7 @@ terraform {
 	}
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
-	if err := os.WriteFile(tmpFile.Name(), []byte(inputContent), 0644); err != nil {
+	if err := os.WriteFile(tmpFile.Name(), []byte(inputContent), 0o644); err != nil {
 		t.Fatalf("Failed to write temp file: %v", err)
 	}
 
@@ -718,10 +718,10 @@ func TestProcessProviderVersionAttributeSyntax(t *testing.T) {
 	file1 := filepath.Join(tmpDir, "test1.tf")
 	file2 := filepath.Join(tmpDir, "test2.tf")
 
-	if err := os.WriteFile(file1, []byte(file1Content), 0644); err != nil {
+	if err := os.WriteFile(file1, []byte(file1Content), 0o644); err != nil {
 		t.Fatalf("Failed to write file1: %v", err)
 	}
-	if err := os.WriteFile(file2, []byte(file2Content), 0644); err != nil {
+	if err := os.WriteFile(file2, []byte(file2Content), 0o644); err != nil {
 		t.Fatalf("Failed to write file2: %v", err)
 	}
 

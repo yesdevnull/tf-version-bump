@@ -67,7 +67,7 @@ func TestInvalidGlobPatternsInProduction(t *testing.T) {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }`
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestValidationOfModuleUpdates(t *testing.T) {
 			tmpDir := t.TempDir()
 			configFile := filepath.Join(tmpDir, "config.yml")
 
-			err := os.WriteFile(configFile, []byte(tt.configYAML), 0644)
+			err := os.WriteFile(configFile, []byte(tt.configYAML), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create config file: %v", err)
 			}
@@ -185,7 +185,7 @@ func TestFileSystemEdgeCases(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			deepPath = filepath.Join(deepPath, "dir")
 		}
-		err := os.MkdirAll(deepPath, 0755)
+		err := os.MkdirAll(deepPath, 0o755)
 		if err != nil {
 			t.Fatalf("Failed to create deep directory: %v", err)
 		}
@@ -196,7 +196,7 @@ func TestFileSystemEdgeCases(t *testing.T) {
   source  = "terraform-aws-modules/vpc/aws"
   version = "3.0.0"
 }`
-		err = os.WriteFile(testFile, []byte(content), 0644)
+		err = os.WriteFile(testFile, []byte(content), 0o644)
 		if err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
@@ -227,7 +227,7 @@ func TestConcurrentSafetyConsiderations(t *testing.T) {
   source  = "terraform-aws-modules/vpc/aws"
   version = "1.0.0"
 }`
-		err := os.WriteFile(testFile, []byte(content), 0644)
+		err := os.WriteFile(testFile, []byte(content), 0o644)
 		if err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
@@ -260,7 +260,7 @@ func TestLargeFileHandling(t *testing.T) {
 		content += "}\n\n"
 	}
 
-	err := os.WriteFile(testFile, []byte(content), 0644)
+	err := os.WriteFile(testFile, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create large test file: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestErrorMessageQuality(t *testing.T) {
 
 		// Create file with invalid HCL
 		invalidContent := `module "test" {`
-		err := os.WriteFile(testFile, []byte(invalidContent), 0644)
+		err := os.WriteFile(testFile, []byte(invalidContent), 0o644)
 		if err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
