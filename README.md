@@ -20,7 +20,7 @@ A CLI tool written in Go that updates Terraform module versions across multiple 
 
 ### Install with go install (recommended)
 
-If you have Go installed (version 1.24 or later), this is the easiest and recommended method:
+If you have Go installed (version 1.25 or later), this is the easiest and recommended method:
 
 ```bash
 go install github.com/yesdevnull/tf-version-bump@latest

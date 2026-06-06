@@ -1,6 +1,6 @@
 module github.com/yesdevnull/tf-version-bump
 
-go 1.24
+go 1.25
 
 require (
 	github.com/hashicorp/hcl/v2 v2.24.0
