@@ -106,7 +106,7 @@ func TestLoadConfig(t *testing.T) {
 			tmpDir := t.TempDir()
 			configFile := filepath.Join(tmpDir, "config.yml")
 
-			err := os.WriteFile(configFile, []byte(tt.configYAML), 0644)
+			err := os.WriteFile(configFile, []byte(tt.configYAML), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp config file: %v", err)
 			}
@@ -177,10 +177,10 @@ module "s3" {
 	tf1File := filepath.Join(tmpDir, "test1.tf")
 	tf2File := filepath.Join(tmpDir, "test2.tf")
 
-	if err := os.WriteFile(tf1File, []byte(tf1Content), 0644); err != nil {
+	if err := os.WriteFile(tf1File, []byte(tf1Content), 0o644); err != nil {
 		t.Fatalf("Failed to create test1.tf: %v", err)
 	}
-	if err := os.WriteFile(tf2File, []byte(tf2Content), 0644); err != nil {
+	if err := os.WriteFile(tf2File, []byte(tf2Content), 0o644); err != nil {
 		t.Fatalf("Failed to create test2.tf: %v", err)
 	}
 
@@ -192,7 +192,7 @@ module "s3" {
     version: "4.0.0"
 `
 	configFile := filepath.Join(tmpDir, "config.yml")
-	if err := os.WriteFile(configFile, []byte(configYAML), 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(configYAML), 0o644); err != nil {
 		t.Fatalf("Failed to create config file: %v", err)
 	}
 
@@ -252,7 +252,7 @@ modules:
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestLoadConfigWithGitSources(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestLoadConfigWithLocalModules(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestLoadConfigMultipleMissingFields(t *testing.T) {
 			tmpDir := t.TempDir()
 			configFile := filepath.Join(tmpDir, "config.yml")
 
-			err := os.WriteFile(configFile, []byte(tt.configYAML), 0644)
+			err := os.WriteFile(configFile, []byte(tt.configYAML), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp config file: %v", err)
 			}
@@ -406,15 +406,15 @@ func TestLoadConfigLargeFile(t *testing.T) {
 
 	// Generate 50 module entries
 	for i := 0; i < 50; i++ {
-		sb.WriteString(fmt.Sprintf(`  - source: "terraform-aws-modules/module-%d/aws"
+		fmt.Fprintf(&sb, `  - source: "terraform-aws-modules/module-%d/aws"
     version: "1.0.%d"
-`, i, i))
+`, i, i)
 	}
 
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(sb.String()), 0644)
+	err := os.WriteFile(configFile, []byte(sb.String()), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -437,6 +437,58 @@ func TestLoadConfigLargeFile(t *testing.T) {
 	}
 }
 
+func validateConfigWithFromField(t *testing.T, updates []ModuleUpdate) {
+	assertModuleUpdate(t, &updates[0], "terraform-aws-modules/vpc/aws", "5.0.0")
+	assertFromVersions(t, updates[0].From, "3.14.0")
+}
+
+func validateMixedFromFields(t *testing.T, updates []ModuleUpdate) {
+	assertFromVersions(t, updates[0].From, "3.14.0")
+	assertFromVersions(t, updates[1].From)
+}
+
+func validateAllModulesWithFromFields(t *testing.T, updates []ModuleUpdate) {
+	assertFromVersions(t, updates[0].From, "3.14.0")
+	assertFromVersions(t, updates[1].From, "3.0.0")
+	assertFromVersions(t, updates[2].From, "5.1.0")
+}
+
+func validateEmptyFromField(t *testing.T, updates []ModuleUpdate) {
+	assertFromVersions(t, updates[0].From)
+}
+
+func validateArrayFromVersions(t *testing.T, updates []ModuleUpdate) {
+	assertModuleUpdate(t, &updates[0], "terraform-aws-modules/s3-bucket/aws", "4.0.0")
+	assertFromVersions(t, updates[0].From, "3.0.0", "~> 3.0")
+}
+
+func validateMixedSingleAndArrayFromVersions(t *testing.T, updates []ModuleUpdate) {
+	assertFromVersions(t, updates[0].From, "4.0.0")
+	assertFromVersions(t, updates[1].From, "3.0.0", "~> 3.0")
+}
+
+func assertModuleUpdate(t *testing.T, update *ModuleUpdate, source, version string) {
+	t.Helper()
+	if update.Source != source {
+		t.Errorf("Module source = %q, want %q", update.Source, source)
+	}
+	if update.Version != version {
+		t.Errorf("Module version = %q, want %q", update.Version, version)
+	}
+}
+
+func assertFromVersions(t *testing.T, got FromVersions, want ...string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("Module from length = %d, want %d", len(got), len(want))
+	}
+	for i, wantVersion := range want {
+		if got[i] != wantVersion {
+			t.Errorf("Module from[%d] = %q, want %q", i, got[i], wantVersion)
+		}
+	}
+}
+
 // TestLoadConfigWithFromField tests config parsing with optional 'from' field
 func TestLoadConfigWithFromField(t *testing.T) {
 	tests := []struct {
@@ -455,17 +507,7 @@ func TestLoadConfigWithFromField(t *testing.T) {
 `,
 			expectError: false,
 			expectCount: 1,
-			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if updates[0].Source != "terraform-aws-modules/vpc/aws" {
-					t.Errorf("Module source = %q, want %q", updates[0].Source, "terraform-aws-modules/vpc/aws")
-				}
-				if updates[0].Version != "5.0.0" {
-					t.Errorf("Module version = %q, want %q", updates[0].Version, "5.0.0")
-				}
-				if len(updates[0].From) != 1 || updates[0].From[0] != "3.14.0" {
-					t.Errorf("Module from = %v, want [\"3.14.0\"]", updates[0].From)
-				}
-			},
+			validate:    validateConfigWithFromField,
 		},
 		{
 			name: "config with mixed from fields",
@@ -478,14 +520,7 @@ func TestLoadConfigWithFromField(t *testing.T) {
 `,
 			expectError: false,
 			expectCount: 2,
-			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if len(updates[0].From) != 1 || updates[0].From[0] != "3.14.0" {
-					t.Errorf("First module from = %v, want [\"3.14.0\"]", updates[0].From)
-				}
-				if len(updates[1].From) != 0 {
-					t.Errorf("Second module from = %v, want empty slice", updates[1].From)
-				}
-			},
+			validate:    validateMixedFromFields,
 		},
 		{
 			name: "config with all modules having from field",
@@ -502,17 +537,7 @@ func TestLoadConfigWithFromField(t *testing.T) {
 `,
 			expectError: false,
 			expectCount: 3,
-			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if len(updates[0].From) != 1 || updates[0].From[0] != "3.14.0" {
-					t.Errorf("First module from = %v, want [\"3.14.0\"]", updates[0].From)
-				}
-				if len(updates[1].From) != 1 || updates[1].From[0] != "3.0.0" {
-					t.Errorf("Second module from = %v, want [\"3.0.0\"]", updates[1].From)
-				}
-				if len(updates[2].From) != 1 || updates[2].From[0] != "5.1.0" {
-					t.Errorf("Third module from = %v, want [\"5.1.0\"]", updates[2].From)
-				}
-			},
+			validate:    validateAllModulesWithFromFields,
 		},
 		{
 			name: "config with empty from string",
@@ -523,11 +548,7 @@ func TestLoadConfigWithFromField(t *testing.T) {
 `,
 			expectError: false,
 			expectCount: 1,
-			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if len(updates[0].From) != 0 {
-					t.Errorf("Expected empty from slice for empty string, got %v", updates[0].From)
-				}
-			},
+			validate:    validateEmptyFromField,
 		},
 	}
 
@@ -536,7 +557,7 @@ func TestLoadConfigWithFromField(t *testing.T) {
 			tmpDir := t.TempDir()
 			configFile := filepath.Join(tmpDir, "config.yml")
 
-			err := os.WriteFile(configFile, []byte(tt.configYAML), 0644)
+			err := os.WriteFile(configFile, []byte(tt.configYAML), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp config file: %v", err)
 			}
@@ -585,23 +606,7 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 `,
 			expectError: false,
 			expectCount: 1,
-			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if updates[0].Source != "terraform-aws-modules/s3-bucket/aws" {
-					t.Errorf("Module source = %q, want %q", updates[0].Source, "terraform-aws-modules/s3-bucket/aws")
-				}
-				if updates[0].Version != "4.0.0" {
-					t.Errorf("Module version = %q, want %q", updates[0].Version, "4.0.0")
-				}
-				if len(updates[0].From) != 2 {
-					t.Fatalf("Module from length = %d, want 2", len(updates[0].From))
-				}
-				if updates[0].From[0] != "3.0.0" {
-					t.Errorf("Module from[0] = %q, want %q", updates[0].From[0], "3.0.0")
-				}
-				if updates[0].From[1] != "~> 3.0" {
-					t.Errorf("Module from[1] = %q, want %q", updates[0].From[1], "~> 3.0")
-				}
-			},
+			validate:    validateArrayFromVersions,
 		},
 		{
 			name: "config with mixed single and array from versions",
@@ -617,22 +622,7 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 `,
 			expectError: false,
 			expectCount: 2,
-			validate: func(t *testing.T, updates []ModuleUpdate) {
-				// First module with single from version
-				if len(updates[0].From) != 1 || updates[0].From[0] != "4.0.0" {
-					t.Errorf("First module from = %v, want [\"4.0.0\"]", updates[0].From)
-				}
-				// Second module with multiple from versions
-				if len(updates[1].From) != 2 {
-					t.Fatalf("Second module from length = %d, want 2", len(updates[1].From))
-				}
-				if updates[1].From[0] != "3.0.0" {
-					t.Errorf("Second module from[0] = %q, want %q", updates[1].From[0], "3.0.0")
-				}
-				if updates[1].From[1] != "~> 3.0" {
-					t.Errorf("Second module from[1] = %q, want %q", updates[1].From[1], "~> 3.0")
-				}
-			},
+			validate:    validateMixedSingleAndArrayFromVersions,
 		},
 		{
 			name: "config with empty from array",
@@ -643,11 +633,7 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 `,
 			expectError: false,
 			expectCount: 1,
-			validate: func(t *testing.T, updates []ModuleUpdate) {
-				if len(updates[0].From) != 0 {
-					t.Errorf("Module from = %v, want empty slice", updates[0].From)
-				}
-			},
+			validate:    validateEmptyFromField,
 		},
 		{
 			name: "config with invalid from type - number",
@@ -695,7 +681,7 @@ func TestLoadConfigWithMultipleFromVersions(t *testing.T) {
 			tmpDir := t.TempDir()
 			configFile := filepath.Join(tmpDir, "config.yml")
 
-			err := os.WriteFile(configFile, []byte(tt.configYAML), 0644)
+			err := os.WriteFile(configFile, []byte(tt.configYAML), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp config file: %v", err)
 			}
@@ -746,7 +732,7 @@ module "iam" {
 `
 
 	tfFile := filepath.Join(tmpDir, "test.tf")
-	err := os.WriteFile(tfFile, []byte(tfContent), 0644)
+	err := os.WriteFile(tfFile, []byte(tfContent), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp Terraform file: %v", err)
 	}
@@ -764,7 +750,7 @@ module "iam" {
 `
 
 	configFile := filepath.Join(tmpDir, "config.yml")
-	err = os.WriteFile(configFile, []byte(configYAML), 0644)
+	err = os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -829,7 +815,7 @@ module "s3_other" {
 `
 
 	tfFile := filepath.Join(tmpDir, "test.tf")
-	err := os.WriteFile(tfFile, []byte(tfContent), 0644)
+	err := os.WriteFile(tfFile, []byte(tfContent), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp Terraform file: %v", err)
 	}
@@ -844,7 +830,7 @@ module "s3_other" {
 `
 
 	configFile := filepath.Join(tmpDir, "config.yml")
-	err = os.WriteFile(configFile, []byte(configContent), 0644)
+	err = os.WriteFile(configFile, []byte(configContent), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -891,7 +877,7 @@ func TestLoadConfigEmptyFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "empty.yml")
 
-	err := os.WriteFile(configFile, []byte(""), 0644)
+	err := os.WriteFile(configFile, []byte(""), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -915,7 +901,7 @@ func TestLoadConfigOnlyComments(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "comments.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -941,7 +927,7 @@ func TestLoadConfigSpecialCharacters(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -975,7 +961,7 @@ func TestLoadConfigDuplicateModules(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1012,7 +998,7 @@ func TestLoadConfigMixedQuotes(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1051,7 +1037,7 @@ func TestLoadConfigVeryLongVersionString(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1080,7 +1066,7 @@ func TestLoadConfigWhitespaceInValues(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1163,7 +1149,7 @@ func TestLoadConfigVersionConstraintsWithWhitespace(t *testing.T) {
 			tmpDir := t.TempDir()
 			configFile := filepath.Join(tmpDir, "config.yml")
 
-			err := os.WriteFile(configFile, []byte(configYAML), 0644)
+			err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp config file: %v", err)
 			}
@@ -1206,7 +1192,7 @@ func TestLoadConfigWithIgnoreModulesField(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1267,7 +1253,7 @@ func TestLoadConfigWithIgnoreModulesFieldWhitespace(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1308,7 +1294,7 @@ func TestLoadConfigWithWhitespaceOnlyIgnoreModulesPatterns(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1344,7 +1330,7 @@ func TestLoadConfigWithEmptyIgnoreModulesField(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1373,7 +1359,7 @@ func TestLoadConfigWithoutIgnoreModulesField(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1404,7 +1390,7 @@ func TestLoadConfigWithLegacyIgnoreField(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1479,7 +1465,7 @@ unknown_root: "value"
 			tmpDir := t.TempDir()
 			configFile := filepath.Join(tmpDir, "config.yml")
 
-			err := os.WriteFile(configFile, []byte(tt.configYAML), 0644)
+			err := os.WriteFile(configFile, []byte(tt.configYAML), 0o644)
 			if err != nil {
 				t.Fatalf("Failed to create temp config file: %v", err)
 			}
@@ -1509,7 +1495,7 @@ func TestLoadConfigWithMultipleLegacyFields(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1537,7 +1523,7 @@ func TestLoadConfigProviderMissingName(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1560,7 +1546,7 @@ func TestLoadConfigProviderMissingVersion(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1584,7 +1570,7 @@ func TestLoadConfigProviderWhitespaceTrimming(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -1614,7 +1600,7 @@ func TestLoadConfigEmptyProvidersArray(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yml")
 
-	err := os.WriteFile(configFile, []byte(configYAML), 0644)
+	err := os.WriteFile(configFile, []byte(configYAML), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}

@@ -125,59 +125,57 @@ func loadConfig(filename string) (*Config, error) {
 	// Trim and validate terraform_version
 	config.TerraformVersion = strings.TrimSpace(config.TerraformVersion)
 
-	// Validate and sanitize provider updates
-	for i, provider := range config.Providers {
-		config.Providers[i].Name = strings.TrimSpace(provider.Name)
-		config.Providers[i].Version = strings.TrimSpace(provider.Version)
-
-		if config.Providers[i].Name == "" {
-			return nil, fmt.Errorf("provider at index %d is missing 'name' field", i)
-		}
-		if config.Providers[i].Version == "" {
-			return nil, fmt.Errorf("provider at index %d is missing 'version' field", i)
-		}
+	if err := sanitizeProviderUpdates(config.Providers); err != nil {
+		return nil, err
 	}
-
-	// Validate and sanitize module updates
-	for i, module := range config.Modules {
-		// Trim whitespace from source and version fields
-		config.Modules[i].Source = strings.TrimSpace(module.Source)
-		config.Modules[i].Version = strings.TrimSpace(module.Version)
-
-		// Trim whitespace from from versions and filter out empty ones
-		filteredFrom := make([]string, 0, len(module.From))
-		for _, fromVer := range module.From {
-			if trimmed := strings.TrimSpace(fromVer); trimmed != "" {
-				filteredFrom = append(filteredFrom, trimmed)
-			}
-		}
-		config.Modules[i].From = filteredFrom
-
-		// Trim whitespace from ignore versions and filter out empty ones
-		filteredIgnoreVersions := make([]string, 0, len(module.IgnoreVersions))
-		for _, ignoreVer := range module.IgnoreVersions {
-			if trimmed := strings.TrimSpace(ignoreVer); trimmed != "" {
-				filteredIgnoreVersions = append(filteredIgnoreVersions, trimmed)
-			}
-		}
-		config.Modules[i].IgnoreVersions = filteredIgnoreVersions
-
-		// Trim whitespace from ignore patterns and filter out empty ones
-		filteredIgnore := make([]string, 0, len(module.IgnoreModules))
-		for _, pattern := range module.IgnoreModules {
-			if trimmed := strings.TrimSpace(pattern); trimmed != "" {
-				filteredIgnore = append(filteredIgnore, trimmed)
-			}
-		}
-		config.Modules[i].IgnoreModules = filteredIgnore
-
-		if config.Modules[i].Source == "" {
-			return nil, fmt.Errorf("module at index %d is missing 'source' field", i)
-		}
-		if config.Modules[i].Version == "" {
-			return nil, fmt.Errorf("module at index %d is missing 'version' field", i)
-		}
+	if err := sanitizeModuleUpdates(config.Modules); err != nil {
+		return nil, err
 	}
 
 	return &config, nil
+}
+
+func sanitizeProviderUpdates(providers []ProviderUpdate) error {
+	for i := range providers {
+		providers[i].Name = strings.TrimSpace(providers[i].Name)
+		providers[i].Version = strings.TrimSpace(providers[i].Version)
+
+		if providers[i].Name == "" {
+			return fmt.Errorf("provider at index %d is missing 'name' field", i)
+		}
+		if providers[i].Version == "" {
+			return fmt.Errorf("provider at index %d is missing 'version' field", i)
+		}
+	}
+
+	return nil
+}
+
+func sanitizeModuleUpdates(modules []ModuleUpdate) error {
+	for i := range modules {
+		modules[i].Source = strings.TrimSpace(modules[i].Source)
+		modules[i].Version = strings.TrimSpace(modules[i].Version)
+		modules[i].From = FromVersions(trimNonEmptyStrings(modules[i].From))
+		modules[i].IgnoreVersions = FromVersions(trimNonEmptyStrings(modules[i].IgnoreVersions))
+		modules[i].IgnoreModules = trimNonEmptyStrings(modules[i].IgnoreModules)
+
+		if modules[i].Source == "" {
+			return fmt.Errorf("module at index %d is missing 'source' field", i)
+		}
+		if modules[i].Version == "" {
+			return fmt.Errorf("module at index %d is missing 'version' field", i)
+		}
+	}
+
+	return nil
+}
+
+func trimNonEmptyStrings(values []string) []string {
+	filtered := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			filtered = append(filtered, trimmed)
+		}
+	}
+	return filtered
 }

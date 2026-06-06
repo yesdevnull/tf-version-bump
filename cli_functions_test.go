@@ -67,7 +67,7 @@ func TestFindMatchingFiles(t *testing.T) {
 	file3 := filepath.Join(tmpDir, "outputs.tf")
 
 	for _, f := range []string{file1, file2, file3} {
-		if err := os.WriteFile(f, []byte("# test"), 0644); err != nil {
+		if err := os.WriteFile(f, []byte("# test"), 0o644); err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
 	}
@@ -127,7 +127,7 @@ module "vpc" {
   version = "3.0.0"
 }`
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("Failed to create terraform file: %v", err)
 	}
 
@@ -140,7 +140,7 @@ modules:
   - source: "terraform-aws-modules/vpc/aws"
     version: "5.0.0"`
 	configFile := filepath.Join(tmpDir, "config.yml")
-	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(configContent), 0o644); err != nil {
 		t.Fatalf("Failed to create config file: %v", err)
 	}
 
@@ -180,13 +180,13 @@ func TestRunConfigFileModeDryRun(t *testing.T) {
   required_version = ">= 1.0"
 }`
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("Failed to create terraform file: %v", err)
 	}
 
 	configContent := `terraform_version: ">= 1.6"`
 	configFile := filepath.Join(tmpDir, "config.yml")
-	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(configContent), 0o644); err != nil {
 		t.Fatalf("Failed to create config file: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestRunCLIModeWithTerraformVersion(t *testing.T) {
   required_version = ">= 1.0"
 }`
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("Failed to create terraform file: %v", err)
 	}
 
@@ -255,7 +255,7 @@ func TestRunCLIModeWithProvider(t *testing.T) {
   }
 }`
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("Failed to create terraform file: %v", err)
 	}
 
@@ -289,7 +289,7 @@ func TestRunCLIModeWithModule(t *testing.T) {
   version = "3.0.0"
 }`
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(tfContent), 0644); err != nil {
+	if err := os.WriteFile(tfFile, []byte(tfContent), 0o644); err != nil {
 		t.Fatalf("Failed to create terraform file: %v", err)
 	}
 
