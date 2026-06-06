@@ -31,10 +31,10 @@ jobs:
         go-version-file: go.mod
         cache: true
 
-    - name: Install golangci-lint
-      run: |
-        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.12.2
-        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
+      with:
+        version: v2.12
 
     - name: Run golangci-lint
       run: golangci-lint run --timeout=5m
