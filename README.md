@@ -650,7 +650,7 @@ terraform {
 
 ## How it Works
 
-1. The tool uses `filepath.Glob` to find all files matching the specified pattern
+1. The tool uses `doublestar` to find all files matching the specified pattern, skipping dot-directories such as `.terraform` and `.git` unless you name them explicitly
 2. For each file, it:
    - Parses the HCL structure using `hashicorp/hcl/v2`
    - Searches for `module` blocks with the specified source attribute
@@ -781,10 +781,20 @@ spanning zero or more directories. So `**/*.tf` matches `main.tf`, `live/main.tf
 tf-version-bump -pattern "**/*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0"
 ```
 
-Files under `.terraform` and `.git` are always skipped, at any depth. `.terraform/modules`
-holds copies of upstream modules that `terraform init` regenerates, so a version bump written
-there would be silently discarded on the next init. To bump a module's own source, run against
-its real location rather than the vendored copy.
+Wildcards never match dot-directories, so `**/*.tf` skips `.terraform` and `.git` at any depth
+— the same rule your shell follows. This matters because `.terraform/modules` holds copies of
+upstream modules that `terraform init` regenerates, so a version bump written there would be
+silently discarded on the next init.
+
+Naming a hidden directory explicitly is unambiguous, so it still matches:
+
+```bash
+tf-version-bump -pattern ".terraform/**/*.tf" -module "aws/vpc" -to "5.0.0"   # matches
+```
+
+Directory symlinks are not followed, so a file reachable through both its real path and a link
+is matched once, not twice. `{dev,prod}` brace alternation and `[0-9]` character classes are
+also supported; a literal brace in a filename must be escaped (`\{`).
 
 ### Known Limitations
 
