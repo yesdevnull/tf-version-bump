@@ -193,6 +193,48 @@ func TestFindMatchingFiles_SkipsVendoredDirs(t *testing.T) {
 	}
 }
 
+// TestFindMatchingFiles_ReturnsSortedPaths verifies results are lexicographically sorted.
+// doublestar expands '**' one depth at a time and sorts only within each expansion, so raw
+// results are grouped by depth (top.tf before alpha/a.tf). File order is user-visible in the
+// per-file output, so sort it rather than leaking the library's traversal order.
+func TestFindMatchingFiles_ReturnsSortedPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	for _, d := range []string{"zebra", filepath.Join("alpha", "nested"), "middle"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, d), 0o755); err != nil {
+			t.Fatalf("Failed to create test dirs: %v", err)
+		}
+	}
+
+	// Deliberately mixes depths: a lexicographic sort must interleave them.
+	for _, f := range []string{
+		"top.tf",
+		"beta.tf",
+		filepath.Join("zebra", "z.tf"),
+		filepath.Join("alpha", "a.tf"),
+		filepath.Join("alpha", "nested", "n.tf"),
+		filepath.Join("middle", "m.tf"),
+	} {
+		if err := os.WriteFile(filepath.Join(tmpDir, f), []byte("# test"), 0o644); err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+	}
+
+	flags := &cliFlags{
+		pattern: filepath.Join(tmpDir, "**", "*.tf"),
+		output:  "text",
+	}
+
+	got := findMatchingFiles(flags)
+
+	if len(got) != 6 {
+		t.Fatalf("Expected 6 files, got %d: %v", len(got), got)
+	}
+	if !slices.IsSorted(got) {
+		t.Errorf("Expected sorted results, got %v", got)
+	}
+}
+
 // TestRunConfigFileModeEndToEnd tests the runConfigFileMode function
 func TestRunConfigFileModeEndToEnd(t *testing.T) {
 	tmpDir := t.TempDir()

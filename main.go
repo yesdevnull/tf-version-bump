@@ -276,6 +276,10 @@ func findMatchingFiles(flags *cliFlags) []string {
 
 	files = slices.DeleteFunc(files, isVendoredPath)
 
+	// doublestar expands '**' one depth at a time and sorts only within each expansion, so
+	// results arrive grouped by depth. File order is user-visible in the per-file output.
+	slices.Sort(files)
+
 	if len(files) == 0 {
 		fatalf("No files matched pattern: %s", flags.pattern)
 	}
