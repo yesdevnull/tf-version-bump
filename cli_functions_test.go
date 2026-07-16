@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -103,6 +104,92 @@ func TestFindMatchingFiles(t *testing.T) {
 				t.Errorf("Expected %d files, got %d", tt.expectedCount, len(files))
 			}
 		})
+	}
+}
+
+// TestFindMatchingFiles_DoubleStarRecurses verifies that '**' matches across directory
+// separators, spanning zero or more path segments. filepath.Glob cannot do this -- it
+// treats '**' as a single '*', silently matching only one level deep.
+func TestFindMatchingFiles_DoubleStarRecurses(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, "a", "b"), 0o755); err != nil {
+		t.Fatalf("Failed to create test dirs: %v", err)
+	}
+
+	// One .tf at each depth, plus a non-.tf file that must not match.
+	want := []string{
+		filepath.Join(tmpDir, "top.tf"),
+		filepath.Join(tmpDir, "a", "mid.tf"),
+		filepath.Join(tmpDir, "a", "b", "deep.tf"),
+	}
+	for _, f := range append(want, filepath.Join(tmpDir, "a", "notes.md")) {
+		if err := os.WriteFile(f, []byte("# test"), 0o644); err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+	}
+
+	flags := &cliFlags{
+		pattern: filepath.Join(tmpDir, "**", "*.tf"),
+		output:  "text",
+	}
+
+	got := findMatchingFiles(flags)
+
+	if len(got) != len(want) {
+		t.Fatalf("Expected %d files, got %d: %v", len(want), len(got), got)
+	}
+	for _, w := range want {
+		if !slices.Contains(got, w) {
+			t.Errorf("Expected %q in results, got %v", w, got)
+		}
+	}
+}
+
+// TestFindMatchingFiles_SkipsVendoredDirs verifies that files under .terraform and .git are
+// excluded. .terraform/modules holds vendored copies that `terraform init` regenerates, so
+// rewriting them silently loses the change.
+func TestFindMatchingFiles_SkipsVendoredDirs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	dirs := []string{
+		filepath.Join(tmpDir, "live"),
+		filepath.Join(tmpDir, ".terraform", "modules", "vpc"),
+		filepath.Join(tmpDir, ".git", "hooks"),
+		filepath.Join(tmpDir, "nested", ".terraform"),
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("Failed to create test dirs: %v", err)
+		}
+	}
+
+	wanted := filepath.Join(tmpDir, "live", "main.tf")
+	excluded := []string{
+		filepath.Join(tmpDir, ".terraform", "modules", "vpc", "vendored.tf"),
+		filepath.Join(tmpDir, ".git", "hooks", "hook.tf"),
+		filepath.Join(tmpDir, "nested", ".terraform", "deep.tf"),
+	}
+	for _, f := range append([]string{wanted}, excluded...) {
+		if err := os.WriteFile(f, []byte("# test"), 0o644); err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+	}
+
+	flags := &cliFlags{
+		pattern: filepath.Join(tmpDir, "**", "*.tf"),
+		output:  "text",
+	}
+
+	got := findMatchingFiles(flags)
+
+	if !slices.Contains(got, wanted) {
+		t.Errorf("Expected %q in results, got %v", wanted, got)
+	}
+	for _, e := range excluded {
+		if slices.Contains(got, e) {
+			t.Errorf("Expected %q to be excluded, got %v", e, got)
+		}
 	}
 }
 
