@@ -109,7 +109,7 @@ tf-version-bump -pattern <glob-pattern> -module <module-source> -to <version>
 
 #### Arguments
 
-- `-pattern`: Glob pattern for Terraform files (e.g., `*.tf`, `modules/**/*.tf`)
+- `-pattern`: Glob pattern for Terraform files (e.g., `*.tf`, `modules/**/*.tf`). See [Glob patterns](#glob-patterns)
 - `-module`: Source of the module to update (e.g., `terraform-aws-modules/vpc/aws`)
 - `-to`: Desired version number
 - `-from`: (Optional) Version to update from (can be specified multiple times, e.g., `-from 3.0.0 -from '~> 3.0'`)
@@ -770,6 +770,21 @@ For verification instructions and detailed release information, see [docs/RELEAS
 - **Test before production**: Always test updates in a development environment first, especially when using config files with multiple module updates.
 - **Review changes**: Use `git diff` after running the tool to review all modifications before committing.
 - **Use dry-run mode**: Run with `-dry-run` flag first to preview changes: `tf-version-bump -pattern "*.tf" -module "..." -to "..." -dry-run`
+
+### Glob patterns
+
+`*` matches within a single path segment, and `**` matches across directory boundaries,
+spanning zero or more directories. So `**/*.tf` matches `main.tf`, `live/main.tf` and
+`live/prod/main.tf` alike. Quote your pattern so the shell passes it through unexpanded:
+
+```bash
+tf-version-bump -pattern "**/*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0"
+```
+
+Files under `.terraform` and `.git` are always skipped, at any depth. `.terraform/modules`
+holds copies of upstream modules that `terraform init` regenerates, so a version bump written
+there would be silently discarded on the next init. To bump a module's own source, run against
+its real location rather than the vendored copy.
 
 ### Known Limitations
 
