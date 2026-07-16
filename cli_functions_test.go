@@ -146,9 +146,10 @@ func TestFindMatchingFiles_DoubleStarRecurses(t *testing.T) {
 	}
 }
 
-// TestFindMatchingFiles_SkipsVendoredDirs verifies that files under .terraform and .git are
-// excluded. .terraform/modules holds vendored copies that `terraform init` regenerates, so
-// rewriting them silently loses the change.
+// TestFindMatchingFiles_SkipsVendoredDirs verifies that wildcards do not match into .terraform
+// or .git at any depth. .terraform/modules holds vendored copies that `terraform init`
+// regenerates, so rewriting them silently loses the change. Naming such a directory explicitly
+// is still honoured -- see TestFindMatchingFiles_HonoursExplicitHiddenPattern.
 func TestFindMatchingFiles_SkipsVendoredDirs(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -232,6 +233,113 @@ func TestFindMatchingFiles_ReturnsSortedPaths(t *testing.T) {
 	}
 	if !slices.IsSorted(got) {
 		t.Errorf("Expected sorted results, got %v", got)
+	}
+}
+
+// TestFindMatchingFiles_DoesNotFollowSymlinks verifies that a directory symlink is not
+// traversed. Following it would match the same physical file via both its real path and the
+// link, so the file would be read-modify-written twice and counted twice.
+func TestFindMatchingFiles_DoesNotFollowSymlinks(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	realDir := filepath.Join(tmpDir, "modules")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatalf("Failed to create test dir: %v", err)
+	}
+
+	realFile := filepath.Join(realDir, "main.tf")
+	if err := os.WriteFile(realFile, []byte("# test"), 0o644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	if err := os.Symlink(realDir, filepath.Join(tmpDir, "link")); err != nil {
+		t.Fatalf("Failed to create symlink: %v", err)
+	}
+
+	flags := &cliFlags{
+		pattern: filepath.Join(tmpDir, "**", "*.tf"),
+		output:  "text",
+	}
+
+	got := findMatchingFiles(flags)
+
+	// One physical file exists, so exactly one match -- not the link's view as well.
+	if len(got) != 1 {
+		t.Fatalf("Expected 1 file, got %d: %v", len(got), got)
+	}
+	if got[0] != realFile {
+		t.Errorf("Expected %q, got %q", realFile, got[0])
+	}
+}
+
+// TestFindMatchingFiles_ExcludesDirectories verifies directories are never returned as
+// matches. A trailing '**' matches directories as readily as files, and each one would
+// otherwise be counted in "Found N file(s)" and then fail with "is a directory".
+func TestFindMatchingFiles_ExcludesDirectories(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, "vpc"), 0o755); err != nil {
+		t.Fatalf("Failed to create test dir: %v", err)
+	}
+
+	wanted := filepath.Join(tmpDir, "vpc", "main.tf")
+	if err := os.WriteFile(wanted, []byte("# test"), 0o644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	flags := &cliFlags{
+		pattern: filepath.Join(tmpDir, "**"),
+		output:  "text",
+	}
+
+	got := findMatchingFiles(flags)
+
+	for _, p := range got {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("Failed to stat %q: %v", p, err)
+		}
+		if info.IsDir() {
+			t.Errorf("Expected no directories in results, got %q in %v", p, got)
+		}
+	}
+	if len(got) != 1 {
+		t.Errorf("Expected only %q, got %v", wanted, got)
+	}
+}
+
+// TestFindMatchingFiles_HonoursExplicitHiddenPattern verifies that naming a hidden directory
+// explicitly matches files inside it. Wildcards skip dot-directories, but an explicit
+// '.terraform/...' is unambiguous intent and must not be silently filtered to nothing.
+func TestFindMatchingFiles_HonoursExplicitHiddenPattern(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	vendorDir := filepath.Join(tmpDir, ".terraform", "modules", "vpc")
+	if err := os.MkdirAll(vendorDir, 0o755); err != nil {
+		t.Fatalf("Failed to create test dirs: %v", err)
+	}
+
+	wanted := filepath.Join(vendorDir, "vendored.tf")
+	if err := os.WriteFile(wanted, []byte("# test"), 0o644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	flags := &cliFlags{
+		pattern: filepath.Join(tmpDir, ".terraform", "**", "*.tf"),
+		output:  "text",
+	}
+
+	// findMatchingFiles calls fatalf (which panics via the stub) when nothing matches.
+	restoreExit, _ := stubExit(t)
+	defer restoreExit()
+
+	var got []string
+	func() {
+		defer func() { _ = recover() }()
+		got = findMatchingFiles(flags)
+	}()
+
+	if len(got) != 1 || got[0] != wanted {
+		t.Errorf("Expected explicit pattern to match [%q], got %v", wanted, got)
 	}
 }
 
