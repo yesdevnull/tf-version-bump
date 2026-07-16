@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -269,15 +268,26 @@ func findMatchingFiles(flags *cliFlags) []string {
 	// doublestar rather than filepath.Glob: it supports '**', which spans zero or more
 	// directories. filepath.Glob treats '**' as a plain '*', silently matching only one
 	// level deep.
-	files, err := doublestar.FilepathGlob(flags.pattern)
+	//
+	// The options give this the same semantics a shell glob has:
+	//   - WithNoHidden: wildcards don't match dot-directories, so '**/*.tf' skips the
+	//     tool-managed .terraform and .git trees without walking into them. Naming one
+	//     explicitly ('.terraform/**/*.tf') still matches.
+	//   - WithNoFollow: don't traverse directory symlinks, which would otherwise match the
+	//     same physical file via both its real path and the link.
+	//   - WithFilesOnly: '**' matches directories as readily as files; we only want files.
+	files, err := doublestar.FilepathGlob(
+		flags.pattern,
+		doublestar.WithNoHidden(),
+		doublestar.WithNoFollow(),
+		doublestar.WithFilesOnly(),
+	)
 	if err != nil {
 		fatalf("Error matching pattern: %v", err)
 	}
 
-	files = slices.DeleteFunc(files, isVendoredPath)
-
-	// doublestar expands '**' one depth at a time and sorts only within each expansion, so
-	// results arrive grouped by depth. File order is user-visible in the per-file output.
+	// doublestar walks depth-first, so results come back in traversal order rather than
+	// sorted. File order is user-visible in the per-file output.
 	slices.Sort(files)
 
 	if len(files) == 0 {
@@ -913,33 +923,6 @@ func shouldSkipModuleVersion(moduleName, currentVersion string, opts *moduleUpda
 		return true
 	}
 
-	return false
-}
-
-// vendoredDirs are directories whose contents are managed by tooling rather than by hand.
-// .terraform holds module and provider copies that `terraform init` regenerates, so a version
-// bump written there is silently discarded on the next init.
-var vendoredDirs = []string{".terraform", ".git"}
-
-// isVendoredPath reports whether any segment of path is a tool-managed directory.
-// A '**' pattern would otherwise descend into them.
-//
-// Parameters:
-//   - path: The file path to check
-//
-// Returns:
-//   - bool: true if any path segment is a tool-managed directory, false otherwise
-//
-// Examples:
-//   - isVendoredPath("live/main.tf") returns false
-//   - isVendoredPath(".terraform/modules/vpc/main.tf") returns true
-//   - isVendoredPath("nested/.terraform/main.tf") returns true
-func isVendoredPath(path string) bool {
-	for _, segment := range strings.Split(filepath.ToSlash(path), "/") {
-		if slices.Contains(vendoredDirs, segment) {
-			return true
-		}
-	}
 	return false
 }
 
