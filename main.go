@@ -17,9 +17,11 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -99,7 +101,7 @@ type cliFlags struct {
 func parseFlags() *cliFlags {
 	flags := &cliFlags{}
 
-	flag.StringVar(&flags.pattern, "pattern", "", "Glob pattern for Terraform files (e.g., '*.tf' or 'modules/**/*.tf')")
+	flag.StringVar(&flags.pattern, "pattern", "", "Glob pattern for Terraform files; '**' matches any depth (e.g., '*.tf' or 'modules/**/*.tf')")
 	flag.StringVar(&flags.moduleSource, "module", "", "Source of the module to update (e.g., 'terraform-aws-modules/vpc/aws')")
 	flag.StringVar(&flags.toVersion, "to", "", "Desired version number")
 	flag.Var(&flags.fromVersions, "from", "Optional: version to update from (can be specified multiple times, e.g., -from 3.0.0 -from '~> 3.0')")
@@ -264,10 +266,15 @@ func findMatchingFiles(flags *cliFlags) []string {
 		fatalf("Error: -pattern flag is required")
 	}
 
-	files, err := filepath.Glob(flags.pattern)
+	// doublestar rather than filepath.Glob: it supports '**', which spans zero or more
+	// directories. filepath.Glob treats '**' as a plain '*', silently matching only one
+	// level deep.
+	files, err := doublestar.FilepathGlob(flags.pattern)
 	if err != nil {
 		fatalf("Error matching pattern: %v", err)
 	}
+
+	files = slices.DeleteFunc(files, isVendoredPath)
 
 	if len(files) == 0 {
 		fatalf("No files matched pattern: %s", flags.pattern)
@@ -902,6 +909,33 @@ func shouldSkipModuleVersion(moduleName, currentVersion string, opts *moduleUpda
 		return true
 	}
 
+	return false
+}
+
+// vendoredDirs are directories whose contents are managed by tooling rather than by hand.
+// .terraform holds module and provider copies that `terraform init` regenerates, so a version
+// bump written there is silently discarded on the next init.
+var vendoredDirs = []string{".terraform", ".git"}
+
+// isVendoredPath reports whether any segment of path is a tool-managed directory.
+// A '**' pattern would otherwise descend into them.
+//
+// Parameters:
+//   - path: The file path to check
+//
+// Returns:
+//   - bool: true if any path segment is a tool-managed directory, false otherwise
+//
+// Examples:
+//   - isVendoredPath("live/main.tf") returns false
+//   - isVendoredPath(".terraform/modules/vpc/main.tf") returns true
+//   - isVendoredPath("nested/.terraform/main.tf") returns true
+func isVendoredPath(path string) bool {
+	for _, segment := range strings.Split(filepath.ToSlash(path), "/") {
+		if slices.Contains(vendoredDirs, segment) {
+			return true
+		}
+	}
 	return false
 }
 
