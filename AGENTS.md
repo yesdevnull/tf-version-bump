@@ -73,7 +73,7 @@ golangci-lint run --fix                                   # Auto-fix issues
 # Single module update
 ./tf-version-bump -pattern "*.tf" -module "terraform-aws-modules/vpc/aws" -to "5.0.0"
 
-# Batch update with config
+# Batch update with config ('**' recurses to any depth; .terraform and .git are skipped)
 ./tf-version-bump -pattern "**/*.tf" -config examples/config-basic.yml
 
 # Dry run
@@ -135,8 +135,8 @@ func TestExample(t *testing.T) {
     initial := `module "vpc" { source = "aws/vpc" version = "1.0.0" }`
     os.WriteFile(testFile, []byte(initial), 0644)
 
-    // Execute
-    updated, err := updateModuleVersion(testFile, "aws/vpc", "2.0.0", nil, nil, nil, false, false)
+    // Execute (fromVersions, ignoreVersions, ignorePatterns, forceAdd, dryRun, verbose, outputFormat)
+    updated, err := updateModuleVersion(testFile, "aws/vpc", "2.0.0", nil, nil, nil, false, false, false, "text")
 
     // Assert
     if err != nil {
@@ -204,10 +204,13 @@ Priority order in `updateModuleVersion()`:
 
 ## Dependencies
 
+Direct dependencies — see `go.mod` for versions:
+
 ```
-github.com/hashicorp/hcl/v2  v2.24.0  # Official HCL parser
-github.com/zclconf/go-cty    v1.17.0  # HCL type system
-gopkg.in/yaml.v3             v3.0.1   # YAML parsing
+github.com/hashicorp/hcl/v2      # Official HCL parser
+github.com/zclconf/go-cty        # HCL type system
+gopkg.in/yaml.v3                 # YAML parsing
+github.com/bmatcuk/doublestar/v4 # Recursive '**' globbing
 ```
 
 ## Resources
