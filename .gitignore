@@ -15,6 +15,9 @@ coverage.html
 # Go workspace file
 go.work
 
+# Local feature worktrees
+.worktrees/
+
 # Binary output
 tf-version-bump
 tf-version-bump-*
