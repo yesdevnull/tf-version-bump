@@ -189,6 +189,104 @@ func TestRunConfigModeReportsProviderFileFailure(t *testing.T) {
 	}
 }
 
+func TestRunConfigModeAggregatesMixedFileFailures(t *testing.T) {
+	tmpDir := t.TempDir()
+	malformedFiles := []string{
+		filepath.Join(tmpDir, "01-malformed.tf"),
+		filepath.Join(tmpDir, "02-malformed.tf"),
+	}
+	for _, file := range malformedFiles {
+		if err := os.WriteFile(file, []byte("module \"broken\" {"), 0o644); err != nil {
+			t.Fatalf("failed to write malformed Terraform file: %v", err)
+		}
+	}
+
+	validFile := filepath.Join(tmpDir, "03-valid.tf")
+	if err := os.WriteFile(validFile, []byte(`terraform {
+  required_version = ">= 1.0"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+  }
+}
+
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.0.0"
+}
+
+module "ec2" {
+  source  = "terraform-aws-modules/ec2-instance/aws"
+  version = "4.0.0"
+}
+`), 0o644); err != nil {
+		t.Fatalf("failed to write valid Terraform file: %v", err)
+	}
+
+	configFile := filepath.Join(tmpDir, "updates.yml")
+	if err := os.WriteFile(configFile, []byte(`terraform_version: ">= 1.6"
+providers:
+  - name: aws
+    version: "~> 5.0"
+  - name: azurerm
+    version: "~> 4.0"
+modules:
+  - source: terraform-aws-modules/vpc/aws
+    version: 5.0.0
+  - source: terraform-aws-modules/ec2-instance/aws
+    version: 6.0.0
+`), 0o644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	files := []string{malformedFiles[0], malformedFiles[1], validFile}
+	stdout, diagnostic, runnerErr := captureRunnerOutput(t, func() error {
+		return runConfigFileMode(files, &cliFlags{configFile: configFile, output: "text"})
+	})
+
+	updated, err := os.ReadFile(validFile)
+	if err != nil {
+		t.Fatalf("failed to read updated Terraform file: %v", err)
+	}
+	updatedText := string(updated)
+	for _, want := range []string{
+		`required_version = ">= 1.6"`,
+		`version = "~> 5.0"`,
+		`version = "~> 4.0"`,
+		`source  = "terraform-aws-modules/vpc/aws"
+  version = "5.0.0"`,
+		`source  = "terraform-aws-modules/ec2-instance/aws"
+  version = "6.0.0"`,
+	} {
+		if !strings.Contains(updatedText, want) {
+			t.Errorf("expected valid file to contain %q, got: %s", want, updatedText)
+		}
+	}
+
+	diagnosticLines := strings.Split(strings.TrimSuffix(diagnostic, "\n"), "\n")
+	if got, want := len(diagnosticLines), 10; got != want {
+		t.Errorf("diagnostic count = %d, want %d; diagnostics: %q", got, want, diagnostic)
+	}
+	if !strings.Contains(stdout, "Terraform version: 1 file(s) updated") ||
+		!strings.Contains(stdout, "Providers: 2 update(s) applied") ||
+		!strings.Contains(stdout, "Modules: 2 file(s) updated") {
+		t.Errorf("expected mixed config summary in stdout, got %q", stdout)
+	}
+	if runnerErr == nil {
+		t.Fatal("expected runner to report aggregate file failures")
+	}
+	if got, want := runnerErr.Error(), "10 update error(s)"; got != want {
+		t.Errorf("aggregate runner error = %q, want %q", got, want)
+	}
+}
+
 func TestRunConfigModeProviderAllFilesSucceed(t *testing.T) {
 	tmpDir := t.TempDir()
 	files := []string{

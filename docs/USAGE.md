@@ -254,8 +254,8 @@ An invalid pattern or a pattern with no matching files is a fatal command error.
   with later files or updates.
 
 File-level errors do not stop processing: the command writes every diagnostic and continues with
-later files or configured updates. After printing the final summary, it exits non-zero if any
-selected operation encountered a file-level error.
+later files or configured updates. After processing, and after any summary, it exits non-zero if
+any selected operation encountered a file-level error.
 
 ## File-writing behaviour
 

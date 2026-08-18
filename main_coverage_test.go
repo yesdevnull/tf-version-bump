@@ -220,6 +220,25 @@ func TestCommandReportsAggregateFileFailure(t *testing.T) {
 		t.Fatalf("failed to write valid Terraform file: %v", err)
 	}
 
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stdout pipe: %v", err)
+	}
+	defer func() {
+		if err := stdoutReader.Close(); err != nil {
+			t.Errorf("failed to close stdout reader: %v", err)
+		}
+	}()
+	originalStdout := os.Stdout
+	os.Stdout = stdoutWriter
+	defer func() { os.Stdout = originalStdout }()
+	var stdout bytes.Buffer
+	stdoutDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&stdout, stdoutReader)
+		close(stdoutDone)
+	}()
+
 	withFlagArgs(t, []string{
 		"tf-version-bump",
 		"-pattern", filepath.Join(tmpDir, "*.tf"),
@@ -235,11 +254,22 @@ func TestCommandReportsAggregateFileFailure(t *testing.T) {
 		}()
 		main()
 	})
+	if err := stdoutWriter.Close(); err != nil {
+		t.Fatalf("failed to close stdout writer: %v", err)
+	}
+	<-stdoutDone
 
-	wantDiagnostic := "Error processing " + malformedFile + ": failed to parse HCL: " + malformedFile + ":1,1-2: Argument or block definition required; An argument or block definition is required here."
-	diagnosticLines := strings.Split(strings.TrimSuffix(diagnostics.String(), "\n"), "\n")
-	if len(diagnosticLines) == 0 || diagnosticLines[0] != wantDiagnostic {
-		t.Fatalf("expected first diagnostic %q, got %q", wantDiagnostic, diagnostics.String())
+	wantStdout := "Found 2 file(s) matching pattern '" + filepath.Join(tmpDir, "*.tf") + "'\n" +
+		"✓ Updated module source 'example/module' to version '2.0.0' in " + validFile + "\n" +
+		"\nSuccessfully updated 1 file(s)\n"
+	if got := stdout.String(); got != wantStdout {
+		t.Errorf("stdout = %q, want %q", got, wantStdout)
+	}
+
+	wantDiagnostic := "Error processing " + malformedFile + ": failed to parse HCL: " + malformedFile + ":1,1-2: Argument or block definition required; An argument or block definition is required here.\n" +
+		"1 module update error(s)\n"
+	if got := diagnostics.String(); got != wantDiagnostic {
+		t.Errorf("stderr = %q, want %q", got, wantDiagnostic)
 	}
 	if *code != 1 {
 		t.Fatalf("expected exit code 1, got %d", *code)
