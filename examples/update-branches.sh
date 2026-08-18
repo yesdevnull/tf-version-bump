@@ -25,7 +25,7 @@ Options:
   --include-remotes        Fetch and include branches that exist only on the remote.
   --remote <name>          Remote used with --include-remotes (default: origin).
   --since-days <number>    Process branches whose tip changed within this many days.
-  --log-file <path>        Append command output to a log file.
+  --log-file <path>        Append command output to a log file outside the target repository.
   -h, --help               Show this help.
 EOF
 }
@@ -123,10 +123,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -n "$log_file" ]]; then
-    exec > >(tee -a "$log_file") 2>&1
-fi
-
 [[ -n "$branch_pattern" ]] || die "--branch-pattern is required"
 if [[ -n "$since_days" && ! "$since_days" =~ ^[1-9][0-9]*$ ]]; then
     die "--since-days must be a positive integer"
@@ -143,6 +139,19 @@ else
     commit_message="chore: bump $module_source to $target_version"
 fi
 git -C "$repository" rev-parse --git-dir >/dev/null 2>&1 || die "not a Git repository: $repository"
+
+if [[ -n "$log_file" ]]; then
+    repository_root=$(git -C "$repository" rev-parse --show-toplevel)
+    repository_root=$(cd "$repository_root" && pwd -P)
+    log_directory=$(cd "$(dirname "$log_file")" && pwd -P)
+    log_file="$log_directory/$(basename "$log_file")"
+    case "$log_file" in
+        "$repository_root"|"$repository_root"/*)
+            die "log file must be outside the target repository: $log_file"
+            ;;
+    esac
+    exec > >(tee -a "$log_file") 2>&1
+fi
 
 if [[ -n "$(git -C "$repository" status --porcelain)" ]]; then
     die "repository has uncommitted or untracked changes: $repository"

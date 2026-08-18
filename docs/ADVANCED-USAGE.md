@@ -152,8 +152,9 @@ examples/update-branches.sh \
 ```
 
 The log is appended rather than replaced and contains output from the script, Git, and
-`tf-version-bump`. Put the log outside the target repository; otherwise the clean-worktree check
-or branch checkouts can interfere with it.
+`tf-version-bump`. The path must be outside the target repository so the log cannot interfere with
+the clean-worktree check or branch checkouts. The script rejects an internal path before creating
+the log file.
 
 ## Use a particular binary
 
@@ -184,7 +185,7 @@ examples/update-branches.sh \
 | `--include-remotes` | Off | Fetch and include remote-only branches |
 | `--remote <name>` | `origin` | Remote used by `--include-remotes` |
 | `--since-days <number>` | No age filter | Include branches with recent tip commits |
-| `--log-file <path>` | No log file | Append combined output to a file |
+| `--log-file <path>` | No log file | Append combined output outside the target repository |
 
 Run `examples/update-branches.sh --help` for the built-in reference.
 

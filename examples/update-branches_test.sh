@@ -247,6 +247,28 @@ test_writes_a_log_file() {
     [[ "$log_output" == *'Successfully updated 1 file(s)'* ]] || fail "log omits tf-version-bump output"
 }
 
+test_refuses_a_log_file_inside_the_repository() {
+    local repository="$TEST_ROOT/internal-log"
+    local log_file="$repository/version-bump.log"
+    create_repository "$repository"
+    git -C "$repository" branch feature/logged
+
+    local output
+    if output=$("$SCRIPT" \
+        --repository "$repository" \
+        --branch-pattern 'feature/*' \
+        --module 'terraform-aws-modules/vpc/aws' \
+        --to '2.0.0' \
+        --binary "$TF_VERSION_BUMP" \
+        --log-file "$log_file" 2>&1); then
+        fail "log file inside the target repository was accepted"
+    fi
+
+    [[ "$output" == *'log file must be outside the target repository'* ]] || fail "internal log file error was unclear"
+    [[ ! -e "$log_file" ]] || fail "internal log file was created before validation"
+    [[ -z "$(git -C "$repository" status --porcelain)" ]] || fail "internal log file left the repository dirty"
+}
+
 test_filters_branches_by_tip_commit_age() {
     local repository="$TEST_ROOT/recent-branches"
     create_repository "$repository"
@@ -369,6 +391,7 @@ test_dry_run_leaves_branches_unchanged
 test_remote_dry_run_does_not_create_local_branches
 test_includes_remote_only_branches_without_pushing
 test_writes_a_log_file
+test_refuses_a_log_file_inside_the_repository
 test_filters_branches_by_tip_commit_age
 test_refuses_a_dirty_repository
 test_commit_failure_leaves_changes_on_the_affected_branch
