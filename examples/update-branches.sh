@@ -8,8 +8,10 @@ Usage:
   update-branches.sh --branch-pattern <glob> --module <source> --to <version> [options]
   update-branches.sh --branch-pattern <glob> --config <file> [options]
 
-Required:
+Required selection:
   --branch-pattern <glob>  Select local branch names, for example 'release/*'.
+
+Update mode (choose one):
   --module <source>        Update this module source (requires --to).
   --to <version>           Set the target module version.
   --config <file>          Apply updates from a tf-version-bump YAML config.
