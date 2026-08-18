@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"io"
 	"log"
@@ -395,15 +396,32 @@ func TestFindMatchingFilesDryRunMessage(t *testing.T) {
 	}
 }
 
-func TestRunConfigFileModeLoadError(t *testing.T) {
+func TestRunConfigFileModeReturnsLoadError(t *testing.T) {
 	restoreExit, code := stubExit(t)
 	defer restoreExit()
 	log.SetOutput(io.Discard)
 
-	defer func() { _ = recover() }()
-	_ = runConfigFileMode(nil, &cliFlags{configFile: "does-not-exist"})
-	if *code != 1 {
-		t.Fatalf("expected exit code 1, got %d", *code)
+	var gotErr error
+	var recovered interface{}
+	func() {
+		defer func() { recovered = recover() }()
+		gotErr = runConfigFileMode(nil, &cliFlags{configFile: "does-not-exist"})
+	}()
+
+	if recovered != nil {
+		t.Fatalf("runConfigFileMode exited instead of returning an error: %v", recovered)
+	}
+	if *code != -1 {
+		t.Fatalf("runConfigFileMode exited with code %d", *code)
+	}
+	if gotErr == nil {
+		t.Fatal("expected config load error")
+	}
+	if !strings.Contains(gotErr.Error(), "Error loading config file: failed to read config file:") {
+		t.Fatalf("unexpected error: %v", gotErr)
+	}
+	if !errors.Is(gotErr, os.ErrNotExist) {
+		t.Fatalf("expected wrapped file-not-found error, got: %v", gotErr)
 	}
 }
 
