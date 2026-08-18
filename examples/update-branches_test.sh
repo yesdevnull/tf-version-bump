@@ -7,6 +7,7 @@ SCRIPT="$SCRIPT_DIR/update-branches.sh"
 PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 TEST_ROOT=$(mktemp -d)
 TF_VERSION_BUMP="$TEST_ROOT/tf-version-bump"
+TEST_SIGNING_KEY="$TEST_ROOT/signing-key"
 
 cleanup() {
     rm -rf "$TEST_ROOT"
@@ -29,6 +30,15 @@ install_git_wrapper() {
     export PATH="$TEST_ROOT/bin:$PATH"
 }
 
+create_test_signing_key() {
+    if [[ -n "${TFVB_GIT_WRAPPER:-}" ]]; then
+        return
+    fi
+
+    command -v ssh-keygen >/dev/null || fail "ssh-keygen is required to test signed commits"
+    ssh-keygen -q -t ed25519 -N '' -f "$TEST_SIGNING_KEY"
+}
+
 build_tf_version_bump() {
     GOCACHE="$TEST_ROOT/go-cache" go build -o "$TF_VERSION_BUMP" "$PROJECT_ROOT"
 }
@@ -39,6 +49,11 @@ create_repository() {
     git init -q -b main "$repository"
     git -C "$repository" config user.name "tf-version-bump tests"
     git -C "$repository" config user.email "tests@example.invalid"
+    if [[ -z "${TFVB_GIT_WRAPPER:-}" ]]; then
+        git -C "$repository" config gpg.format ssh
+        git -C "$repository" config user.signingkey "$TEST_SIGNING_KEY"
+        git -C "$repository" config commit.gpgsign false
+    fi
     printf '%s\n' \
         'module "vpc" {' \
         '  source  = "terraform-aws-modules/vpc/aws"' \
@@ -57,6 +72,7 @@ test_help_describes_required_inputs() {
     [[ "$output" == *"--branch-pattern"* ]] || fail "help omits --branch-pattern"
     [[ "$output" == *"--module"* ]] || fail "help omits --module"
     [[ "$output" == *"--config"* ]] || fail "help omits --config"
+    [[ "$output" == *"signed commit"* ]] || fail "help omits the signed-commit requirement"
 }
 
 test_updates_matching_local_branches_and_restores_starting_branch() {
@@ -86,6 +102,8 @@ test_updates_matching_local_branches_and_restores_starting_branch() {
     local feature_subject
     feature_subject=$(git -C "$repository" log -1 --format=%s feature/update)
     [[ "$feature_subject" == "chore: bump terraform-aws-modules/vpc/aws to 2.0.0" ]] || fail "update was not committed"
+
+    git -C "$repository" cat-file commit feature/update | grep -q '^gpgsig ' || fail "update commit was not signed"
 }
 
 test_applies_config_file_updates() {
@@ -145,6 +163,34 @@ test_dry_run_leaves_branches_unchanged() {
     local feature_file
     feature_file=$(git -C "$repository" show feature/preview:main.tf)
     [[ "$feature_file" == *'version = "1.0.0"'* ]] || fail "dry run changed a Terraform file"
+}
+
+test_remote_dry_run_does_not_create_local_branches() {
+    local repository="$TEST_ROOT/remote-dry-run"
+    local remote="$TEST_ROOT/preview-origin.git"
+    create_repository "$repository"
+    git -C "$repository" branch feature/preview-remote
+    git init -q --bare "$remote"
+    git -C "$repository" remote add origin "$remote"
+    git -C "$repository" push -q origin main feature/preview-remote
+    git -C "$repository" branch -D feature/preview-remote >/dev/null
+
+    "$SCRIPT" \
+        --repository "$repository" \
+        --branch-pattern 'feature/*' \
+        --module 'terraform-aws-modules/vpc/aws' \
+        --to '2.0.0' \
+        --binary "$TF_VERSION_BUMP" \
+        --include-remotes \
+        --dry-run
+
+    if git -C "$repository" show-ref --verify --quiet refs/heads/feature/preview-remote; then
+        fail "remote dry run created a local branch"
+    fi
+
+    local remote_file
+    remote_file=$(git --git-dir "$remote" show refs/heads/feature/preview-remote:main.tf)
+    [[ "$remote_file" == *'version = "1.0.0"'* ]] || fail "remote dry run changed the remote branch"
 }
 
 test_includes_remote_only_branches_without_pushing() {
@@ -274,11 +320,13 @@ test_commit_failure_leaves_changes_on_the_affected_branch() {
 }
 
 install_git_wrapper
+create_test_signing_key
 build_tf_version_bump
 test_help_describes_required_inputs
 test_updates_matching_local_branches_and_restores_starting_branch
 test_applies_config_file_updates
 test_dry_run_leaves_branches_unchanged
+test_remote_dry_run_does_not_create_local_branches
 test_includes_remote_only_branches_without_pushing
 test_writes_a_log_file
 test_filters_branches_by_tip_commit_age

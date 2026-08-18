@@ -15,8 +15,8 @@ The script:
 - Refuses a repository with tracked or untracked worktree changes
 - Refuses detached HEAD state
 - Selects branch names with a case-sensitive Bash glob
-- Commits tracked file changes after each successful update
-- Uses your existing Git author and commit-signing configuration
+- Creates a signed commit from tracked file changes after each successful update
+- Uses your existing Git author and signing key; the run stops if signing fails
 - Never pushes commits
 - Restores the starting branch after a successful run
 
@@ -41,7 +41,7 @@ For each matching local branch, the script:
 1. Checks out the branch.
 2. Runs `tf-version-bump` with the requested file pattern.
 3. Stages modified tracked files with `git add -u`.
-4. Commits them as `chore: bump <source> to <version>`.
+4. Commits them with a signature as `chore: bump <source> to <version>`.
 5. Moves to the next branch.
 6. Returns to the branch that was active at startup.
 
@@ -60,8 +60,8 @@ examples/update-branches.sh \
 
 `--dry-run` passes `-dry-run` to `tf-version-bump`, so Terraform files and branch histories are
 unchanged. The script still checks out each selected local branch. When combined with
-`--include-remotes`, it also fetches the remote and creates local tracking branches for selected
-remote-only branches.
+`--include-remotes`, it fetches the remote and checks out selected remote-only branches in detached
+HEAD state, without creating local branches.
 
 ## Use a config file
 
@@ -101,9 +101,9 @@ examples/update-branches.sh \
   --remote upstream
 ```
 
-The script fetches that remote, then creates a local tracking branch when a matching branch does
-not already exist locally. Existing local branches take precedence. It does not push the new
-commits or alter the remote branch.
+The script fetches that remote, then creates a local tracking branch in write mode when a matching
+branch does not already exist locally. Dry runs use detached HEAD instead. Existing local branches
+take precedence. It does not push new commits or alter the remote branch.
 
 ## Filter by recent activity
 
@@ -184,7 +184,7 @@ Run `examples/update-branches.sh --help` for the built-in reference.
 
 ## Failures and recovery
 
-If `tf-version-bump`, Git staging, or Git commit fails, the script exits immediately. When the
+If `tf-version-bump`, Git staging, commit signing, or Git commit fails, the script exits immediately. When the
 failure leaves a clean worktree, the exit trap restores the starting branch. When changes remain,
 the script deliberately stays on the affected branch and prints a warning rather than carrying
 those edits to another branch.

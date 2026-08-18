@@ -25,6 +25,7 @@ Options:
   --remote <name>          Remote used with --include-remotes (default: origin).
   --since-days <number>    Process branches whose tip changed within this many days.
   --log-file <path>        Append command output to a log file.
+                           Write-mode updates require a signed commit.
   -h, --help               Show this help.
 EOF
 }
@@ -177,7 +178,11 @@ process_branch() {
     local tracking_ref=${2:-}
     echo "Processing branch: $branch"
     if [[ -n "$tracking_ref" ]]; then
-        git -C "$repository" checkout -q -b "$branch" --track "$tracking_ref"
+        if [[ "$dry_run" == true ]]; then
+            git -C "$repository" checkout -q --detach "$tracking_ref"
+        else
+            git -C "$repository" checkout -q -b "$branch" --track "$tracking_ref"
+        fi
     else
         git -C "$repository" checkout -q "$branch"
     fi
@@ -202,7 +207,7 @@ process_branch() {
     fi
 
     git -C "$repository" add -u -- .
-    git -C "$repository" commit -m "$commit_message"
+    git -C "$repository" commit -S -m "$commit_message"
 }
 
 matched_branch=false

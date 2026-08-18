@@ -50,7 +50,7 @@ jobs:
           METADATA: "${{ steps.goreleaser.outputs.metadata }}"
         run: |
           set -euo pipefail
-          echo "version=$(echo -E $METADATA | jq -r '.version')" >> "$GITHUB_OUTPUT"
+          echo "version=$(echo -E "$METADATA" | jq -r '.version')" >> "$GITHUB_OUTPUT"
 
       - name: Extract artifact subjects
         id: artifact-hashes
