@@ -15,8 +15,8 @@ The script:
 - Refuses a repository with tracked or untracked worktree changes
 - Refuses detached HEAD state
 - Selects branch names with a case-sensitive Bash glob
-- Creates a signed commit from tracked file changes after each successful update
-- Uses your existing Git author and signing key; the run stops if signing fails
+- Creates a commit from tracked file changes after each successful update
+- Signs update commits when `--sign-commits` is supplied
 - Never pushes commits
 - Restores the starting branch after a successful run
 
@@ -41,11 +41,16 @@ For each matching local branch, the script:
 1. Checks out the branch.
 2. Runs `tf-version-bump` with the requested file pattern.
 3. Stages modified tracked files with `git add -u`.
-4. Commits them with a signature as `chore: bump <source> to <version>`.
+4. Commits them as `chore: bump <source> to <version>`.
 5. Moves to the next branch.
 6. Returns to the branch that was active at startup.
 
 Branches that already contain the target version produce no commit.
+
+To explicitly request a signature for every update commit, add `--sign-commits`. The flag passes
+`-S` to `git commit`, so Git must have a usable signing key configured. Without the flag, the
+script leaves signing to the repository's Git configuration; it does not disable automatic
+signing when `commit.gpgsign` is enabled.
 
 ## Preview every branch
 
@@ -175,6 +180,7 @@ examples/update-branches.sh \
 | `--file-pattern <glob>` | `**/*.tf` | Terraform files within each branch |
 | `--binary <path>` | `tf-version-bump` from `PATH` | CLI executable |
 | `--dry-run` | Off | Preview without file changes or commits |
+| `--sign-commits` | Off | Pass `-S` to Git when creating update commits |
 | `--include-remotes` | Off | Fetch and include remote-only branches |
 | `--remote <name>` | `origin` | Remote used by `--include-remotes` |
 | `--since-days <number>` | No age filter | Include branches with recent tip commits |
@@ -184,10 +190,10 @@ Run `examples/update-branches.sh --help` for the built-in reference.
 
 ## Failures and recovery
 
-If `tf-version-bump`, Git staging, commit signing, or Git commit fails, the script exits immediately. When the
-failure leaves a clean worktree, the exit trap restores the starting branch. When changes remain,
-the script deliberately stays on the affected branch and prints a warning rather than carrying
-those edits to another branch.
+If `tf-version-bump`, Git staging, or Git commit fails, the script exits immediately. This includes
+a signing failure when `--sign-commits` is enabled. When the failure leaves a clean worktree, the
+exit trap restores the starting branch. When changes remain, the script deliberately stays on the
+affected branch and prints a warning rather than carrying those edits to another branch.
 
 Inspect the state before continuing:
 
