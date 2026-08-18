@@ -1,5 +1,9 @@
 # Code Analysis Report: tf-version-bump
 
+> **Historical snapshot:** This report describes commit `518a3c6` as analysed on 2025-12-17.
+> It is retained as an audit record, not as current product documentation. See the
+> [README](README.md) and [`docs/`](docs) for current behaviour.
+
 **Date:** 2025-12-17
 **Analysis Type:** Deep Code Analysis for Edge Cases, Security, and Code Quality
 **Analyst:** Claude (Anthropic AI - Opus 4.5)

@@ -1,133 +1,140 @@
-# Release Process
+# Release process and verification
 
-This document describes the release process for tf-version-bump, including how releases are built, signed, and verified.
+Git tags beginning with `v` trigger the release workflow. GitHub Actions uses GoReleaser to build
+and publish archives and Linux packages, then the SLSA generator creates provenance for the
+published artefacts.
 
-## Overview
+This page serves two audiences:
 
-Releases are automated via GitHub Actions using [GoReleaser](https://goreleaser.com/). Each release includes:
+- Users verifying a downloaded release
+- Maintainers creating or testing a release
 
-- Binary builds for multiple platforms (Linux, macOS, Windows) and architectures (amd64, arm64)
-- Linux packages (deb, rpm)
-- SHA256 checksums
-- SLSA Level 3 provenance attestations for supply chain security
+## Published artefacts
 
-## Creating a Release
+For a tag such as `v1.0.0-rc.6`, the version portion in archive names is `1.0.0-rc.6`:
 
-1. **Tag the release** following semantic versioning:
-   ```bash
-   git tag -a v1.0.0 -m "Release v1.0.0"
-   git push origin v1.0.0
-   ```
+| Artefact pattern | Platform |
+|------------------|----------|
+| `tf-version-bump_<version>_linux_x86_64.tar.gz` | Linux amd64 |
+| `tf-version-bump_<version>_linux_arm64.tar.gz` | Linux arm64 |
+| `tf-version-bump_<version>_darwin_x86_64.tar.gz` | macOS amd64 |
+| `tf-version-bump_<version>_darwin_arm64.tar.gz` | macOS arm64 |
+| `tf-version-bump_<version>_windows_x86_64.zip` | Windows amd64 |
+| `tf-version-bump_<version>_windows_arm64.zip` | Windows arm64 |
+| `tf-version-bump_<version>_linux_<arch>.deb` | Debian/Ubuntu package |
+| `tf-version-bump_<version>_linux_<arch>.rpm` | RPM package |
+| `tf-version-bump-v<version>.checksums.txt` | SHA-256 checksums |
+| `tf-version-bump-v<version>.intoto.jsonl` | SLSA provenance |
 
-2. **GitHub Actions automatically**:
-   - Builds binaries for all platforms
-   - Creates archives and Linux packages
-   - Generates SHA256 checksums
-   - Creates SLSA provenance attestations
-   - Publishes the release to GitHub
+Release tags containing a semantic-version pre-release suffix, such as `-rc.6`, are published as
+GitHub pre-releases automatically. Select a tag from the
+[Releases page](https://github.com/yesdevnull/tf-version-bump/releases) rather than assuming a
+stable release exists.
 
-## Release Artifacts
+## Verify a checksum
 
-Each release includes:
-
-| Artifact | Description |
-|----------|-------------|
-| `tf-version-bump_<version>_linux_x86_64.tar.gz` | Linux AMD64 binary |
-| `tf-version-bump_<version>_linux_arm64.tar.gz` | Linux ARM64 binary |
-| `tf-version-bump_<version>_darwin_x86_64.tar.gz` | macOS AMD64 binary |
-| `tf-version-bump_<version>_darwin_arm64.tar.gz` | macOS ARM64 (Apple Silicon) binary |
-| `tf-version-bump_<version>_windows_x86_64.zip` | Windows AMD64 binary |
-| `tf-version-bump_<version>_windows_arm64.zip` | Windows ARM64 binary |
-| `tf-version-bump_*.deb` | Debian/Ubuntu packages |
-| `tf-version-bump_*.rpm` | RHEL/Fedora packages |
-| `tf-version-bump-v*.checksums.txt` | SHA256 checksums for all artifacts |
-| `tf-version-bump-v*.intoto.jsonl` | SLSA provenance attestation |
-
-## Verifying Releases
-
-### Verify Checksums
-
-Download the checksums file and verify your download:
-
-> **Note:** Replace `1.0.0` in the examples below with your desired version.
+This Linux example uses the existing `v1.0.0-rc.6` pre-release. Replace `VERSION` deliberately
+when downloading another release:
 
 ```bash
-# Download the binary and checksums
-curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/tf-version-bump_1.0.0_linux_x86_64.tar.gz
-curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/tf-version-bump-v1.0.0.checksums.txt
+VERSION="1.0.0-rc.6"
 
-# Verify the checksum
-sha256sum -c tf-version-bump-v1.0.0.checksums.txt --ignore-missing
+curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump_${VERSION}_linux_x86_64.tar.gz"
+curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump-v${VERSION}.checksums.txt"
+
+sha256sum -c "tf-version-bump-v${VERSION}.checksums.txt" --ignore-missing
 ```
 
-### Verify SLSA Provenance
+`--ignore-missing` limits verification to downloaded files whose names appear in the checksum
+manifest. Check that the command explicitly reports the selected archive as `OK`.
 
-The release includes SLSA Level 3 provenance attestations that can be verified using the [slsa-verifier](https://github.com/slsa-framework/slsa-verifier):
+## Verify SLSA provenance
+
+Install the official verifier:
 
 ```bash
-# Install slsa-verifier
 go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@latest
-
-# Download the artifact and provenance
-curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/tf-version-bump_1.0.0_linux_x86_64.tar.gz
-curl -LO https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0/tf-version-bump-v1.0.0.intoto.jsonl
-
-# Verify provenance
-slsa-verifier verify-artifact tf-version-bump_1.0.0_linux_x86_64.tar.gz \
-  --provenance-path tf-version-bump-v1.0.0.intoto.jsonl \
-  --source-uri github.com/yesdevnull/tf-version-bump \
-  --source-tag v1.0.0
 ```
 
-## Security
-
-### Supply Chain Security
-
-This project uses several measures to ensure supply chain security:
-
-1. **SLSA Level 3 Provenance**: Cryptographically signed attestations that prove where and how artifacts were built
-2. **Pinned Dependencies**: All GitHub Actions are pinned to specific commit SHAs
-3. **Minimal Permissions**: Workflows use least-privilege permission model
-
-### Reporting Vulnerabilities
-
-If you discover a security vulnerability, please report it responsibly by emailing the maintainers directly rather than opening a public issue.
-
-## Development Releases
-
-For testing release builds locally:
+Download and verify the provenance matching the same tag:
 
 ```bash
-# Install goreleaser
-go install github.com/goreleaser/goreleaser/v2@latest
+VERSION="1.0.0-rc.6"
 
-# Build a snapshot release (no publishing)
-goreleaser release --snapshot --clean
+curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump_${VERSION}_linux_x86_64.tar.gz"
+curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump-v${VERSION}.intoto.jsonl"
 
-# Check the dist/ directory for built artifacts
-ls -la dist/
+slsa-verifier verify-artifact "tf-version-bump_${VERSION}_linux_x86_64.tar.gz" \
+  --provenance-path "tf-version-bump-v${VERSION}.intoto.jsonl" \
+  --source-uri github.com/yesdevnull/tf-version-bump \
+  --source-tag "v${VERSION}"
 ```
 
-## Configuration
+The release workflow requests GitHub's OIDC token, supplies artefact digests to the reusable SLSA
+generator, and uploads the resulting in-toto JSONL file to the release. GitHub Actions are pinned
+to commit SHAs and jobs declare their required permissions explicitly.
 
-Release configuration is defined in:
+## Create a release
 
-- `.goreleaser.yaml` - GoReleaser build configuration
-- `.github/workflows/release.yml` - GitHub Actions workflow
+Before tagging:
+
+1. Ensure the intended commit is on `main` and the worktree is clean.
+2. Run the full tests and lint checks.
+3. Choose a semantic version. Include a pre-release suffix when the release is not stable.
+4. Review `.goreleaser.yaml` and `.github/workflows/release.yml` when changing artefact formats.
+
+Create and push an annotated tag:
+
+```bash
+git tag -a v1.0.0-rc.7 -m "Release v1.0.0-rc.7"
+git push origin v1.0.0-rc.7
+```
+
+The tag push starts `.github/workflows/release.yml`, which:
+
+1. Checks out full history.
+2. Installs the Go version declared by `go.mod`.
+3. Runs GoReleaser with `release --clean`.
+4. Collects archive and package digests.
+5. Generates and uploads SLSA provenance.
+
+After the workflow completes, verify that the release contains all six platform archives, four
+Linux packages, the checksum manifest, and provenance file. Perform at least one checksum and
+provenance verification using the published assets.
+
+## Test a release locally
+
+Install GoReleaser v2 and create a snapshot without publishing:
+
+```bash
+go install github.com/goreleaser/goreleaser/v2@latest
+goreleaser release --snapshot --clean
+```
+
+GoReleaser writes snapshot output under `dist/`. The configured pre-build hooks run `go mod tidy`
+and `go generate ./...`, so check the worktree afterwards and do not discard unexpected changes.
+
+A local snapshot confirms GoReleaser packaging. It does not reproduce GitHub OIDC or the reusable
+SLSA workflow.
 
 ## Troubleshooting
 
-### Common Issues
+### GoReleaser reports a dirty worktree
 
-**Build fails with "dirty" error**:
-Ensure all changes are committed before tagging:
-```bash
-git status  # Should show clean working tree
-git tag v1.0.0
-```
+Inspect `git status`. Commit intentional source or module-file changes before tagging. Do not tag
+from an unreviewed dirty worktree.
 
-**Checksum verification fails**:
-Re-download both the artifact and checksums file. Ensure you're using the correct version.
+### Checksum verification fails
 
-**SLSA verification fails**:
-Ensure you have the correct provenance file for the specific version and that the source URI matches.
+Confirm the archive, checksum manifest, and tag all use the same version, including any
+pre-release suffix. Re-download both files before investigating further.
+
+### Provenance verification fails
+
+Confirm the archive and `.intoto.jsonl` came from the same release and that `--source-tag` includes
+the leading `v`.
+
+### Expected artefacts are missing
+
+Inspect both the GoReleaser and SLSA jobs in the tag-triggered workflow. A GoReleaser success does
+not by itself prove that provenance generation and upload also completed.
