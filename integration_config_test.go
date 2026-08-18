@@ -7,6 +7,56 @@ import (
 	"testing"
 )
 
+func TestRunConfigModeReportsModuleFileFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	malformedFile := filepath.Join(tmpDir, "01-malformed.tf")
+	if err := os.WriteFile(malformedFile, []byte("module \"broken\" {"), 0o644); err != nil {
+		t.Fatalf("failed to write malformed Terraform file: %v", err)
+	}
+
+	validFile := filepath.Join(tmpDir, "02-valid.tf")
+	if err := os.WriteFile(validFile, []byte(`module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.0.0"
+}
+`), 0o644); err != nil {
+		t.Fatalf("failed to write valid Terraform file: %v", err)
+	}
+
+	configFile := filepath.Join(tmpDir, "updates.yml")
+	if err := os.WriteFile(configFile, []byte(`modules:
+  - source: terraform-aws-modules/vpc/aws
+    version: 5.0.0
+`), 0o644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	stdout, diagnostic, runnerErr := captureRunnerOutput(t, func() error {
+		return runConfigFileMode([]string{malformedFile, validFile}, &cliFlags{
+			configFile: configFile,
+			output:     "text",
+		})
+	})
+
+	updated, err := os.ReadFile(validFile)
+	if err != nil {
+		t.Fatalf("failed to read updated Terraform file: %v", err)
+	}
+	if !strings.Contains(string(updated), `version = "5.0.0"`) {
+		t.Fatalf("expected valid file to be updated, got: %s", updated)
+	}
+
+	if got, want := diagnostic, "Error processing "+malformedFile+": failed to parse HCL: "+malformedFile+":1,17-18: Unclosed configuration block; There is no closing brace for this block before the end of the file. This may be caused by incorrect brace nesting elsewhere in this file.\n"; got != want {
+		t.Errorf("malformed-file diagnostic = %q, want %q", got, want)
+	}
+	if !strings.Contains(stdout, "Modules: 1 file(s) updated") {
+		t.Errorf("expected existing config summary in stdout, got %q", stdout)
+	}
+	if runnerErr == nil {
+		t.Fatal("expected runner to report the malformed file failure")
+	}
+}
+
 // TestConfigFileWithTerraformVersion tests processing config files with terraform_version
 func TestConfigFileWithTerraformVersion(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -192,7 +242,7 @@ modules:
 	// Process modules
 	moduleUpdates := 0
 	if len(config.Modules) > 0 {
-		moduleUpdates = processFiles(files, config.Modules, flags)
+		moduleUpdates, _ = processFiles(files, config.Modules, flags)
 	}
 
 	// Verify counts
