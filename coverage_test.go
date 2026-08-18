@@ -547,7 +547,7 @@ module "s3" {
 			os.Stdout = w
 			defer func() { os.Stdout = oldStdout }()
 
-			totalUpdates := processFiles([]string{tfFile}, tt.updates, flags)
+			totalUpdates, _ := processFiles([]string{tfFile}, tt.updates, flags)
 
 			if err := w.Close(); err != nil {
 				t.Fatalf("failed to close pipe writer: %v", err)
@@ -632,7 +632,7 @@ func TestProcessFilesWithFromVersionFilter(t *testing.T) {
 			os.Stdout = w
 			defer func() { os.Stdout = oldStdout }()
 
-			totalUpdates := processFiles([]string{tfFile}, updates, flags)
+			totalUpdates, _ := processFiles([]string{tfFile}, updates, flags)
 
 			if err := w.Close(); err != nil {
 				t.Fatalf("failed to close pipe writer: %v", err)
@@ -695,7 +695,7 @@ func TestProcessFilesMultipleFiles(t *testing.T) {
 	os.Stdout = w
 	defer func() { os.Stdout = oldStdout }()
 
-	totalUpdates := processFiles([]string{tfFile1, tfFile2}, updates, flags)
+	totalUpdates, _ := processFiles([]string{tfFile1, tfFile2}, updates, flags)
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("failed to close pipe writer: %v", err)
@@ -837,7 +837,7 @@ func TestProcessFilesWithVerbose(t *testing.T) {
 	os.Stdout = w
 	defer func() { os.Stdout = oldStdout }()
 
-	totalUpdates := processFiles([]string{tfFile}, updates, flags)
+	totalUpdates, _ := processFiles([]string{tfFile}, updates, flags)
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("failed to close pipe writer: %v", err)
@@ -893,7 +893,7 @@ func TestProcessFilesMarkdownOutput(t *testing.T) {
 	os.Stdout = w
 	defer func() { os.Stdout = oldStdout }()
 
-	totalUpdates := processFiles([]string{tfFile}, updates, flags)
+	totalUpdates, _ := processFiles([]string{tfFile}, updates, flags)
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("failed to close pipe writer: %v", err)
@@ -981,7 +981,7 @@ func TestProcessFilesOutputMessages(t *testing.T) {
 			os.Stdout = w
 			defer func() { os.Stdout = oldStdout }()
 
-			processFiles([]string{tfFile}, updates, flags)
+			_, _ = processFiles([]string{tfFile}, updates, flags)
 
 			if err := w.Close(); err != nil {
 				t.Fatalf("failed to close pipe writer: %v", err)
@@ -1010,7 +1010,7 @@ func TestProcessFilesError(t *testing.T) {
 		{Source: "test/module", Version: "1.0.0"},
 	}
 
-	totalUpdates := processFiles([]string{"/nonexistent/path/file.tf"}, updates, flags)
+	totalUpdates, _ := processFiles([]string{"/nonexistent/path/file.tf"}, updates, flags)
 
 	// Should return 0 updates but handle the error gracefully
 	// Note: The actual error is logged via log.Printf which uses the default logger
@@ -1199,7 +1199,7 @@ module "legacy-vpc" {
 			os.Stdout = w
 			defer func() { os.Stdout = oldStdout }()
 
-			totalUpdates := processFiles([]string{tfFile}, updates, flags)
+			totalUpdates, _ := processFiles([]string{tfFile}, updates, flags)
 
 			if err := w.Close(); err != nil {
 				t.Fatalf("failed to close pipe writer: %v", err)

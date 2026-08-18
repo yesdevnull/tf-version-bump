@@ -310,7 +310,7 @@ func TestRunConfigFileModeLoadError(t *testing.T) {
 	log.SetOutput(io.Discard)
 
 	defer func() { _ = recover() }()
-	runConfigFileMode(nil, &cliFlags{configFile: "does-not-exist"})
+	_ = runConfigFileMode(nil, &cliFlags{configFile: "does-not-exist"})
 	if *code != 1 {
 		t.Fatalf("expected exit code 1, got %d", *code)
 	}
@@ -322,7 +322,7 @@ func TestRunCLIModeProviderMissingVersion(t *testing.T) {
 	log.SetOutput(io.Discard)
 
 	defer func() { _ = recover() }()
-	runCLIMode(nil, &cliFlags{providerName: "aws"})
+	_ = runCLIMode(nil, &cliFlags{providerName: "aws"})
 	if *code != 1 {
 		t.Fatalf("expected exit code 1, got %d", *code)
 	}

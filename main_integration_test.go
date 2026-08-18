@@ -1,11 +1,98 @@
 package main
 
 import (
+	"bytes"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func captureRunnerOutput(t *testing.T, run func() error) (stdout, diagnostic string, runnerErr error) {
+	t.Helper()
+
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stdout pipe: %v", err)
+	}
+	defer func() {
+		if err := stdoutReader.Close(); err != nil {
+			t.Errorf("failed to close stdout reader: %v", err)
+		}
+	}()
+
+	originalStdout := os.Stdout
+	os.Stdout = stdoutWriter
+	defer func() { os.Stdout = originalStdout }()
+
+	originalLogOutput := log.Writer()
+	originalLogFlags := log.Flags()
+	var logOutput bytes.Buffer
+	log.SetOutput(&logOutput)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(originalLogOutput)
+		log.SetFlags(originalLogFlags)
+	}()
+
+	runnerErr = run()
+
+	if err := stdoutWriter.Close(); err != nil {
+		t.Fatalf("failed to close stdout writer: %v", err)
+	}
+	output, err := io.ReadAll(stdoutReader)
+	if err != nil {
+		t.Fatalf("failed to read stdout: %v", err)
+	}
+
+	return string(output), logOutput.String(), runnerErr
+}
+
+func TestRunCLIModeReportsModuleFileFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	malformedFile := filepath.Join(tmpDir, "01-malformed.tf")
+	if err := os.WriteFile(malformedFile, []byte("module \"broken\" {"), 0o644); err != nil {
+		t.Fatalf("failed to write malformed Terraform file: %v", err)
+	}
+
+	validFile := filepath.Join(tmpDir, "02-valid.tf")
+	if err := os.WriteFile(validFile, []byte(`module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.0.0"
+}
+`), 0o644); err != nil {
+		t.Fatalf("failed to write valid Terraform file: %v", err)
+	}
+
+	stdout, diagnostic, runnerErr := captureRunnerOutput(t, func() error {
+		return runCLIMode([]string{malformedFile, validFile}, &cliFlags{
+			pattern:      "*.tf",
+			moduleSource: "terraform-aws-modules/vpc/aws",
+			toVersion:    "5.0.0",
+			output:       "text",
+		})
+	})
+
+	updated, err := os.ReadFile(validFile)
+	if err != nil {
+		t.Fatalf("failed to read updated Terraform file: %v", err)
+	}
+	if !strings.Contains(string(updated), `version = "5.0.0"`) {
+		t.Fatalf("expected valid file to be updated, got: %s", updated)
+	}
+
+	if got, want := diagnostic, "Error processing "+malformedFile+": failed to parse HCL: "+malformedFile+":1,17-18: Unclosed configuration block; There is no closing brace for this block before the end of the file. This may be caused by incorrect brace nesting elsewhere in this file.\n"; got != want {
+		t.Errorf("malformed-file diagnostic = %q, want %q", got, want)
+	}
+	if !strings.Contains(stdout, "Successfully updated 1 file(s)") {
+		t.Errorf("expected existing summary in stdout, got %q", stdout)
+	}
+	if runnerErr == nil {
+		t.Fatal("expected runner to report the malformed file failure")
+	}
+}
 
 // TestLoadModuleUpdatesErrorCases tests error handling in loadModuleUpdates
 func TestLoadModuleUpdatesErrorCases(t *testing.T) {

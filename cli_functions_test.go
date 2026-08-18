@@ -440,7 +440,9 @@ modules:
 	}
 
 	// Run the function
-	runConfigFileMode(files, flags)
+	if err := runConfigFileMode(files, flags); err != nil {
+		t.Fatalf("runConfigFileMode failed: %v", err)
+	}
 
 	// Verify the file was updated
 	content, err := os.ReadFile(tfFile)
@@ -485,7 +487,9 @@ func TestRunConfigFileModeDryRun(t *testing.T) {
 		output:     "text",
 	}
 
-	runConfigFileMode(files, flags)
+	if err := runConfigFileMode(files, flags); err != nil {
+		t.Fatalf("runConfigFileMode failed: %v", err)
+	}
 
 	// Verify file was NOT modified
 	content, err := os.ReadFile(tfFile)
@@ -517,7 +521,9 @@ func TestRunCLIModeWithTerraformVersion(t *testing.T) {
 		output:           "text",
 	}
 
-	runCLIMode(files, flags)
+	if err := runCLIMode(files, flags); err != nil {
+		t.Fatalf("runCLIMode failed: %v", err)
+	}
 
 	// Verify the file was updated
 	content, err := os.ReadFile(tfFile)
@@ -555,7 +561,9 @@ func TestRunCLIModeWithProvider(t *testing.T) {
 		output:       "text",
 	}
 
-	runCLIMode(files, flags)
+	if err := runCLIMode(files, flags); err != nil {
+		t.Fatalf("runCLIMode failed: %v", err)
+	}
 
 	// Verify the file was updated
 	content, err := os.ReadFile(tfFile)
@@ -590,7 +598,9 @@ func TestRunCLIModeWithModule(t *testing.T) {
 		output:       "text",
 	}
 
-	runCLIMode(files, flags)
+	if err := runCLIMode(files, flags); err != nil {
+		t.Fatalf("runCLIMode failed: %v", err)
+	}
 
 	// Verify the file was updated
 	content, err := os.ReadFile(tfFile)

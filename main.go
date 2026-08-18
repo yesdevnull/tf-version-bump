@@ -171,14 +171,14 @@ func loadModuleUpdates(flags *cliFlags) []ModuleUpdate {
 	}
 }
 
-// processFiles processes all matching files and applies module updates
-func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) int {
-	totalUpdates := 0
+// processFiles processes all matching files and applies module updates.
+func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (totalUpdates, totalErrors int) {
 	for _, file := range files {
 		for _, update := range updates {
 			updated, err := updateModuleVersion(file, update.Source, update.Version, update.From, update.IgnoreVersions, update.IgnoreModules, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
+				totalErrors++
 				continue
 			}
 			if updated {
@@ -197,7 +197,7 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) int {
 			}
 		}
 	}
-	return totalUpdates
+	return totalUpdates, totalErrors
 }
 
 // printSummary prints the final summary of updates
@@ -236,9 +236,11 @@ func main() {
 
 	// Run the appropriate operation mode
 	if flags.configFile != "" {
-		runConfigFileMode(files, flags)
+		// Task 3 will convert runner errors into the process exit status.
+		_ = runConfigFileMode(files, flags)
 	} else {
-		runCLIMode(files, flags)
+		// Task 3 will convert runner errors into the process exit status.
+		_ = runCLIMode(files, flags)
 	}
 }
 
@@ -344,14 +346,15 @@ func findMatchingFiles(flags *cliFlags) []string {
 	return files
 }
 
-// runConfigFileMode handles config file mode operations
-func runConfigFileMode(files []string, flags *cliFlags) {
+// runConfigFileMode handles config file mode operations.
+func runConfigFileMode(files []string, flags *cliFlags) error {
 	config, err := loadConfig(flags.configFile)
 	if err != nil {
 		fatalf("Error loading config file: %v", err)
+		return nil
 	}
 
-	var terraformUpdates, providerUpdates, moduleUpdates int
+	var terraformUpdates, providerUpdates, moduleUpdates, moduleErrors int
 
 	// Process terraform version if specified
 	if config.TerraformVersion != "" {
@@ -366,15 +369,19 @@ func runConfigFileMode(files []string, flags *cliFlags) {
 
 	// Process module updates if specified
 	if len(config.Modules) > 0 {
-		moduleUpdates = processFiles(files, config.Modules, flags)
+		moduleUpdates, moduleErrors = processFiles(files, config.Modules, flags)
 	}
 
 	// Print summary
 	printConfigSummary(terraformUpdates, providerUpdates, moduleUpdates)
+	if moduleErrors > 0 {
+		return fmt.Errorf("%d module update error(s)", moduleErrors)
+	}
+	return nil
 }
 
 // runCLIMode handles CLI mode operations
-func runCLIMode(files []string, flags *cliFlags) {
+func runCLIMode(files []string, flags *cliFlags) error {
 	var totalUpdates int
 	var updates []ModuleUpdate
 
@@ -382,16 +389,23 @@ func runCLIMode(files []string, flags *cliFlags) {
 	case flags.terraformVersion != "":
 		totalUpdates = processTerraformVersion(files, flags.terraformVersion, flags.dryRun, flags.output)
 		printTerraformSummary(totalUpdates, flags.dryRun)
+		return nil
 	case flags.providerName != "":
 		if flags.toVersion == "" {
 			fatalf("Error: -to flag is required when using -provider")
 		}
 		totalUpdates = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output)
 		printProviderSummary(flags.providerName, totalUpdates, flags.dryRun, flags.output)
+		return nil
 	default:
 		updates = loadModuleUpdates(flags)
-		totalUpdates = processFiles(files, updates, flags)
+		var totalErrors int
+		totalUpdates, totalErrors = processFiles(files, updates, flags)
 		printSummary(totalUpdates, len(updates), flags.dryRun)
+		if totalErrors > 0 {
+			return fmt.Errorf("%d module update error(s)", totalErrors)
+		}
+		return nil
 	}
 }
 
