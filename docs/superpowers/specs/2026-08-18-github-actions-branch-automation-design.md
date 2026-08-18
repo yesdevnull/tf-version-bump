@@ -144,7 +144,8 @@ environment restricted to the default branch. App and signing private keys live 
 environment; they are not passed through `workflow_call`. Repository administrators must limit
 manual dispatch to trusted actors. Built-in-token mode additionally assumes repository write
 access is trusted because a writer can submit modified workflow YAML even when no optional secret
-is exposed.
+is exposed. App-mode callers cap the reusable workflow's `GITHUB_TOKEN` at `contents: read`; only
+the short-lived App token receives publication permissions.
 
 ## Reusable workflow interface
 
@@ -391,17 +392,25 @@ other state branches continue.
 
 ## Authentication and permissions
 
-The caller grants the reusable workflow the write scopes needed by reconciliation as an upper
-bound. The reusable workflow then declares narrower permissions per job:
+The caller sets the reusable workflow's permission ceiling according to its authentication mode:
+
+- Built-in-token callers grant `contents: write`, `pull-requests: write`, and `issues: write`.
+- GitHub App callers grant only `contents: read`; unspecified scopes remain `none`.
+
+Reusable workflows can only maintain or reduce the caller's permission ceiling. The reusable
+workflow declares narrower permissions per job:
 
 - Discovery and validation: `contents: read` only.
 - Reconciliation: `contents: write`, `pull-requests: write`, and `issues: write`.
 
-Every checkout sets `persist-credentials: false`. The default publication path injects the
-reconciliation job's `GITHUB_TOKEN` only into the exact Git/GitHub CLI steps that need it.
-Consumers must enable the repository setting that permits GitHub Actions to create pull requests.
-Pull-request workflows generated with this token may require manual approval under GitHub's current
-recursion protection.
+The reconciliation declaration supports built-in-token callers, but an App caller's read-only
+ceiling keeps the effective reconciliation `GITHUB_TOKEN` read-only. Every checkout sets
+`persist-credentials: false`. The built-in publication path injects `GITHUB_TOKEN` only into the
+exact Git/GitHub CLI steps that need it. The App publication path never passes `GITHUB_TOKEN` to a
+write operation; it uses only the short-lived App token. Consumers using the built-in token must
+enable the repository setting that permits GitHub Actions to create pull requests. Pull-request
+workflows generated with this token may require manual approval under GitHub's current recursion
+protection.
 
 When the App client ID and protected-environment private key are supplied, reconciliation uses the
 GitHub-maintained App-token action to mint a short-lived installation token limited to the current
@@ -494,9 +503,10 @@ A maintained shell test creates temporary real Git repositories and bare remotes
 - Success followed by a new deterministic failure closes the stale marked PR and safely removes
   its owned update branch.
 - Signed commits, local signature verification, cleanup of key material, and signing failure.
-- A hostile purpose-built Terraform provider that attempts to find credentials, alter control
-  files, and poison later-step state, proving validation cannot influence the fresh reconciliation
-  runner or protected secrets.
+- A hostile purpose-built Terraform provider fixture that attempts to find credentials, alter
+  control files, poison later validation steps, and construct a malicious result bundle. Local
+  coverage verifies that reconciliation treats every resulting payload as untrusted data; the
+  actual runner and protected-secret boundary is verified by real-service acceptance.
 - Unsigned operation when no signing key is configured.
 - Obsolete no-change branch and PR payload generation.
 - Clear failure when a newly required lock file is ignored; the workflow never force-adds it.
@@ -525,8 +535,16 @@ The example README defines an acceptance procedure using a disposable GitHub rep
 - A committed lock file and default-branch config.
 - A default-branch-restricted publication environment.
 - Built-in-token and GitHub App runs.
+- An App-mode run whose job permission summary shows `contents: read` and no write scopes, and whose
+  publication succeeds with the short-lived App token, proving `GITHUB_TOKEN` is not the write
+  credential.
 - An alternate-ref manual dispatch that cannot enter the protected publication job or read its
   secrets.
+- A state branch using the hostile provider fixture. The provider attempts to read write/App/signing
+  credentials, alter the control checkout, poison `GITHUB_ENV` and `GITHUB_PATH`, and submit a
+  malicious result bundle. The validation job exposes no protected or write credentials, the fresh
+  reconciliation runner rejects the tampered bundle, and no repository ref, content, PR, or issue
+  mutation occurs.
 - Successful update, repeated idempotent update, validation failure, issue update, recovery, and
   obsolete-PR cleanup.
 - Three rapid dispatches demonstrating `queue: max` rather than pending-run replacement.
@@ -579,6 +597,8 @@ The feature is complete when:
   workflow logs and diagnostic artefacts are retained.
 - Terraform executes only in credential-free read-only jobs, and privileged reconciliation runs on
   a fresh protected runner without executing target-supplied code.
+- App-mode reconciliation has an effective read-only `GITHUB_TOKEN`; only its short-lived App token
+  can publish repository content, refs, PRs, or issues.
 - Untrusted refs and inputs remain data across Actions, shell, Git, JSON, Markdown, and artefact
   boundaries.
 - Normal runs safely reconcile signed or unsigned commits, stable automation branches, PRs, and
