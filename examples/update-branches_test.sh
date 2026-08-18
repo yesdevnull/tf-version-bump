@@ -269,6 +269,30 @@ test_refuses_a_log_file_inside_the_repository() {
     [[ -z "$(git -C "$repository" status --porcelain)" ]] || fail "internal log file left the repository dirty"
 }
 
+test_refuses_a_log_file_through_a_symlinked_parent_directory() {
+    local repository="$TEST_ROOT/symlinked-log-parent"
+    local log_directory="$TEST_ROOT/repository-link"
+    local target_file="$repository/version-bump.log"
+    create_repository "$repository"
+    git -C "$repository" branch feature/logged
+    ln -s "$repository" "$log_directory"
+
+    local output
+    if output=$("$SCRIPT" \
+        --repository "$repository" \
+        --branch-pattern 'feature/*' \
+        --module 'terraform-aws-modules/vpc/aws' \
+        --to '2.0.0' \
+        --binary "$TF_VERSION_BUMP" \
+        --log-file "$log_directory/version-bump.log" 2>&1); then
+        fail "log file through a symlinked repository directory was accepted"
+    fi
+
+    [[ "$output" == *'log file must be outside the target repository'* ]] || fail "symlinked log directory error was unclear"
+    [[ ! -e "$target_file" ]] || fail "symlinked log directory created a repository file"
+    [[ -z "$(git -C "$repository" status --porcelain)" ]] || fail "symlinked log directory left the repository dirty"
+}
+
 test_refuses_a_log_file_symlink_to_a_repository_file() {
     local repository="$TEST_ROOT/symlinked-log"
     local log_file="$TEST_ROOT/version-bump-link.log"
@@ -442,6 +466,7 @@ test_remote_dry_run_does_not_create_local_branches
 test_includes_remote_only_branches_without_pushing
 test_writes_a_log_file
 test_refuses_a_log_file_inside_the_repository
+test_refuses_a_log_file_through_a_symlinked_parent_directory
 test_refuses_a_log_file_symlink_to_a_repository_file
 test_refuses_a_dangling_log_file_symlink
 test_filters_branches_by_tip_commit_age
