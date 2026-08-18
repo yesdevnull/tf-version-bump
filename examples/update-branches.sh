@@ -147,6 +147,10 @@ restore_starting_branch() {
     local current_branch
     current_branch=$(git -C "$repository" branch --show-current)
     if [[ "$current_branch" != "$starting_branch" ]]; then
+        if [[ -n "$(git -C "$repository" status --porcelain)" ]]; then
+            echo "Warning: changes remain on $current_branch; not restoring the starting branch $starting_branch" >&2
+            return
+        fi
         git -C "$repository" checkout -q "$starting_branch"
     fi
 }
@@ -201,6 +205,8 @@ process_branch() {
 
 matched_branch=false
 while IFS= read -r branch; do
+    # The unquoted right-hand side is the caller's Bash glob, not a literal string.
+    # shellcheck disable=SC2053
     if [[ "$branch" != $branch_pattern ]]; then
         continue
     fi
@@ -217,6 +223,8 @@ if [[ "$include_remotes" == true ]]; then
     git -C "$repository" fetch "$remote"
 
     while IFS= read -r branch; do
+        # The unquoted right-hand side is the caller's Bash glob, not a literal string.
+        # shellcheck disable=SC2053
         if [[ "$branch" == "HEAD" || "$branch" != $branch_pattern ]]; then
             continue
         fi

@@ -224,6 +224,55 @@ test_filters_branches_by_tip_commit_age() {
     [[ "$old_file" == *'version = "1.0.0"'* ]] || fail "old branch was updated"
 }
 
+test_refuses_a_dirty_repository() {
+    local repository="$TEST_ROOT/dirty-repository"
+    create_repository "$repository"
+    git -C "$repository" branch feature/dirty
+    printf '%s\n' 'uncommitted work' >"$repository/notes.txt"
+
+    local output
+    if output=$("$SCRIPT" \
+        --repository "$repository" \
+        --branch-pattern 'feature/*' \
+        --module 'terraform-aws-modules/vpc/aws' \
+        --to '2.0.0' \
+        --binary "$TF_VERSION_BUMP" 2>&1); then
+        fail "dirty repository was accepted"
+    fi
+    [[ "$output" == *'repository has uncommitted or untracked changes'* ]] || fail "dirty repository error was unclear"
+
+    local feature_file
+    feature_file=$(git -C "$repository" show feature/dirty:main.tf)
+    [[ "$feature_file" == *'version = "1.0.0"'* ]] || fail "dirty repository branch was changed"
+}
+
+test_commit_failure_leaves_changes_on_the_affected_branch() {
+    local repository="$TEST_ROOT/commit-failure"
+    create_repository "$repository"
+    git -C "$repository" branch feature/blocked
+    printf '%s\n' '#!/bin/sh' 'exit 1' >"$repository/.git/hooks/pre-commit"
+    chmod +x "$repository/.git/hooks/pre-commit"
+
+    local output
+    if output=$("$SCRIPT" \
+        --repository "$repository" \
+        --branch-pattern 'feature/*' \
+        --module 'terraform-aws-modules/vpc/aws' \
+        --to '2.0.0' \
+        --binary "$TF_VERSION_BUMP" 2>&1); then
+        fail "script succeeded after its commit was rejected"
+    fi
+
+    local current_branch
+    current_branch=$(git -C "$repository" branch --show-current)
+    [[ "$current_branch" == "feature/blocked" ]] || fail "failed update was moved to another branch"
+    [[ "$output" == *'not restoring the starting branch'* ]] || fail "failure did not explain where the changes remain"
+
+    local working_file
+    working_file=$(<"$repository/main.tf")
+    [[ "$working_file" == *'version = "2.0.0"'* ]] || fail "failed commit changes were lost"
+}
+
 install_git_wrapper
 build_tf_version_bump
 test_help_describes_required_inputs
@@ -233,4 +282,6 @@ test_dry_run_leaves_branches_unchanged
 test_includes_remote_only_branches_without_pushing
 test_writes_a_log_file
 test_filters_branches_by_tip_commit_age
+test_refuses_a_dirty_repository
+test_commit_failure_leaves_changes_on_the_affected_branch
 echo "PASS: update-branches.sh"
