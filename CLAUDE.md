@@ -1,13 +1,15 @@
 # CLAUDE.md - AI Assistant Guide for tf-version-bump
 
-Guidance for AI assistants working on this codebase. For user-facing docs see
-[README.md](README.md); for a shorter agent primer see [AGENTS.md](AGENTS.md).
+Guidance for AI assistants working on this codebase. User-facing docs begin in
+[README.md](README.md) and continue under [`docs/`](docs); for a shorter agent primer see
+[AGENTS.md](AGENTS.md).
 
 ## Project Overview
 
 **tf-version-bump** is a Go CLI that updates Terraform module versions, `required_version` in
 terraform blocks, and provider versions in `required_providers`, across files matched by a glob.
-It parses HCL with HashiCorp's `hclwrite` so formatting and comments survive the rewrite.
+It parses HCL with HashiCorp's `hclwrite`; comments and structure survive while whitespace may be
+normalised when a changed file is formatted.
 
 This repository is an experiment for generative AI coding tools. It may contain bugs or incomplete
 features. Keep changes under version control and test them.
@@ -25,8 +27,11 @@ main.go                  # CLI parsing, HCL processing, all version updates
 config.go                # YAML config loading and validation
 *_test.go                # split by concern (see Testing)
 schema/config-schema.json # JSON Schema for the YAML config
-examples/                # Sample .tf files and config-*.yml
-docs/RELEASING.md        # Release process
+examples/                # Sample .tf/.yml files and branch automation
+docs/USAGE.md            # Detailed CLI and behaviour reference
+docs/CONFIGURATION.md    # YAML configuration reference
+docs/ADVANCED-USAGE.md   # Cross-branch automation guide
+docs/RELEASING.md        # Release and artefact verification
 ```
 
 ## Commands
@@ -61,19 +66,20 @@ curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/insta
 ## Gotchas
 
 **Globbing uses `doublestar`, not `filepath.Glob`.** `findMatchingFiles` deliberately calls
-`doublestar.FilepathGlob`, because `filepath.Glob` has no recursive wildcard — it treats `**`
-as a plain `*` that never crosses a separator, so `-pattern "**/*.tf"` silently matched only
-files exactly one level deep. Don't "simplify" this back to the stdlib. With doublestar, `**`
-spans zero or more directories, so `**/*.tf` matches `top.tf`, `a/mid.tf` and `a/b/deep.tf`.
+`doublestar.Glob` against an `fs.FS`, because `filepath.Glob` has no recursive wildcard — it
+treats `**` as a plain `*` that never crosses a separator. Don't "simplify" this back to the
+stdlib. With doublestar, `**` spans zero or more directories, so `**/*.tf` matches `top.tf`,
+`a/mid.tf` and `a/b/deep.tf`.
 
-**The glob options carry real weight — don't drop them.** `findMatchingFiles` passes three,
-each fixing a way `**` misbehaves once it genuinely recurses:
+**The glob filesystem and options carry real weight — don't drop them.** `findMatchingFiles`
+uses `visibleDirFS` and two options, each fixing a way `**` can misbehave once it genuinely
+recurses:
 
-- `WithNoHidden` — wildcards skip dot-directories, so `**/*.tf` never descends into
+- `visibleDirFS` — wildcard traversal skips dot-directories, so `**/*.tf` never descends into
   `.terraform/modules` (whose vendored copies `terraform init` regenerates, making any bump
-  written there silently vanish). It prunes the walk rather than filtering afterwards, and an
-  explicit `.terraform/**/*.tf` still matches. Deliberately shell semantics; there is no
-  custom exclusion list, and reintroducing one would break explicit patterns.
+  written there silently vanish). Because the non-glob base is resolved first, an explicit
+  `.terraform/**/*.tf` still matches. This is deliberately shell-like; there is no custom
+  exclusion list.
 - `WithNoFollow` — without it a directory symlink matches the same physical file twice, and a
   symlink cycle matches it until the OS hits its link limit.
 - `WithFilesOnly` — without it `-pattern "modules/**"` returns directories, which get counted
@@ -99,7 +105,7 @@ not atomic. Files are processed in memory, so very large files (>100MB) are impr
 ### Update flow
 
 `main()` → `validateOperationModes` → `findMatchingFiles` → either `runConfigFileMode`
-(YAML) or `runCLIMode` (single module). Each dispatches to one of three update paths:
+(YAML) or `runCLIMode` (one direct operation). Each dispatches to one of three update paths:
 `updateModuleVersion`, `updateTerraformVersion`, or `updateProviderVersion`.
 
 `updateModuleVersion` reads and parses the file, then bundles its many
@@ -110,7 +116,8 @@ than growing the parameter list.
 Provider updates are the fiddliest path: `required_providers` entries can be either a nested
 block or an object expression, so `updateProviderVersion` branches through
 `updateProviderBlockSyntax` and `updateProviderAttributeVersion` /
-`providerAttributeObject` / `buildProviderObjectExpr`.
+`providerAttributeObject` / `replaceProviderObjectVersion`. Attribute-object updates replace only
+the version expression's byte range so other expressions such as `configuration_aliases` remain.
 
 ### Standard hclwrite pattern
 
@@ -126,17 +133,21 @@ for _, block := range file.Body().Blocks() {
     }
 }
 
-os.WriteFile(filename, file.Bytes(), fileInfo.Mode())
+output := hclwrite.Format(file.Bytes())
+os.WriteFile(filename, output, fileInfo.Mode().Perm())
 ```
 
-### Version filter precedence
+### Module update precedence
 
-Evaluated in this order in `shouldSkipModuleVersion`:
+Evaluated across `updateModuleBlock` and `shouldSkipModuleVersion`:
 
-1. `ignore_modules` — module *name* matches an ignore pattern → skip
-2. `ignore_versions` — current version listed → skip (takes precedence over `from`)
-3. `from` — set, and current version not listed → skip
-4. Otherwise update
+1. Source must match exactly.
+2. Local sources are skipped.
+3. `ignore_modules` matches the module *name* → skip.
+4. A missing version is skipped unless `-force-add` is set.
+5. `ignore_versions` contains the current value → skip (takes precedence over `from`).
+6. `from` is set and does not contain the current value → skip.
+7. Otherwise update.
 
 ### Ignore-pattern matching
 
@@ -164,9 +175,10 @@ Adding a config field means updating `schema/config-schema.json` too.
 
 ### Errors and output
 
-File-level errors log and continue to the next file; only bad flags or an unparseable config are
-fatal (`fatalf`). Warnings go to stderr prefixed `Warning:` (local modules, missing version
-attribute without `-force-add`, ignored modules). Prefer skipping over guessing.
+File-level errors log and continue to the next file; bad flags, invalid globs, no file matches,
+and an unparseable config are fatal (`fatalf`). Warnings go to stderr prefixed `Warning:` for
+local modules and missing version attributes without `-force-add`. Filtered modules are printed
+only with `-verbose`. Prefer skipping over guessing.
 
 Success is prefixed `✓`; dry-run lines use `→` with the verb "Would update". User-facing values are wrapped with
 `quote(s, format)`: `'vpc'` for `text` output, `` `vpc` `` for `md`. Thread `outputFormat`
@@ -174,7 +186,8 @@ through rather than hardcoding quotes.
 
 ## Testing
 
-Follow TDD. Tests are table-driven with `t.Run` subtests and always use `t.TempDir()`.
+Follow TDD. Tests are commonly table-driven with `t.Run` subtests; prefer `t.TempDir()` for new
+filesystem tests.
 Name them `Test<Function>_<Scenario>`. Maintain at least 80% coverage; all code must pass
 `-race`. Test output must be pristine — if a test triggers an error path, assert on the error
 rather than letting it print.
@@ -196,7 +209,7 @@ updated, err := updateModuleVersion(
 )
 ```
 
-After manual testing against `examples/`, restore them: `git checkout examples/`.
+Copy files from `examples/` to a temporary directory before manual write-mode testing.
 
 ## CI
 
@@ -210,6 +223,7 @@ Runs on push/PR to `main`, skipping `**/*.md`.
 ## Conventions
 
 CLI flags and the YAML config format are user-facing contracts — don't break them. Version
-constraints accept the full Terraform syntax (`1.0.0`, `~> 3.0`, `>= 1.5, < 2.0`, pre-release,
-build metadata), enforced by a regex in the JSON Schema. Keep the dependency list minimal.
+The JSON Schema accepts common Terraform constraint syntax (`1.0.0`, `~> 3.0`,
+`>= 1.5, < 2.0`, pre-release, build metadata), but the runtime YAML loader does not execute that
+schema. Keep the dependency list minimal.
 Use Australian/British spelling in prose and comments.

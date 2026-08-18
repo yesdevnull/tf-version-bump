@@ -1,5 +1,5 @@
 # Advanced configuration example
-# Demonstrates various module types including subpaths and local modules
+# Demonstrates registry modules, subpaths, and a Git source
 
 modules:
   # Public registry modules
@@ -21,13 +21,6 @@ modules:
 
   - source: "terraform-aws-modules/iam/aws//modules/iam-role"
     version: "5.2.0"
-
-  # Local modules (relative paths)
-  - source: "./modules/networking"
-    version: "1.0.0"
-
-  - source: "../shared-modules/database"
-    version: "2.3.0"
 
   # Git source modules
   - source: "git::https://github.com/example/terraform-modules.git//vpc"

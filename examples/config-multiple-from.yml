@@ -1,5 +1,5 @@
 # Example configuration demonstrating multiple from versions
-# This allows selective updates - only modules at specified versions will be updated
+# This allows selective updates based on exact version-attribute strings
 
 modules:
   # Update S3 bucket modules from versions 3.0.0 or ~> 3.0 to 4.0.0
@@ -18,7 +18,7 @@ modules:
       - "4.0.0"
       - "~> 4.0"
 
-  # Single from version still works (backward compatible)
+  # A single from value can use scalar syntax
   - source: "terraform-aws-modules/security-group/aws"
     version: "5.1.0"
     from: "5.0.0"
