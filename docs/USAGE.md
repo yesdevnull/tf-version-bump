@@ -253,9 +253,9 @@ An invalid pattern or a pattern with no matching files is a fatal command error.
 - Parse, stat, read, and write errors for an individual file are logged and processing continues
   with later files or updates.
 
-Because individual processing errors are logged rather than returned as a final failure, read
-the complete output in automation; a zero exit status does not by itself prove that every file
-was updated successfully.
+File-level errors do not stop processing: the command writes every diagnostic and continues with
+later files or configured updates. After printing the final summary, it exits non-zero if any
+selected operation encountered a file-level error.
 
 ## File-writing behaviour
 
