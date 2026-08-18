@@ -25,7 +25,7 @@ Options:
   --include-remotes        Fetch and include branches that exist only on the remote.
   --remote <name>          Remote used with --include-remotes (default: origin).
   --since-days <number>    Process branches whose tip changed within this many days.
-  --log-file <path>        Append command output to a log file outside the target repository.
+  --log-file <path>        Append output outside the target repository; the file cannot be a symlink.
   -h, --help               Show this help.
 EOF
 }
