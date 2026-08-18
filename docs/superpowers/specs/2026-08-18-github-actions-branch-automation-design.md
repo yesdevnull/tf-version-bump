@@ -68,8 +68,8 @@ copy the example's `.github` directory rather than invoke a workflow from its ex
 
 The shell scripts keep non-trivial orchestration out of YAML blocks. They have help output,
 validate their inputs, fail with stage-specific messages, and limit routine output while retaining
-failure logs for diagnosis. They expose separate validation and reconciliation operations so the
-privileged job never executes target-branch Terraform.
+failure logs for diagnosis. They expose separate preparation, validation, and reconciliation
+operations so the privileged job never executes target-branch Terraform.
 
 ## Workflow architecture
 
@@ -104,9 +104,9 @@ The update matrix defaults to four concurrent branches. This bounds Terraform do
 API writes while retaining useful parallelism. A caller can lower or raise the limit through the
 reusable workflow's `max_parallel` input.
 
-The validation jobs have `contents: read`, use `persist-credentials: false` for every checkout, and
-never receive a write token, GitHub App private key, or commit-signing key. Each validation job uses
-two independent checkouts:
+The preparation and validation jobs have `contents: read`, use `persist-credentials: false` for
+every checkout, and never receive a write token, GitHub App private key, or commit-signing key. Each
+uses two independent checkouts:
 
 - A control checkout of the immutable caller SHA supplies the reviewed scripts and
   `tf-version-bump` configuration.
@@ -244,7 +244,7 @@ absolute paths, `..` traversal, missing config files, missing Terraform director
 canonical directories, and directories that resolve outside the target checkout. Nested module
 directories are allowed, but each directory processes only the `.tf` files directly within it.
 
-Before either validation or reconciliation invokes `tf-version-bump`, the script enumerates that
+Before either preparation or reconciliation invokes `tf-version-bump`, the script enumerates that
 directory's matching files, uses `lstat` to reject symlinks and non-regular files, and verifies each
 canonical path remains under the target checkout. Required lock files receive the same checks.
 Containment is repeated for every changed and untracked path before a preparation bundle or commit
@@ -305,11 +305,12 @@ belongs to exactly one unit.
 
 ## Privileged reconciliation flow
 
-A non-dry run starts a fresh reconciliation matrix after all validation jobs have uploaded their
-bundles. For each branch, reconciliation:
+A non-dry run starts a fresh reconciliation matrix after all preparation and validation jobs have
+uploaded their artefacts. For each branch, reconciliation:
 
-1. Downloads only that run's expected artefact and validates its manifest, paths, modes, hashes,
-   control OID, branch name, and validated base OID before using any payload.
+1. Downloads only that run's expected preparation bundle and, when applicable, validation outcome,
+   then validates their manifests, paths, modes, hashes, control OID, branch name, validated base
+   OID, and candidate binding before using any payload.
 2. For a successful result, checks out the exact control and base OIDs with persisted credentials
    disabled, repeats path/symlink preflight, independently reruns `tf-version-bump` for each
    configured directory, and requires its `.tf` diff to match the manifest.
@@ -435,7 +436,7 @@ The caller sets the reusable workflow's permission ceiling according to its auth
 Reusable workflows can only maintain or reduce the caller's permission ceiling. The reusable
 workflow declares narrower permissions per job:
 
-- Discovery and validation: `contents: read` only.
+- Discovery, preparation, and validation: `contents: read` only.
 - Reconciliation: `contents: write`, `pull-requests: write`, and `issues: write`.
 
 The reconciliation declaration supports built-in-token callers, but an App caller's read-only
@@ -458,7 +459,7 @@ GitHub-maintained App-token action to mint a short-lived installation token limi
 repository and the same three explicit permissions. It obtains the App bot's user ID through the
 GitHub API and constructs the correct bot name and noreply address for commit attribution.
 App-authenticated PR activity allows future PR checks to run without the built-in token's approval
-gate. The App key never exists in discovery or validation.
+gate. The App key never exists in discovery, preparation, or validation.
 
 Every referenced action is pinned to an immutable commit SHA with a version comment, matching the
 repository's existing workflow convention.
