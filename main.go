@@ -673,18 +673,18 @@ func updateProviderBlockSyntax(nestedBlock *hclwrite.Block, providerName, versio
 // updateProviderAttributeVersion updates the version value within a provider attribute's object expression
 // This handles the attribute-based syntax: aws = { source = "..." version = "..." }
 func updateProviderAttributeVersion(nestedBlock *hclwrite.Block, providerName, newVersion string) bool {
-	objExpr, ok := providerAttributeObject(nestedBlock, providerName)
+	objExpr, expression, ok := providerAttributeObject(nestedBlock, providerName)
 	if !ok {
 		return false
 	}
 
-	newObj, hasVersion := providerObjectValues(objExpr, newVersion)
+	updatedExpression, hasVersion := replaceProviderObjectVersion(objExpr, expression, newVersion)
 	if !hasVersion {
 		return false
 	}
 
-	newExprStr := buildProviderObjectExpr(newObj, newVersion)
-	newExpr, diags := hclwrite.ParseConfig([]byte(providerName+" = "+newExprStr), "inline", hcl.Pos{Line: 1, Column: 1})
+	newAttribute := append([]byte(providerName+" = "), updatedExpression...)
+	newExpr, diags := hclwrite.ParseConfig(newAttribute, "inline", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
 		return false
 	}
@@ -697,46 +697,44 @@ func updateProviderAttributeVersion(nestedBlock *hclwrite.Block, providerName, n
 	return false
 }
 
-func providerAttributeObject(nestedBlock *hclwrite.Block, providerName string) (*hclsyntax.ObjectConsExpr, bool) {
+func providerAttributeObject(nestedBlock *hclwrite.Block, providerName string) (*hclsyntax.ObjectConsExpr, []byte, bool) {
 	attr, exists := nestedBlock.Body().Attributes()[providerName]
 	if !exists {
-		return nil, false
+		return nil, nil, false
 	}
 
 	tokens := attr.Expr().BuildTokens(nil)
-	expr, diags := parseExpression(tokens.Bytes(), "inline", hcl.Pos{Line: 1, Column: 1})
+	expression := tokens.Bytes()
+	expr, diags := parseExpression(expression, "inline", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return nil, false
+		return nil, nil, false
 	}
 
 	objExpr, ok := expr.(*hclsyntax.ObjectConsExpr)
-	return objExpr, ok
+	return objExpr, expression, ok
 }
 
-func providerObjectValues(objExpr *hclsyntax.ObjectConsExpr, newVersion string) (map[string]string, bool) {
-	newObj := make(map[string]string)
-	hasVersion := false
-
+func replaceProviderObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression []byte, newVersion string) ([]byte, bool) {
 	for _, item := range objExpr.Items {
 		keyName, ok := providerObjectItemKey(item)
-		if !ok {
+		if !ok || keyName != "version" {
 			continue
 		}
 
-		value, ok := providerObjectItemStringValue(item)
-		if !ok {
-			continue
+		valueRange := item.ValueExpr.Range()
+		if valueRange.Start.Byte < 0 || valueRange.End.Byte > len(expression) || valueRange.Start.Byte > valueRange.End.Byte {
+			return nil, false
 		}
 
-		if keyName == "version" {
-			newObj[keyName] = newVersion
-			hasVersion = true
-			continue
-		}
-		newObj[keyName] = value
+		newValue := hclwrite.TokensForValue(cty.StringVal(newVersion)).Bytes()
+		updated := make([]byte, 0, len(expression)-valueRange.End.Byte+valueRange.Start.Byte+len(newValue))
+		updated = append(updated, expression[:valueRange.Start.Byte]...)
+		updated = append(updated, newValue...)
+		updated = append(updated, expression[valueRange.End.Byte:]...)
+		return updated, true
 	}
 
-	return newObj, hasVersion
+	return nil, false
 }
 
 func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
@@ -756,46 +754,6 @@ func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
 	}
 
 	return rootName.Name, true
-}
-
-func providerObjectItemStringValue(item hclsyntax.ObjectConsItem) (string, bool) {
-	switch expr := item.ValueExpr.(type) {
-	case *hclsyntax.TemplateExpr:
-		if len(expr.Parts) == 0 {
-			return "", false
-		}
-		lit, ok := expr.Parts[0].(*hclsyntax.LiteralValueExpr)
-		if !ok {
-			return "", false
-		}
-		return lit.Val.AsString(), true
-	case *hclsyntax.LiteralValueExpr:
-		if !expr.Val.Type().Equals(cty.String) {
-			return "", false
-		}
-		return expr.Val.AsString(), true
-	default:
-		return "", false
-	}
-}
-
-func buildProviderObjectExpr(newObj map[string]string, newVersion string) string {
-	indent := "      "
-	newExprStr := "{\n"
-
-	if source, ok := newObj["source"]; ok {
-		newExprStr += fmt.Sprintf("%ssource  = %q\n", indent, source)
-	}
-	if _, ok := newObj["version"]; ok {
-		newExprStr += fmt.Sprintf("%sversion = %q\n", indent, newVersion)
-	}
-	for key, value := range newObj {
-		if key != "source" && key != "version" {
-			newExprStr += fmt.Sprintf("%s%s = %q\n", indent, key, value)
-		}
-	}
-
-	return newExprStr + "    }"
 }
 
 // updateModuleVersion parses a Terraform file, finds modules with the specified source,
