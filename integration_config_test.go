@@ -55,7 +55,137 @@ func TestRunConfigModeReportsModuleFileFailure(t *testing.T) {
 	if runnerErr == nil {
 		t.Fatal("expected runner to report the malformed file failure")
 	}
+	if got, want := runnerErr.Error(), "1 module update error(s)"; got != want {
+		t.Errorf("module-only runner error = %q, want %q", got, want)
+	}
 }
+
+func TestRunConfigModeReportsTerraformFileFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	malformedFile := filepath.Join(tmpDir, "01-malformed.tf")
+	if err := os.WriteFile(malformedFile, []byte("terraform {"), 0o644); err != nil {
+		t.Fatalf("failed to write malformed Terraform file: %v", err)
+	}
+
+	validFile := filepath.Join(tmpDir, "02-valid.tf")
+	if err := os.WriteFile(validFile, []byte(`terraform {
+  required_version = ">= 1.0"
+}
+`), 0o644); err != nil {
+		t.Fatalf("failed to write valid Terraform file: %v", err)
+	}
+
+	configFile := filepath.Join(tmpDir, "updates.yml")
+	if err := os.WriteFile(configFile, []byte(`terraform_version: ">= 1.5"
+`), 0o644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	stdout, diagnostic, runnerErr := captureRunnerOutput(t, func() error {
+		return runConfigFileMode([]string{malformedFile, validFile}, &cliFlags{
+			configFile: configFile,
+			output:     "text",
+		})
+	})
+
+	updated, err := os.ReadFile(validFile)
+	if err != nil {
+		t.Fatalf("failed to read updated Terraform file: %v", err)
+	}
+	if !strings.Contains(string(updated), `required_version = ">= 1.5"`) {
+		t.Fatalf("expected valid file to be updated, got: %s", updated)
+	}
+
+	if !strings.Contains(diagnostic, "Error processing "+malformedFile+": failed to parse HCL:") {
+		t.Errorf("expected malformed-file diagnostic, got %q", diagnostic)
+	}
+	if !strings.Contains(stdout, "Terraform version: 1 file(s) updated") {
+		t.Errorf("expected existing config summary in stdout, got %q", stdout)
+	}
+	if runnerErr == nil {
+		t.Fatal("expected runner to report the malformed file failure")
+	}
+}
+
+func TestRunConfigModeTerraformAllFilesSucceed(t *testing.T) {
+	tmpDir := t.TempDir()
+	files := []string{
+		filepath.Join(tmpDir, "01.tf"),
+		filepath.Join(tmpDir, "02.tf"),
+	}
+	for _, file := range files {
+		if err := os.WriteFile(file, []byte(`terraform {
+  required_version = ">= 1.0"
+}
+`), 0o644); err != nil {
+			t.Fatalf("failed to write Terraform file: %v", err)
+		}
+	}
+
+	configFile := filepath.Join(tmpDir, "updates.yml")
+	if err := os.WriteFile(configFile, []byte(`terraform_version: ">= 1.5"
+`), 0o644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	stdout, diagnostic, runnerErr := captureRunnerOutput(t, func() error {
+		return runConfigFileMode(files, &cliFlags{configFile: configFile, output: "text"})
+	})
+	if runnerErr != nil {
+		t.Fatalf("expected all valid files to succeed: %v", runnerErr)
+	}
+	if diagnostic != "" {
+		t.Errorf("expected no diagnostics, got %q", diagnostic)
+	}
+	if !strings.Contains(stdout, "Terraform version: 2 file(s) updated") {
+		t.Errorf("expected existing summary in stdout, got %q", stdout)
+	}
+}
+
+/*
+func TestRunConfigModeProviderAllFilesSucceed(t *testing.T) {
+	tmpDir := t.TempDir()
+	files := []string{
+		filepath.Join(tmpDir, "01.tf"),
+		filepath.Join(tmpDir, "02.tf"),
+	}
+	for _, file := range files {
+		if err := os.WriteFile(file, []byte(`terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+`), 0o644); err != nil {
+			t.Fatalf("failed to write Terraform file: %v", err)
+		}
+	}
+
+	configFile := filepath.Join(tmpDir, "updates.yml")
+	if err := os.WriteFile(configFile, []byte(`providers:
+  - name: aws
+    version: "~> 5.0"
+`), 0o644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	stdout, diagnostic, runnerErr := captureRunnerOutput(t, func() error {
+		return runConfigFileMode(files, &cliFlags{configFile: configFile, output: "text"})
+	})
+	if runnerErr != nil {
+		t.Fatalf("expected all valid files to succeed: %v", runnerErr)
+	}
+	if diagnostic != "" {
+		t.Errorf("expected no diagnostics, got %q", diagnostic)
+	}
+	if !strings.Contains(stdout, "Providers: 2 update(s) applied") {
+		t.Errorf("expected existing config summary in stdout, got %q", stdout)
+	}
+}
+
+*/
 
 // TestConfigFileWithTerraformVersion tests processing config files with terraform_version
 func TestConfigFileWithTerraformVersion(t *testing.T) {
@@ -91,7 +221,7 @@ func TestConfigFileWithTerraformVersion(t *testing.T) {
 	files := []string{tfFile}
 	flags := &cliFlags{dryRun: false, output: "text"}
 
-	count := processTerraformVersion(files, config.TerraformVersion, flags.dryRun, flags.output)
+	count, _ := processTerraformVersion(files, config.TerraformVersion, flags.dryRun, flags.output)
 	if count != 1 {
 		t.Errorf("Expected 1 file updated, got %d", count)
 	}
@@ -229,7 +359,7 @@ modules:
 	// Process terraform version
 	terraformUpdates := 0
 	if config.TerraformVersion != "" {
-		terraformUpdates = processTerraformVersion(files, config.TerraformVersion, flags.dryRun, flags.output)
+		terraformUpdates, _ = processTerraformVersion(files, config.TerraformVersion, flags.dryRun, flags.output)
 	}
 
 	// Process providers

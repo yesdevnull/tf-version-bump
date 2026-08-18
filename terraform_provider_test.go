@@ -405,11 +405,14 @@ module "vpc" {
 	files := []string{file1, file2, file3}
 
 	// Process all files
-	count := processTerraformVersion(files, ">= 1.5", false, "text")
+	count, errors := processTerraformVersion(files, ">= 1.5", false, "text")
 
 	// Should update 2 files (file1 and file2, not file3 which has no terraform block)
 	if count != 2 {
 		t.Errorf("Expected 2 files updated, got %d", count)
+	}
+	if errors != 0 {
+		t.Errorf("Expected no file errors, got %d", errors)
 	}
 
 	// Verify updates
