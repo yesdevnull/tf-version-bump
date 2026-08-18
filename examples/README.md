@@ -45,7 +45,8 @@ the checked-in examples.
 ## Branch automation
 
 [`update-branches.sh`](update-branches.sh) applies one module update or YAML config across Git
-branches, committing each branch independently without pushing it.
+branches, creating a signed commit on each branch without pushing it. Configure a Git signing key
+before using write mode; a signing failure stops the run.
 
 Start with its help and a dry run:
 
@@ -70,5 +71,5 @@ Contributors can run its end-to-end checks with:
 examples/update-branches_test.sh
 ```
 
-The checks build and exercise the real `tf-version-bump` binary in temporary Git repositories;
-they do not contact a remote service.
+The checks require `ssh-keygen`, build and exercise the real `tf-version-bump` binary in temporary
+Git repositories, and create an ephemeral signing key. They do not contact a remote service.

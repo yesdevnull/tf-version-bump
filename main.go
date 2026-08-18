@@ -714,7 +714,12 @@ func providerAttributeObject(nestedBlock *hclwrite.Block, providerName string) (
 }
 
 func replaceProviderObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression []byte, newVersion string) ([]byte, bool) {
-	for _, item := range objExpr.Items {
+	updated := append([]byte(nil), expression...)
+	hasVersion := false
+	newValue := hclwrite.TokensForValue(cty.StringVal(newVersion)).Bytes()
+
+	for index := len(objExpr.Items) - 1; index >= 0; index-- {
+		item := objExpr.Items[index]
 		keyName, ok := providerObjectItemKey(item)
 		if !ok || keyName != "version" {
 			continue
@@ -725,15 +730,15 @@ func replaceProviderObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression 
 			return nil, false
 		}
 
-		newValue := hclwrite.TokensForValue(cty.StringVal(newVersion)).Bytes()
-		updated := make([]byte, 0, len(expression)-valueRange.End.Byte+valueRange.Start.Byte+len(newValue))
-		updated = append(updated, expression[:valueRange.Start.Byte]...)
-		updated = append(updated, newValue...)
-		updated = append(updated, expression[valueRange.End.Byte:]...)
-		return updated, true
+		next := make([]byte, 0, len(updated)-valueRange.End.Byte+valueRange.Start.Byte+len(newValue))
+		next = append(next, updated[:valueRange.Start.Byte]...)
+		next = append(next, newValue...)
+		next = append(next, updated[valueRange.End.Byte:]...)
+		updated = next
+		hasVersion = true
 	}
 
-	return nil, false
+	return updated, hasVersion
 }
 
 func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
