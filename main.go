@@ -14,8 +14,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -26,6 +28,26 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
+
+type visibleDirFS struct {
+	fs.ReadDirFS
+}
+
+func (f visibleDirFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	entries, err := f.ReadDirFS.ReadDir(name)
+	if err != nil {
+		return nil, err
+	}
+
+	visible := entries[:0]
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		visible = append(visible, entry)
+	}
+	return visible, nil
+}
 
 // Build information set by ldflags
 var (
@@ -269,21 +291,41 @@ func findMatchingFiles(flags *cliFlags) []string {
 	// directories. filepath.Glob treats '**' as a plain '*', silently matching only one
 	// level deep.
 	//
-	// The options give this the same semantics a shell glob has:
-	//   - WithNoHidden: wildcards don't match dot-directories, so '**/*.tf' skips the
-	//     tool-managed .terraform and .git trees without walking into them. Naming one
-	//     explicitly ('.terraform/**/*.tf') still matches.
+	// The filtered filesystem prevents wildcards from walking into dot-directories, so
+	// '**/*.tf' skips tool-managed .terraform and .git trees without excluding dotfiles.
+	// Naming a dot-directory explicitly places it in the non-glob base path, so it remains
+	// reachable.
 	//   - WithNoFollow: don't traverse directory symlinks, which would otherwise match the
 	//     same physical file via both its real path and the link.
 	//   - WithFilesOnly: '**' matches directories as readily as files; we only want files.
-	files, err := doublestar.FilepathGlob(
-		flags.pattern,
-		doublestar.WithNoHidden(),
+	pattern := filepath.ToSlash(filepath.Clean(flags.pattern))
+	base, globPattern := doublestar.SplitPattern(pattern)
+	fileSystem := os.DirFS(base)
+	if readDirFS, ok := fileSystem.(fs.ReadDirFS); ok {
+		fileSystem = visibleDirFS{ReadDirFS: readDirFS}
+	}
+
+	matches, err := doublestar.Glob(
+		fileSystem,
+		globPattern,
 		doublestar.WithNoFollow(),
 		doublestar.WithFilesOnly(),
 	)
 	if err != nil {
 		fatalf("Error matching pattern: %v", err)
+	}
+
+	files := make([]string, 0, len(matches))
+	for _, match := range matches {
+		filename := filepath.Join(base, filepath.FromSlash(match))
+		info, lstatErr := os.Lstat(filename)
+		if lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			target, statErr := os.Stat(filename)
+			if statErr == nil && target.IsDir() {
+				continue
+			}
+		}
+		files = append(files, filename)
 	}
 
 	// doublestar walks depth-first, so results come back in traversal order rather than
