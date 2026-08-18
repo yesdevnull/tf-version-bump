@@ -192,14 +192,14 @@ timezone support:
 - Non-production: daily at 04:17 in `Australia/Melbourne`.
 - Production: Sunday at 04:43 in `Australia/Melbourne`.
 
-Each caller has its own concurrency group with `cancel-in-progress: false`. GitHub Actions permits
-one running and one pending run in a concurrency group; a newer run replaces the existing pending
-run. This last-pending-wins behaviour is acceptable because scheduled and normal manual runs are
-idempotent reconciliations of current branch state. A displaced manual dry run must be dispatched
-again if its output is still wanted. Production and non-production can run independently.
-Reconciliation additionally uses a policy-independent per-state-branch concurrency group derived
-from the repository ID and branch hash. Two policies can prepare concurrently but cannot publish
-the same `update_<state-branch>` ref concurrently.
+Each caller has its own concurrency group with `queue: max` and no in-progress cancellation.
+Current GitHub.com queues up to 100 pending runs in that group instead of replacing an existing
+pending run. Production and non-production can run independently. Publication additionally uses a
+policy-independent per-state-branch concurrency group with `queue: max`, derived from the repository
+ID and branch hash. Two policies can prepare concurrently but cannot publish the same
+`update_<state-branch>` ref concurrently, and neither policy's pending publication is silently
+replaced. GitHub Enterprise Server consumers must confirm that their installed version supports the
+`queue` property before copying the example.
 
 Manual runs are accepted only when `github.ref` is the repository's default branch. This catches
 accidental alternate-ref dispatches. The publication job also uses a required protected GitHub
@@ -745,13 +745,14 @@ covered by the real-service acceptance run.
 
 The project adds one repository-owned launcher that runs exactly
 `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12`; the local harness, Make target, CI, and
-final verification all use that launcher for the three example workflow files. No parser warning
-is suppressed. Validation copies the example `.github` tree into a temporary consumer-style
-repository root first, so local reusable-workflow paths resolve exactly as they do after
-installation. It also runs `bash -n`, verifies that Docker is available for the container-boundary
-tests, and runs the integration tests for both helper scripts. Existing Go tests, race detection,
-branch-automation tests, linting, and build validation remain required and must produce pristine
-output.
+final verification all use that launcher for the three example workflow files. That parser predates
+GitHub.com's supported `queue` property, so the launcher applies only the exact
+`-ignore '^unexpected key "queue" for "concurrency" section\.'` suppression. It suppresses no other
+diagnostic. Validation copies the example `.github` tree into a temporary consumer-style repository
+root first, so local reusable-workflow paths resolve exactly as they do after installation. It also
+runs `bash -n`, verifies that Docker is available for the container-boundary tests, and runs the
+integration tests for both helper scripts. Existing Go tests, race detection, branch-automation
+tests, linting, and build validation remain required and must produce pristine output.
 
 Each behaviour is introduced through its own focused failing test and smallest implementation,
 followed by the focused test again. A missing script or mode is used only to establish the initial
@@ -789,8 +790,8 @@ The example README defines an acceptance procedure using a disposable GitHub rep
 - Private-repository discovery, fetch, update, and deletion using command-scoped authentication.
 - Successful update, repeated idempotent update, validation failure, issue update, recovery, and
   obsolete-PR cleanup.
-- Three rapid dispatches demonstrating the documented native behaviour: the first runs, the third
-  replaces the second pending run, and the third reconciles the latest repository state.
+- Three rapid dispatches demonstrating that `queue: max` preserves and eventually executes all
+  three runs rather than replacing either pending run.
 - A built-in-token PR whose `push` workflows remain absent and whose `pull_request` checks wait for
   writer approval, followed by an App-mode PR whose checks start without that approval gate.
 - A dry run that demonstrates no repository refs, content, PRs, or issues changed while diagnostic
@@ -840,8 +841,8 @@ The acceptance transcript is reviewed before completion is claimed.
   diagnostics, versus automation failures that never create issues.
 - Required provider lock files, valid provider-free roots without locks, and rejection of ignored
   required locks and symlinked Terraform/lock paths.
-- GitHub's one-running/one-latest-pending concurrency behaviour and the need to redispatch a
-  displaced manual dry run.
+- GitHub.com's `queue: max` behaviour, its 100-pending-run bound, and the need for GitHub Enterprise
+  Server consumers to confirm support before installation.
 - The 256-branch matrix ceiling and the controlled failure when an allow-list exceeds it.
 - Built-in-token event suppression and approval-required PR checks, including when App mode is
   required for unattended checks.
@@ -884,8 +885,9 @@ The feature is complete when:
   clear failure), provider-free directories may omit the file, disposable `.terraform/` data is
   excluded, and symlinked, escaping, non-regular, or otherwise unexpected paths are rejected before
   writing.
-- Concurrency uses only supported `group` and `cancel-in-progress` keys and documents GitHub's
-  one-running/one-latest-pending behaviour. The pinned actionlint launcher requires no suppression.
+- GitHub.com caller and publication concurrency use the supported `queue: max` behaviour so pending
+  runs are preserved. The pinned actionlint launcher suppresses only its exact stale-parser
+  diagnostic for that property.
 - Built-in-token documentation and acceptance distinguish suppressed `push` workflows from
   approval-required PR workflows, and require App mode for unattended required checks.
 - Every changed Terraform source file belongs directly to exactly one configured and validated

@@ -104,8 +104,10 @@ phase.
 1. Add one harness assertion that the actionlint launcher exists and reports 1.7.12. Run it and
    observe RED because the launcher is absent.
 2. Add the smallest documented launcher using exactly
-   `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12`. It accepts workflow paths, has
-   `--help`, and emits no output on success. Rerun GREEN.
+   `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12` plus only
+   `-ignore '^unexpected key "queue" for "concurrency" section\.'`. It accepts workflow paths, has
+   `--help`, explains that GitHub.com is authoritative for the newer property, and emits no output
+   on success. Rerun GREEN.
 3. Add one harness assertion that both runtime helpers support `--help`. Observe RED, then create
    only minimal executable help/usage scaffolds. Rerun GREEN.
 4. Add `branch-automation-test` and `actionlint` Make targets that delegate to these scripts. Do not
@@ -380,13 +382,15 @@ Add each workflow contract through a focused structural or actionlint RED/GREEN 
 7. Add App token creation pinned to the stated SHA and repository/permission limits. In App mode,
    the caller ceiling leaves the effective `GITHUB_TOKEN` read-only; it is never passed to a write
    child.
-8. Add policy-independent state-branch publication concurrency and supported caller concurrency
-   using only `group` and `cancel-in-progress`. Do not use a `queue` key.
+8. Add `queue: max` to caller concurrency and to policy-independent state-branch publication
+   concurrency, with no in-progress cancellation. Add the exact actionlint 1.7.12 suppression for
+   its stale `queue` parser diagnostic and no other warning.
 9. Verify every checkout has `persist-credentials: false`, every action pin matches the approved
    SHA, and no untrusted expression appears directly in `run:` source.
 
 Run the pinned actionlint launcher against the temporary consumer-style `.github` tree after every
-workflow increment. It must need no ignored diagnostics. Create a signed commit.
+workflow increment. Only the exact documented `queue` diagnostic may be ignored. Create a signed
+commit.
 
 ### Task 12: Add production and non-production callers
 
@@ -400,8 +404,8 @@ workflow increment. It must need no ignored diagnostics. Create a signed commit.
 
 1. Add the non-production caller with manual `branch_prefix`/`dry_run`, a 04:17 daily
    `Australia/Melbourne` schedule, policy `nonproduction`, the three documented prefixes, root `.`,
-   exact release/archive/image pins, and native last-pending-wins concurrency. Populate the archive
-   digest only from the completed `v1.0.0-rc.7` release acceptance record.
+   exact release/archive/image pins, and `queue: max` concurrency. Populate the archive digest only
+   from the completed `v1.0.0-rc.7` release acceptance record.
 2. Add the production caller with the same manual interface, a Sunday 04:43
    `Australia/Melbourne` schedule, policy `production`, and the two production prefixes.
 3. Make built-in-token mode the copyable default. Add commented/documented App inputs only with the
@@ -409,8 +413,8 @@ workflow increment. It must need no ignored diagnostics. Create a signed commit.
 4. Add representative separate config files and validate each with the released CLI against a
    trusted fixture before any matrix is created.
 5. Add tests for exact schedules, default-branch-only dispatch, permission ceilings, config paths,
-   prefix separation, and one-running/one-latest-pending semantics. Three rapid-run behaviour is a
-   real-service assertion, not an invented local scheduler.
+   prefix separation, and `queue: max`. All three rapid runs completing is a real-service assertion,
+   not an invented local scheduler.
 
 Run actionlint and the caller subset, then create a signed commit.
 
@@ -458,8 +462,8 @@ Write the example guide specified by the design, including:
   security boundary.
 - Stable `update_<state-branch>` names, policy-scoped ownership, exact leases, best-effort Git/API
   compensation, residual race, and manual recovery after a compensation lease conflict.
-- Run-attempt artefact identity, native one-running/one-latest-pending concurrency, and redispatching
-  a displaced manual dry run.
+- Run-attempt artefact identity, GitHub.com's `queue: max` behaviour and bound, and GitHub Enterprise
+  Server compatibility checks.
 - Failure classification and the manual, strongly marked orphan-cleanup procedure; automatic
   destructive garbage collection remains out of scope.
 - The complete disposable private-repository acceptance procedure from the spec.
