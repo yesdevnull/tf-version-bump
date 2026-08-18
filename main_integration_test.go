@@ -94,6 +94,47 @@ func TestRunCLIModeReportsModuleFileFailure(t *testing.T) {
 	}
 }
 
+func TestRunCLIModeReportsTerraformFileFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	malformedFile := filepath.Join(tmpDir, "01-malformed.tf")
+	if err := os.WriteFile(malformedFile, []byte("terraform {"), 0o644); err != nil {
+		t.Fatalf("failed to write malformed Terraform file: %v", err)
+	}
+
+	validFile := filepath.Join(tmpDir, "02-valid.tf")
+	if err := os.WriteFile(validFile, []byte(`terraform {
+  required_version = ">= 1.0"
+}
+`), 0o644); err != nil {
+		t.Fatalf("failed to write valid Terraform file: %v", err)
+	}
+
+	stdout, diagnostic, runnerErr := captureRunnerOutput(t, func() error {
+		return runCLIMode([]string{malformedFile, validFile}, &cliFlags{
+			terraformVersion: ">= 1.5",
+			output:           "text",
+		})
+	})
+
+	updated, err := os.ReadFile(validFile)
+	if err != nil {
+		t.Fatalf("failed to read updated Terraform file: %v", err)
+	}
+	if !strings.Contains(string(updated), `required_version = ">= 1.5"`) {
+		t.Fatalf("expected valid file to be updated, got: %s", updated)
+	}
+
+	if !strings.Contains(diagnostic, "Error processing "+malformedFile+": failed to parse HCL:") {
+		t.Errorf("expected malformed-file diagnostic, got %q", diagnostic)
+	}
+	if !strings.Contains(stdout, "Successfully updated Terraform version in 1 file(s)") {
+		t.Errorf("expected existing summary in stdout, got %q", stdout)
+	}
+	if runnerErr == nil {
+		t.Fatal("expected runner to report the malformed file failure")
+	}
+}
+
 // TestLoadModuleUpdatesErrorCases tests error handling in loadModuleUpdates
 func TestLoadModuleUpdatesErrorCases(t *testing.T) {
 	tests := []struct {
@@ -204,7 +245,7 @@ func TestProcessTerraformVersionWithErrors(t *testing.T) {
 	}
 
 	files := []string{invalidFile}
-	count := processTerraformVersion(files, ">= 1.5", false, "text")
+	count, _ := processTerraformVersion(files, ">= 1.5", false, "text")
 
 	if count != 0 {
 		t.Errorf("Expected 0 updates for invalid file, got %d", count)
@@ -224,7 +265,7 @@ func TestProcessTerraformVersionDryRun(t *testing.T) {
 	}
 
 	files := []string{tfFile}
-	count := processTerraformVersion(files, ">= 1.5", true, "text")
+	count, _ := processTerraformVersion(files, ">= 1.5", true, "text")
 
 	if count != 1 {
 		t.Errorf("Expected 1 update in dry-run, got %d", count)
