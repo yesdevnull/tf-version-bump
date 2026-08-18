@@ -307,6 +307,57 @@ func TestFindMatchingFiles_ExcludesDirectories(t *testing.T) {
 	}
 }
 
+func TestFindMatchingFiles_IncludesHiddenFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	wanted := filepath.Join(tmpDir, ".generated.tf")
+	if err := os.WriteFile(wanted, []byte("# test"), 0o644); err != nil {
+		t.Fatalf("Failed to create hidden Terraform file: %v", err)
+	}
+
+	flags := &cliFlags{
+		pattern: filepath.Join(tmpDir, "*.tf"),
+		output:  "text",
+	}
+
+	got := findMatchingFiles(flags)
+
+	if len(got) != 1 || got[0] != wanted {
+		t.Errorf("Expected hidden file %q, got %v", wanted, got)
+	}
+}
+
+func TestFindMatchingFiles_ExcludesDirectorySymlinks(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	realDir := filepath.Join(tmpDir, "modules")
+	if err := os.Mkdir(realDir, 0o755); err != nil {
+		t.Fatalf("Failed to create test dir: %v", err)
+	}
+	wanted := filepath.Join(realDir, "main.tf")
+	if err := os.WriteFile(wanted, []byte("# test"), 0o644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	directoryLink := filepath.Join(tmpDir, "modules-link")
+	if err := os.Symlink(realDir, directoryLink); err != nil {
+		t.Fatalf("Failed to create directory symlink: %v", err)
+	}
+
+	flags := &cliFlags{
+		pattern: filepath.Join(tmpDir, "**"),
+		output:  "text",
+	}
+
+	got := findMatchingFiles(flags)
+
+	if slices.Contains(got, directoryLink) {
+		t.Errorf("Expected directory symlink %q to be excluded, got %v", directoryLink, got)
+	}
+	if len(got) != 1 || got[0] != wanted {
+		t.Errorf("Expected only %q, got %v", wanted, got)
+	}
+}
+
 // TestFindMatchingFiles_HonoursExplicitHiddenPattern verifies that naming a hidden directory
 // explicitly matches files inside it. Wildcards skip dot-directories, but an explicit
 // '.terraform/...' is unambiguous intent and must not be silently filtered to nothing.
