@@ -32,9 +32,9 @@ tf-version-bump/
 ├── config.go                # YAML config handling
 ├── *_test.go                # Comprehensive tests (Go tests)
 ├── schema/config-schema.json # YAML validation schema
-├── examples/                # Sample configs and .tf files
+├── examples/                # Sample configs, .tf files, and branch automation
 ├── .github/workflows/       # CI/CD pipelines
-└── docs/                    # Additional documentation
+└── docs/                    # Usage, configuration, automation, and release guides
 ```
 
 ## Core Files
@@ -103,8 +103,9 @@ for _, block := range file.Body().Blocks() {
     }
 }
 
-// 4. Write back
-os.WriteFile(filename, file.Bytes(), fileInfo.Mode())
+// 4. Format and write back with the original permission bits
+output := hclwrite.Format(file.Bytes())
+os.WriteFile(filename, output, fileInfo.Mode().Perm())
 ```
 
 ### Config Loading (config.go)
@@ -162,7 +163,7 @@ func TestExample(t *testing.T) {
 3. Add config field to `Config` struct if needed
 4. Update `schema/config-schema.json` for YAML validation
 5. Add tests in `*_test.go`
-6. Update `README.md` with usage examples
+6. Update the appropriate user guide under `docs/` and keep the README quick start concise
 7. Run full validation: `make test-coverage && golangci-lint run`
 
 ### Debugging
@@ -183,10 +184,12 @@ GitHub Actions runs on every push/PR:
 ## Version Filtering Logic
 
 Priority order in `updateModuleVersion()`:
-1. **Ignore patterns**: If module name matches `ignore_modules`, skip
-2. **Ignore versions**: If current version in `ignore_versions`, skip (takes precedence)
-3. **From filter**: If `from` is set and current version doesn't match, skip
-4. **Update**: If all checks pass, update the version
+1. **Source and locality**: Require an exact source match; skip local sources
+2. **Ignore patterns**: If module name matches `ignore_modules`, skip
+3. **Missing version**: Skip unless `force-add` is enabled
+4. **Ignore versions**: If current version is in `ignore_versions`, skip (takes precedence)
+5. **From filter**: If `from` is set and current version doesn't match, skip
+6. **Update**: If all checks pass, update the version
 
 ## Quick Tips
 
@@ -195,7 +198,7 @@ Priority order in `updateModuleVersion()`:
 ✓ **Use dry-run** - Preview changes before applying
 ✓ **Check coverage** - `make test-coverage`
 ✓ **Follow existing patterns** - Match the codebase style
-✓ **Update docs** - Keep README.md and CLAUDE.md in sync
+✓ **Update docs** - Keep the README, detailed guides, and agent documentation in sync
 
 ✗ **Never break HCL format** - Use `hclwrite` API only
 ✗ **Don't skip linting** - CI will fail
@@ -217,6 +220,9 @@ github.com/bmatcuk/doublestar/v4 # Recursive '**' globbing
 
 - **Comprehensive guide**: [CLAUDE.md](CLAUDE.md)
 - **User documentation**: [README.md](README.md)
+- **Usage reference**: [docs/USAGE.md](docs/USAGE.md)
+- **Configuration reference**: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+- **Branch automation**: [docs/ADVANCED-USAGE.md](docs/ADVANCED-USAGE.md)
 - **Release process**: [docs/RELEASING.md](docs/RELEASING.md)
 - **Examples**: `examples/` directory
 - **HCL docs**: https://github.com/hashicorp/hcl

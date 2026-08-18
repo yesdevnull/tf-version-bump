@@ -7,8 +7,8 @@
 //  3. Terraform Version Mode: Update Terraform required_version in terraform blocks
 //  4. Provider Version Mode: Update provider versions in terraform required_providers blocks
 //
-// It uses the official HashiCorp HCL library to safely parse and modify Terraform files
-// while preserving formatting and comments.
+// It uses the official HashiCorp HCL library to parse and modify Terraform files while retaining
+// comments and HCL structure. Changed files are normalised by hclwrite.Format.
 package main
 
 import (
@@ -759,7 +759,8 @@ func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
 // updateModuleVersion parses a Terraform file, finds modules with the specified source,
 // updates their version attribute, and writes the modified content back to the file.
 //
-// The function preserves all formatting, comments, and other HCL structures in the file.
+// The function retains comments and other HCL structures, then normalises the changed file with
+// hclwrite.Format.
 // If a matching module doesn't have a version attribute:
 //   - When forceAdd is false (default): a warning is printed and the module is skipped
 //   - When forceAdd is true: a version attribute is added to the module

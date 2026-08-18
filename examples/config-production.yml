@@ -1,5 +1,5 @@
-# Production environment configuration
-# Updates all infrastructure modules to production-ready versions
+# Larger configuration example organised by infrastructure concern
+# Version values demonstrate syntax and are not current-version recommendations
 
 modules:
   # Networking

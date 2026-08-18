@@ -1,5 +1,5 @@
-# Complex Terraform configuration with varied formatting
-# This file tests that the version bump tool preserves formatting
+# Complex Terraform configuration with varied structures and comments
+# Changed files are normalised by hclwrite rather than preserving whitespace byte-for-byte
 
 terraform {
   required_version = ">= 1.0"
