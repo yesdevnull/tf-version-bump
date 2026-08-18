@@ -568,6 +568,25 @@ func TestUpdateProviderVersionAttributeSyntax(t *testing.T) {
 			},
 		},
 		{
+			name: "preserve non-string provider attributes",
+			inputContent: `terraform {
+  required_providers {
+    aws = {
+      source                = "hashicorp/aws"
+      version               = "~> 4.0"
+      configuration_aliases = [aws.alternate]
+    }
+  }
+}`,
+			providerName: "aws",
+			version:      "~> 5.0",
+			expectUpdate: true,
+			checkContent: func(content string) bool {
+				return strings.Contains(content, `version               = "~> 5.0"`) &&
+					strings.Contains(content, `configuration_aliases = [aws.alternate]`)
+			},
+		},
+		{
 			name: "no update for non-existent provider (attribute syntax)",
 			inputContent: `terraform {
   required_providers {
