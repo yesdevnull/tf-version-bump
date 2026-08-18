@@ -88,8 +88,149 @@ test_updates_matching_local_branches_and_restores_starting_branch() {
     [[ "$feature_subject" == "chore: bump terraform-aws-modules/vpc/aws to 2.0.0" ]] || fail "update was not committed"
 }
 
+test_applies_config_file_updates() {
+    local repository="$TEST_ROOT/config-mode"
+    local config_file="$TEST_ROOT/updates.yml"
+    create_repository "$repository"
+    printf '%s\n' \
+        '' \
+        'terraform {' \
+        '  required_version = ">= 1.5"' \
+        '}' >>"$repository/main.tf"
+    git -C "$repository" add main.tf
+    git -C "$repository" commit -q -m "add Terraform settings"
+    git -C "$repository" branch release/config
+    printf '%s\n' \
+        'terraform_version: ">= 1.9"' \
+        'modules:' \
+        '  - source: "terraform-aws-modules/vpc/aws"' \
+        '    version: "3.0.0"' >"$config_file"
+
+    "$SCRIPT" \
+        --repository "$repository" \
+        --branch-pattern 'release/*' \
+        --config "$config_file" \
+        --binary "$TF_VERSION_BUMP"
+
+    local updated_file
+    updated_file=$(git -C "$repository" show release/config:main.tf)
+    [[ "$updated_file" == *'required_version = ">= 1.9"'* ]] || fail "config Terraform version was not applied"
+    [[ "$updated_file" == *'version = "3.0.0"'* ]] || fail "config module version was not applied"
+
+    local subject
+    subject=$(git -C "$repository" log -1 --format=%s release/config)
+    [[ "$subject" == "chore: apply tf-version-bump config" ]] || fail "config update used the wrong commit message"
+}
+
+test_dry_run_leaves_branches_unchanged() {
+    local repository="$TEST_ROOT/dry-run"
+    create_repository "$repository"
+    git -C "$repository" branch feature/preview
+
+    local original_head
+    original_head=$(git -C "$repository" rev-parse feature/preview)
+
+    "$SCRIPT" \
+        --repository "$repository" \
+        --branch-pattern 'feature/*' \
+        --module 'terraform-aws-modules/vpc/aws' \
+        --to '2.0.0' \
+        --binary "$TF_VERSION_BUMP" \
+        --dry-run
+
+    local current_head
+    current_head=$(git -C "$repository" rev-parse feature/preview)
+    [[ "$current_head" == "$original_head" ]] || fail "dry run created a commit"
+
+    local feature_file
+    feature_file=$(git -C "$repository" show feature/preview:main.tf)
+    [[ "$feature_file" == *'version = "1.0.0"'* ]] || fail "dry run changed a Terraform file"
+}
+
+test_includes_remote_only_branches_without_pushing() {
+    local repository="$TEST_ROOT/remote-branches"
+    local remote="$TEST_ROOT/origin.git"
+    create_repository "$repository"
+    git -C "$repository" branch feature/remote
+    git init -q --bare "$remote"
+    git -C "$repository" remote add origin "$remote"
+    git -C "$repository" push -q origin main feature/remote
+    git -C "$repository" branch -D feature/remote >/dev/null
+
+    "$SCRIPT" \
+        --repository "$repository" \
+        --branch-pattern 'feature/*' \
+        --module 'terraform-aws-modules/vpc/aws' \
+        --to '2.0.0' \
+        --binary "$TF_VERSION_BUMP" \
+        --include-remotes
+
+    local local_file
+    local_file=$(git -C "$repository" show feature/remote:main.tf)
+    [[ "$local_file" == *'version = "2.0.0"'* ]] || fail "remote-only branch was not updated locally"
+
+    local remote_file
+    remote_file=$(git --git-dir "$remote" show refs/heads/feature/remote:main.tf)
+    [[ "$remote_file" == *'version = "1.0.0"'* ]] || fail "script pushed a remote branch"
+}
+
+test_writes_a_log_file() {
+    local repository="$TEST_ROOT/logging"
+    local log_file="$TEST_ROOT/update.log"
+    create_repository "$repository"
+    git -C "$repository" branch feature/logged
+
+    "$SCRIPT" \
+        --repository "$repository" \
+        --branch-pattern 'feature/*' \
+        --module 'terraform-aws-modules/vpc/aws' \
+        --to '2.0.0' \
+        --binary "$TF_VERSION_BUMP" \
+        --log-file "$log_file"
+
+    [[ -f "$log_file" ]] || fail "log file was not created"
+    local log_output
+    log_output=$(<"$log_file")
+    [[ "$log_output" == *'Processing branch: feature/logged'* ]] || fail "log omits the processed branch"
+    [[ "$log_output" == *'Successfully updated 1 file(s)'* ]] || fail "log omits tf-version-bump output"
+}
+
+test_filters_branches_by_tip_commit_age() {
+    local repository="$TEST_ROOT/recent-branches"
+    create_repository "$repository"
+    git -C "$repository" branch feature/recent
+    git -C "$repository" checkout -q -b feature/old
+    printf '%s\n' 'old branch' >"$repository/old.txt"
+    git -C "$repository" add old.txt
+    GIT_AUTHOR_DATE='2020-01-01T00:00:00Z' \
+        GIT_COMMITTER_DATE='2020-01-01T00:00:00Z' \
+        git -C "$repository" commit -q -m "old fixture"
+    git -C "$repository" checkout -q main
+
+    "$SCRIPT" \
+        --repository "$repository" \
+        --branch-pattern 'feature/*' \
+        --module 'terraform-aws-modules/vpc/aws' \
+        --to '2.0.0' \
+        --binary "$TF_VERSION_BUMP" \
+        --since-days 30
+
+    local recent_file
+    recent_file=$(git -C "$repository" show feature/recent:main.tf)
+    [[ "$recent_file" == *'version = "2.0.0"'* ]] || fail "recent branch was not updated"
+
+    local old_file
+    old_file=$(git -C "$repository" show feature/old:main.tf)
+    [[ "$old_file" == *'version = "1.0.0"'* ]] || fail "old branch was updated"
+}
+
 install_git_wrapper
 build_tf_version_bump
 test_help_describes_required_inputs
 test_updates_matching_local_branches_and_restores_starting_branch
+test_applies_config_file_updates
+test_dry_run_leaves_branches_unchanged
+test_includes_remote_only_branches_without_pushing
+test_writes_a_log_file
+test_filters_branches_by_tip_commit_age
 echo "PASS: update-branches.sh"
