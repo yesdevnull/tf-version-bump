@@ -63,7 +63,6 @@ var (
 		log.Printf(format, v...)
 		exitFunc(1)
 	}
-	parseExpression = hclsyntax.ParseExpression
 )
 
 // stringSliceFlag is a custom flag type that allows a flag to be specified multiple times
@@ -705,7 +704,7 @@ func providerAttributeObject(nestedBlock *hclwrite.Block, providerName string) (
 
 	tokens := attr.Expr().BuildTokens(nil)
 	expression := tokens.Bytes()
-	expr, diags := parseExpression(expression, "inline", hcl.Pos{Line: 1, Column: 1})
+	expr, diags := hclsyntax.ParseExpression(expression, "inline", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
 		return nil, nil, false
 	}
