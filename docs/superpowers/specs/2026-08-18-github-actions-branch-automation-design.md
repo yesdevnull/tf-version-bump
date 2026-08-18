@@ -77,20 +77,28 @@ The production and non-production callers own policy. Each caller defines its al
 configuration path, pinned tool versions, schedule, and concurrency group, then invokes the local
 reusable workflow.
 
-The reusable workflow contains three job stages:
+The reusable workflow contains four job stages:
 
 1. `discover` checks out the exact caller commit, validates the shared configuration, and produces
    a sorted JSON matrix containing each matching state branch and its immutable tip OID.
-2. `validate` runs once per matrix entry with `fail-fast: false`. It applies the update and runs
-   Terraform on an unprivileged fresh runner, then uploads a data-only result bundle.
-3. `reconcile` runs once per matrix entry on another fresh runner after the complete validation
-   matrix. It treats the result bundle as untrusted data, revalidates it, and either publishes the
-   proposal, reports a deterministic branch failure, or records a workflow-level failure.
+2. `prepare` runs once per matrix entry with `fail-fast: false`. It applies the update and runs
+   Terraform initialisation on an unprivileged fresh runner, then uploads a preparation bundle
+   before any provider plugin executes. A successful bundle contains the immutable candidate.
+3. `validate` runs once per successful candidate on another unprivileged fresh runner. It consumes
+   the candidate without changing its publishable payload, executes the target-selected providers,
+   and uploads only a candidate-bound outcome and captured logs.
+4. `reconcile` runs once per matrix entry on another fresh runner after the complete validation
+   matrix. It treats both artefacts as untrusted data, revalidates them, and either publishes the
+   pre-provider candidate, reports a deterministic branch failure, or records a workflow-level
+   failure.
 
-Validation captures command status, builds and uploads its result bundle in unconditional cleanup
-steps, and then returns the recorded failure status. Reconciliation uses an `always()` condition so
-one failed matrix entry does not suppress reporting for the others. A missing or duplicate expected
-bundle is an automation failure and can never be interpreted as success.
+Preparation captures update and initialisation status and uploads its bundle in unconditional
+cleanup steps before returning the recorded failure status. Validation does the same for its
+candidate-bound outcome and logs. Reconciliation uses an `always()` condition so one failed matrix
+entry does not suppress reporting for the others. It expects one preparation bundle for every
+entry, and a validation outcome only when preparation produced a successful candidate. A missing,
+duplicate, unexpected, or mismatched artefact is an automation failure and can never be interpreted
+as success.
 
 The update matrix defaults to four concurrent branches. This bounds Terraform downloads and GitHub
 API writes while retaining useful parallelism. A caller can lower or raise the limit through the
@@ -105,17 +113,23 @@ two independent checkouts:
 - A target checkout of the immutable discovered state-branch OID receives the proposed changes.
 
 Terraform can execute target-selected provider plugins during validation. Therefore checkout
-separation is not treated as a process-security boundary. The fresh reconciliation job is the
-boundary: it does not execute Terraform or any target-supplied executable, and it materialises
-write credentials and signing material only after validating the result bundle.
+separation is not treated as a process-security boundary. Preparation uploads the immutable source
+and lock-file candidate before provider execution, and validation cannot replace that artefact. The
+fresh reconciliation job is the publication boundary: it does not execute Terraform or any
+target-supplied executable, and it materialises write credentials and signing material only after
+validating the candidate and outcome.
 
-The result bundle contains a versioned JSON manifest, captured logs, and a binary Git patch. The
-manifest records the control OID, state branch, validated base OID, result classification,
-configured Terraform directories, changed paths, file modes, and SHA-256 hashes. Reconciliation
-rejects unknown manifest versions, mismatched refs or OIDs, absolute or escaping paths, symlink or
-non-regular modes, unexpected file types, hash mismatches, and patch paths outside the declared
-set. It applies the patch only after a fresh exact-base checkout and independently reproduces the
-`tf-version-bump` source changes before accepting lock-file changes from the validated bundle.
+A successful preparation bundle contains a versioned JSON manifest, captured preparation logs, and
+a binary Git patch. The manifest records the control OID, state branch, validated base OID,
+preparation classification, configured Terraform directories, provider-dependency state, changed
+paths, file modes, and SHA-256 hashes. A failed preparation bundle contains its classification and
+logs but no publishable patch. The validation outcome records the candidate manifest digest,
+validation classification, and captured validation logs. Reconciliation rejects unknown manifest
+versions, mismatched refs, OIDs, or candidate digests, absolute or escaping paths, symlink or
+non-regular modes, unexpected file types, hash mismatches, and patch paths outside the declared set.
+It applies the patch only after a fresh exact-base checkout and independently reproduces the
+`tf-version-bump` source changes before accepting lock-file changes from the pre-provider candidate
+bundle.
 
 ## Triggers and schedules
 
@@ -135,8 +149,10 @@ timezone support:
 - Production: Sunday at 04:43 in `Australia/Melbourne`.
 
 Each caller has its own concurrency group with `queue: max` and no in-progress cancellation. Up to
-GitHub's concurrency-group queue limit waits behind the active run instead of replacing the
-existing pending run. Production and non-production can run independently.
+100 runs wait behind the active run instead of replacing the existing pending run. Production and
+non-production can run independently. This is current GitHub.com syntax; GitHub Enterprise Server
+consumers must confirm that their installed version supports the `queue` property before copying
+the example.
 
 Manual runs are accepted only when `github.ref` is the repository's default branch. This catches
 accidental alternate-ref dispatches. The reconciliation job also uses a required protected GitHub
@@ -231,12 +247,12 @@ directories are allowed, but each directory processes only the `.tf` files direc
 Before either validation or reconciliation invokes `tf-version-bump`, the script enumerates that
 directory's matching files, uses `lstat` to reject symlinks and non-regular files, and verifies each
 canonical path remains under the target checkout. Required lock files receive the same checks.
-Containment is repeated for every changed and untracked path before a result bundle or commit is
-created.
+Containment is repeated for every changed and untracked path before a preparation bundle or commit
+is created.
 
-## Per-branch validation flow
+## Per-branch preparation and validation flow
 
-Each unprivileged validation job performs the following sequence:
+Each unprivileged preparation job performs the following sequence:
 
 1. Check out the control OID and discovered state-branch OID with persisted credentials disabled.
 2. Install the exact Go, `tf-version-bump`, and Terraform versions supplied by the caller.
@@ -244,21 +260,38 @@ Each unprivileged validation job performs the following sequence:
    write.
 4. For every configured Terraform directory, run `tf-version-bump` from that directory with the
    control config and the non-recursive pattern `*.tf`.
-5. For that same directory, run sequentially:
+5. For that same directory, run:
 
    ```text
    terraform -chdir=<directory> init -upgrade -backend=false -input=false -no-color
-   terraform -chdir=<directory> validate -no-color
    ```
 
-6. Require a regular `.terraform.lock.hcl` file in every configured directory after
-   initialisation, including a newly created untracked lock file. If a new required lock file is
+6. After successful initialisation, inspect the canonical `.terraform/providers` package tree
+   before removing it. If initialisation installed any provider package, require a regular
+   `.terraform.lock.hcl`, including a newly created untracked file. If it installed none, record the
+   directory as provider-free and allow the lock file to be absent. If a new required lock file is
    ignored, fail with a repository-configuration error; never force-add it.
 7. Remove disposable `.terraform/` working data, then consume NUL-delimited Git status output and
    confirm that every changed `.tf` file is directly inside exactly one configured directory and
    every other change is that directory's lock file. Any other path fails the safety check.
-8. Produce the versioned manifest and patch, verify their hashes locally, upload the result bundle
-   with a collision-resistant branch hash in its artefact name, and remove the checkouts.
+8. Produce the versioned manifest and patch, verify their hashes locally, upload the immutable
+   candidate bundle with a collision-resistant branch hash in its artefact name, and remove the
+   checkouts. Terraform initialisation downloads provider packages but does not execute provider
+   validation RPCs, so this captures the publishable candidate before any provider plugin executes.
+
+A fresh unprivileged validation job downloads only its expected candidate, validates the manifest,
+paths, modes, hashes, refs, and OIDs, and applies the patch to a fresh exact-base checkout. For each
+directory with provider selections it runs:
+
+```text
+terraform -chdir=<directory> init -backend=false -input=false -no-color -lockfile=readonly
+terraform -chdir=<directory> validate -no-color
+```
+
+For a manifest-declared provider-free directory it omits `-lockfile=readonly` because no lock file
+exists, then runs the same validation command. The validation job never uploads source or lock-file
+bytes and discards its checkout after uploading only its candidate-bound outcome and logs. Provider
+execution therefore cannot alter the immutable candidate later considered for publication.
 
 `tf-version-bump` continues processing later files after a per-file parse, stat, read, or write
 error, but accumulates those errors and exits non-zero after processing completes. Its output ends
@@ -280,8 +313,8 @@ bundles. For each branch, reconciliation:
 2. For a successful result, checks out the exact control and base OIDs with persisted credentials
    disabled, repeats path/symlink preflight, independently reruns `tf-version-bump` for each
    configured directory, and requires its `.tf` diff to match the manifest.
-3. Applies only the validated lock-file portion from the bundle, verifies the complete resulting
-   diff and hashes, and stages only declared regular `.tf` and lock files.
+3. Applies only the lock-file portion from the pre-provider candidate bundle, verifies the complete
+   resulting diff and hashes, and stages only declared regular `.tf` and lock files.
 4. Fetches the state ref immediately before publication and requires its remote OID still to equal
    the validated base OID. Movement fails without publication; a later run processes the new tip.
 5. Verifies ownership of any existing automation ref and PR, then creates the signed or unsigned
@@ -311,9 +344,11 @@ workflow still:
 
 - Runs `tf-version-bump` without the CLI's `-dry-run` flag.
 - Runs real Terraform initialisation and validation.
-- Creates or updates the required lock files in the disposable checkout.
+- Creates or updates dependency lock files for roots with provider selections in the disposable
+  checkout; provider-free roots may remain without one.
 - Performs the allowed-path safety check.
-- Uploads diagnostic result bundles and reports proposed changes and failures in workflow output.
+- Uploads diagnostic preparation and outcome artefacts and reports proposed changes and failures in
+  workflow output.
 
 It never enters the protected reconciliation environment and never commits, pushes, changes GitHub
 repository content, creates or edits a pull request, creates or edits an issue, closes an issue or
@@ -385,10 +420,10 @@ that its validated proposal is defective.
 
 Authentication, GitHub API, invalid input, unsafe diff, signing, commit, push, lease, PR, issue
 reconciliation, and workflow configuration failures are automation failures. They fail the matrix
-job without creating a misleading state-validation issue. The manifest carries an explicit result
-class with precedence `automation`, `shared/init`, `branch-update`, `branch-validation`, then
-`success`; reconciliation rejects unknown or contradictory classes. `fail-fast: false` ensures
-other state branches continue.
+job without creating a misleading state-validation issue. The candidate manifest and its bound
+validation outcome together carry an explicit result class with precedence `automation`,
+`shared/init`, `branch-update`, `branch-validation`, then `success`; reconciliation rejects unknown,
+mismatched, or contradictory classes. `fail-fast: false` ensures other state branches continue.
 
 ## Authentication and permissions
 
@@ -408,9 +443,15 @@ ceiling keeps the effective reconciliation `GITHUB_TOKEN` read-only. Every check
 `persist-credentials: false`. The built-in publication path injects `GITHUB_TOKEN` only into the
 exact Git/GitHub CLI steps that need it. The App publication path never passes `GITHUB_TOKEN` to a
 write operation; it uses only the short-lived App token. Consumers using the built-in token must
-enable the repository setting that permits GitHub Actions to create pull requests. Pull-request
-workflows generated with this token may require manual approval under GitHub's current recursion
-protection.
+enable the repository setting that permits GitHub Actions to create pull requests.
+
+GitHub recursion protection distinguishes the events created with the built-in token. Resulting
+`push` events do not create workflow runs. Pull-request `opened`, `synchronize`, and `reopened`
+events do create workflow runs, but those runs wait for approval from a repository writer. Other
+pull-request activity types do not create runs. Built-in-token mode is therefore suitable only when
+manual approval of generated PR checks is acceptable. Consumers whose required checks must run
+unattended use App mode; an explicit consumer-managed `workflow_dispatch` is the documented manual
+fallback rather than an assumed automatic check run.
 
 When the App client ID and protected-environment private key are supplied, reconciliation uses the
 GitHub-maintained App-token action to mint a short-lived installation token limited to the current
@@ -487,7 +528,9 @@ A maintained shell test creates temporary real Git repositories and bare remotes
 - Aggregate non-zero CLI status after a real per-file failure while later files still run.
 - One-to-one mapping of directly changed source files to configured Terraform directories,
   including rejection of omitted, duplicate, and ambiguous roots.
-- Terraform source and lock-file staging.
+- Terraform source and lock-file staging into an immutable candidate before provider execution.
+- Provider-free root success without `.terraform.lock.hcl`, alongside rejection of a missing lock
+  when initialisation installs a provider package.
 - Multi-directory success and failure attribution.
 - Missing, duplicate, path-traversing, symlink-mode, hash-mismatched, and ref-mismatched result
   bundles are rejected by fresh reconciliation.
@@ -504,12 +547,14 @@ A maintained shell test creates temporary real Git repositories and bare remotes
   its owned update branch.
 - Signed commits, local signature verification, cleanup of key material, and signing failure.
 - A hostile purpose-built Terraform provider fixture that attempts to find credentials, alter
-  control files, poison later validation steps, and construct a malicious result bundle. Local
-  coverage verifies that reconciliation treats every resulting payload as untrusted data; the
-  actual runner and protected-secret boundary is verified by real-service acceptance.
+  control files and the validation checkout's lock file, poison later validation steps, and
+  construct a malicious outcome. Local coverage verifies that it cannot replace the pre-provider
+  candidate and that reconciliation treats every resulting payload as untrusted data; the actual
+  runner and protected-secret boundary is verified by real-service acceptance.
 - Unsigned operation when no signing key is configured.
 - Obsolete no-change branch and PR payload generation.
-- Clear failure when a newly required lock file is ignored; the workflow never force-adds it.
+- Clear failure when a newly required provider lock file is ignored; the workflow never force-adds
+  it.
 
 The tests do not mock `gh` or assert against invented GitHub API behaviour. Deterministic PR and
 issue payload construction is tested locally. Actual PR, issue, token, and permissions behaviour is
@@ -517,11 +562,16 @@ covered by the real-service acceptance run.
 
 ### Workflow validation
 
-The project adds a pinned `actionlint` invocation for all three example workflow files. Validation
-copies the example `.github` tree into a temporary consumer-style repository root first, so local
-reusable-workflow paths resolve exactly as they do after installation. It also runs `bash -n` and
-the integration test for both helper scripts. Existing Go tests, race detection, branch-automation
-tests, linting, and build validation remain required and must produce pristine output.
+The project adds a pinned `actionlint` invocation for all three example workflow files. GitHub.com
+supports `concurrency.queue`, but actionlint 1.7.12 predates that syntax and reports `queue` as an
+unexpected concurrency key. Until a pinned actionlint release supports it, the invocation includes
+the exact `-ignore '^unexpected key "queue" for "concurrency" section\.'` filter for that known false
+positive; it does not disable other syntax checks. The real-service queue acceptance remains
+mandatory. Validation copies the example `.github` tree into a temporary consumer-style repository
+root first, so local reusable-workflow paths resolve exactly as they do after installation. It also
+runs `bash -n` and the integration test for both helper scripts. Existing Go tests, race detection,
+branch-automation tests, linting, and build validation remain required and must produce pristine
+output.
 
 After implementation and TDD finish, a separate test-cleanup pass reviews new tests for duplicated
 or low-value coverage.
@@ -532,7 +582,8 @@ The example README defines an acceptance procedure using a disposable GitHub rep
 
 - One matching non-production state branch.
 - One non-matching production branch.
-- A committed lock file and default-branch config.
+- A provider-using root with a committed lock file, a provider-free root without one, and a
+  default-branch config covering both.
 - A default-branch-restricted publication environment.
 - Built-in-token and GitHub App runs.
 - An App-mode run whose job permission summary shows `contents: read` and no write scopes, and whose
@@ -541,13 +592,15 @@ The example README defines an acceptance procedure using a disposable GitHub rep
 - An alternate-ref manual dispatch that cannot enter the protected publication job or read its
   secrets.
 - A state branch using the hostile provider fixture. The provider attempts to read write/App/signing
-  credentials, alter the control checkout, poison `GITHUB_ENV` and `GITHUB_PATH`, and submit a
-  malicious result bundle. The validation job exposes no protected or write credentials, the fresh
-  reconciliation runner rejects the tampered bundle, and no repository ref, content, PR, or issue
-  mutation occurs.
+  credentials, alter the control checkout and validation lock file, poison `GITHUB_ENV` and
+  `GITHUB_PATH`, and submit a malicious outcome. The validation job exposes no protected or write
+  credentials, cannot replace the pre-provider candidate, the fresh reconciliation runner rejects
+  the tampered outcome, and no repository ref, content, PR, or issue mutation occurs.
 - Successful update, repeated idempotent update, validation failure, issue update, recovery, and
   obsolete-PR cleanup.
 - Three rapid dispatches demonstrating `queue: max` rather than pending-run replacement.
+- A built-in-token PR whose `push` workflows remain absent and whose `pull_request` checks wait for
+  writer approval, followed by an App-mode PR whose checks start without that approval gate.
 - A dry run that demonstrates no repository refs, content, PRs, or issues changed while diagnostic
   logs and artefacts remain available.
 - An unowned update-ref collision and concurrent update/deletion races that preserve the remote
@@ -577,7 +630,12 @@ The acceptance transcript is reviewed before completion is claimed.
 - Direct-file-per-module processing and the requirement to list every nested module explicitly.
 - Backend-disabled Terraform initialisation.
 - Workflow-level init failures versus deterministic branch update/validation issues.
-- Rejection of ignored required lock files and symlinked Terraform/lock paths.
+- Required provider lock files, valid provider-free roots without locks, and rejection of ignored
+  required locks and symlinked Terraform/lock paths.
+- GitHub.com `queue: max` semantics, the temporary actionlint 1.7.12 false-positive ignore, and the
+  need to confirm queue support before using the example on GitHub Enterprise Server.
+- Built-in-token event suppression and approval-required PR checks, including when App mode is
+  required for unattended checks.
 - Manual identification and cleanup of strongly marked orphaned automation refs and issues when a
   state branch is deleted, renamed, or removed from the allow-list. Automatic orphan garbage
   collection is intentionally deferred until operational need justifies a separate destructive
@@ -595,8 +653,9 @@ The feature is complete when:
 - Non-production and production examples have manual and timezone-aware scheduled triggers.
 - Dry runs perform real local updates and validation without repository or GitHub content mutation;
   workflow logs and diagnostic artefacts are retained.
-- Terraform executes only in credential-free read-only jobs, and privileged reconciliation runs on
-  a fresh protected runner without executing target-supplied code.
+- Terraform executes only in credential-free jobs with `contents: read`, the immutable publishable
+  candidate is uploaded before provider execution, and privileged reconciliation runs on a fresh
+  protected runner without executing target-supplied code.
 - App-mode reconciliation has an effective read-only `GITHUB_TOKEN`; only its short-lived App token
   can publish repository content, refs, PRs, or issues.
 - Untrusted refs and inputs remain data across Actions, shell, Git, JSON, Markdown, and artefact
@@ -608,10 +667,15 @@ The feature is complete when:
 - Existing update refs require verifiable ownership, and every rewrite or deletion uses an exact
   expected remote OID.
 - The CLI reports aggregate per-file failure with a non-zero status.
-- Every configured Terraform module directory has a lock file after initialisation; new and changed
-  lock files are staged unless ignored (which is a clear failure), disposable `.terraform/` data is
+- Every configured Terraform module directory with installed provider packages has a lock file
+  after initialisation; new and changed required lock files are staged unless ignored (which is a
+  clear failure), provider-free directories may omit the file, disposable `.terraform/` data is
   excluded, and symlinked, escaping, non-regular, or otherwise unexpected paths are rejected before
   writing.
+- GitHub.com runs use the supported bounded `queue: max` concurrency behaviour; actionlint ignores
+  only its pinned version's exact known false positive until parser support is released.
+- Built-in-token documentation and acceptance distinguish suppressed `push` workflows from
+  approval-required PR workflows, and require App mode for unattended required checks.
 - Every changed Terraform source file belongs directly to exactly one configured and validated
   module directory.
 - Local integration tests, pinned `actionlint`, the repository's full validation suite, and the
