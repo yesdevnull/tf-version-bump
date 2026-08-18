@@ -21,11 +21,11 @@ Options:
   --file-pattern <glob>    Terraform files to update (default: '**/*.tf').
   --binary <path>          tf-version-bump executable (default: from PATH).
   --dry-run                Preview every branch without changing or committing it.
+  --sign-commits           Pass -S to Git when creating update commits.
   --include-remotes        Fetch and include branches that exist only on the remote.
   --remote <name>          Remote used with --include-remotes (default: origin).
   --since-days <number>    Process branches whose tip changed within this many days.
   --log-file <path>        Append command output to a log file.
-                           Write-mode updates require a signed commit.
   -h, --help               Show this help.
 EOF
 }
@@ -43,6 +43,7 @@ config_file=""
 file_pattern="**/*.tf"
 binary="tf-version-bump"
 dry_run=false
+sign_commits=false
 include_remotes=false
 remote="origin"
 log_file=""
@@ -87,6 +88,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --dry-run)
             dry_run=true
+            shift
+            ;;
+        --sign-commits)
+            sign_commits=true
             shift
             ;;
         --include-remotes)
@@ -207,7 +212,11 @@ process_branch() {
     fi
 
     git -C "$repository" add -u -- .
-    git -C "$repository" commit -S -m "$commit_message"
+    if [[ "$sign_commits" == true ]]; then
+        git -C "$repository" commit -S -m "$commit_message"
+    else
+        git -C "$repository" commit -m "$commit_message"
+    fi
 }
 
 matched_branch=false

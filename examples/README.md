@@ -45,8 +45,9 @@ the checked-in examples.
 ## Branch automation
 
 [`update-branches.sh`](update-branches.sh) applies one module update or YAML config across Git
-branches, creating a signed commit on each branch without pushing it. Configure a Git signing key
-before using write mode; a signing failure stops the run.
+branches, creating a commit on each branch without pushing it. Pass `--sign-commits` to ask Git to
+sign each update commit with its configured signing key. Without the flag, the script does not
+request signing, which allows it to run in CI without access to a signing key.
 
 Start with its help and a dry run:
 

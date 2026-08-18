@@ -72,7 +72,7 @@ test_help_describes_required_inputs() {
     [[ "$output" == *"--branch-pattern"* ]] || fail "help omits --branch-pattern"
     [[ "$output" == *"--module"* ]] || fail "help omits --module"
     [[ "$output" == *"--config"* ]] || fail "help omits --config"
-    [[ "$output" == *"signed commit"* ]] || fail "help omits the signed-commit requirement"
+    [[ "$output" == *"--sign-commits"* ]] || fail "help omits --sign-commits"
 }
 
 test_updates_matching_local_branches_and_restores_starting_branch() {
@@ -103,7 +103,9 @@ test_updates_matching_local_branches_and_restores_starting_branch() {
     feature_subject=$(git -C "$repository" log -1 --format=%s feature/update)
     [[ "$feature_subject" == "chore: bump terraform-aws-modules/vpc/aws to 2.0.0" ]] || fail "update was not committed"
 
-    git -C "$repository" cat-file commit feature/update | grep -q '^gpgsig ' || fail "update commit was not signed"
+    if [[ -z "${TFVB_GIT_WRAPPER:-}" ]] && git -C "$repository" cat-file commit feature/update | grep -q '^gpgsig '; then
+        fail "update commit was signed without --sign-commits"
+    fi
 }
 
 test_applies_config_file_updates() {
@@ -128,7 +130,8 @@ test_applies_config_file_updates() {
         --repository "$repository" \
         --branch-pattern 'release/*' \
         --config "$config_file" \
-        --binary "$TF_VERSION_BUMP"
+        --binary "$TF_VERSION_BUMP" \
+        --sign-commits
 
     local updated_file
     updated_file=$(git -C "$repository" show release/config:main.tf)
@@ -138,6 +141,8 @@ test_applies_config_file_updates() {
     local subject
     subject=$(git -C "$repository" log -1 --format=%s release/config)
     [[ "$subject" == "chore: apply tf-version-bump config" ]] || fail "config update used the wrong commit message"
+
+    git -C "$repository" cat-file commit release/config | grep -q '^gpgsig ' || fail "--sign-commits did not sign the update commit"
 }
 
 test_dry_run_leaves_branches_unchanged() {
