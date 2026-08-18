@@ -129,7 +129,7 @@ func TestMainExecutionPath(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	tfFile := filepath.Join(tmpDir, "main.tf")
-	if err := os.WriteFile(tfFile, []byte(`module "example" { source = "example/module" version = "1.0.0" }`), 0o644); err != nil {
+	if err := os.WriteFile(tfFile, []byte("module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"), 0o644); err != nil {
 		t.Fatalf("failed to write terraform file: %v", err)
 	}
 
@@ -190,6 +190,67 @@ func TestMainConfigFilePath(t *testing.T) {
 
 	if *code != -1 {
 		t.Fatalf("unexpected exit code recorded: %d", *code)
+	}
+}
+
+func TestCommandReportsAggregateFileFailure(t *testing.T) {
+	restoreExit, code := stubExit(t)
+	defer restoreExit()
+
+	var diagnostics bytes.Buffer
+	originalLogWriter := log.Writer()
+	originalLogFlags := log.Flags()
+	originalLogPrefix := log.Prefix()
+	log.SetOutput(&diagnostics)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	defer func() {
+		log.SetOutput(originalLogWriter)
+		log.SetFlags(originalLogFlags)
+		log.SetPrefix(originalLogPrefix)
+	}()
+
+	tmpDir := t.TempDir()
+	malformedFile := filepath.Join(tmpDir, "01-malformed.tf")
+	if err := os.WriteFile(malformedFile, []byte("!!!\n"), 0o644); err != nil {
+		t.Fatalf("failed to write malformed Terraform file: %v", err)
+	}
+	validFile := filepath.Join(tmpDir, "02-valid.tf")
+	if err := os.WriteFile(validFile, []byte("module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"), 0o644); err != nil {
+		t.Fatalf("failed to write valid Terraform file: %v", err)
+	}
+
+	withFlagArgs(t, []string{
+		"tf-version-bump",
+		"-pattern", filepath.Join(tmpDir, "*.tf"),
+		"-module", "example/module",
+		"-to", "2.0.0",
+	}, func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				if _, ok := recovered.(exitCall); !ok {
+					panic(recovered)
+				}
+			}
+		}()
+		main()
+	})
+
+	wantDiagnostic := "Error processing " + malformedFile + ": failed to parse HCL: " + malformedFile + ":1,1-2: Argument or block definition required; An argument or block definition is required here."
+	diagnosticLines := strings.Split(strings.TrimSuffix(diagnostics.String(), "\n"), "\n")
+	if len(diagnosticLines) == 0 || diagnosticLines[0] != wantDiagnostic {
+		t.Fatalf("expected first diagnostic %q, got %q", wantDiagnostic, diagnostics.String())
+	}
+	if *code != 1 {
+		t.Fatalf("expected exit code 1, got %d", *code)
+	}
+
+	contents, err := os.ReadFile(validFile)
+	if err != nil {
+		t.Fatalf("failed to read valid Terraform file: %v", err)
+	}
+	if !strings.Contains(string(contents), `version = "2.0.0"`) {
+		t.Fatalf("expected later valid file to update, got %q", contents)
 	}
 }
 

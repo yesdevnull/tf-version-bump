@@ -235,12 +235,14 @@ func main() {
 	files := findMatchingFiles(flags)
 
 	// Run the appropriate operation mode
+	var err error
 	if flags.configFile != "" {
-		// Task 3 will convert runner errors into the process exit status.
-		_ = runConfigFileMode(files, flags)
+		err = runConfigFileMode(files, flags)
 	} else {
-		// Task 3 will convert runner errors into the process exit status.
-		_ = runCLIMode(files, flags)
+		err = runCLIMode(files, flags)
+	}
+	if err != nil {
+		fatalf("%v", err)
 	}
 }
 
