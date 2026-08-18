@@ -352,8 +352,8 @@ func findMatchingFiles(flags *cliFlags) []string {
 func runConfigFileMode(files []string, flags *cliFlags) error {
 	config, err := loadConfig(flags.configFile)
 	if err != nil {
-		fatalf("Error loading config file: %v", err)
-		return nil
+		//nolint:staticcheck // The capitalised prefix is user-facing CLI output.
+		return fmt.Errorf("Error loading config file: %w", err)
 	}
 
 	var terraformUpdates, terraformErrors, providerUpdates, providerErrors, moduleUpdates, moduleErrors int
