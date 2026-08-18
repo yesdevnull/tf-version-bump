@@ -145,6 +145,9 @@ if [[ -n "$log_file" ]]; then
     repository_root=$(cd "$repository_root" && pwd -P)
     log_directory=$(cd "$(dirname "$log_file")" && pwd -P)
     log_file="$log_directory/$(basename "$log_file")"
+    if [[ -L "$log_file" ]]; then
+        die "log file must not be a symbolic link: $log_file"
+    fi
     case "$log_file" in
         "$repository_root"|"$repository_root"/*)
             die "log file must be outside the target repository: $log_file"
