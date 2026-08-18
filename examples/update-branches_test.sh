@@ -269,6 +269,56 @@ test_refuses_a_log_file_inside_the_repository() {
     [[ -z "$(git -C "$repository" status --porcelain)" ]] || fail "internal log file left the repository dirty"
 }
 
+test_refuses_a_log_file_symlink_to_a_repository_file() {
+    local repository="$TEST_ROOT/symlinked-log"
+    local log_file="$TEST_ROOT/version-bump-link.log"
+    create_repository "$repository"
+    git -C "$repository" branch feature/logged
+    ln -s "$repository/main.tf" "$log_file"
+
+    local original_file
+    original_file=$(<"$repository/main.tf")
+
+    local output
+    if output=$("$SCRIPT" \
+        --repository "$repository" \
+        --branch-pattern 'feature/*' \
+        --module 'terraform-aws-modules/vpc/aws' \
+        --to '2.0.0' \
+        --binary "$TF_VERSION_BUMP" \
+        --log-file "$log_file" 2>&1); then
+        fail "log file symlink to a repository file was accepted"
+    fi
+
+    [[ "$output" == *'log file must not be a symbolic link'* ]] || fail "log file symlink error was unclear"
+    [[ "$(<"$repository/main.tf")" == "$original_file" ]] || fail "log output changed the symlink target"
+    [[ -z "$(git -C "$repository" status --porcelain)" ]] || fail "log file symlink left the repository dirty"
+}
+
+test_refuses_a_dangling_log_file_symlink() {
+    local repository="$TEST_ROOT/dangling-log"
+    local target_file="$repository/version-bump.log"
+    local log_file="$TEST_ROOT/dangling-version-bump-link.log"
+    create_repository "$repository"
+    git -C "$repository" branch feature/logged
+    ln -s "$target_file" "$log_file"
+
+    local output
+    if output=$("$SCRIPT" \
+        --repository "$repository" \
+        --branch-pattern 'feature/*' \
+        --module 'terraform-aws-modules/vpc/aws' \
+        --to '2.0.0' \
+        --binary "$TF_VERSION_BUMP" \
+        --log-file "$log_file" 2>&1); then
+        fail "dangling log file symlink was accepted"
+    fi
+
+    [[ "$output" == *'log file must not be a symbolic link'* ]] || fail "dangling log file symlink error was unclear"
+    [[ ! -e "$target_file" ]] || fail "dangling log file symlink created its repository target"
+    [[ -z "$(git -C "$repository" status --porcelain)" ]] || fail "dangling log file symlink left the repository dirty"
+}
+
 test_filters_branches_by_tip_commit_age() {
     local repository="$TEST_ROOT/recent-branches"
     create_repository "$repository"
@@ -392,6 +442,8 @@ test_remote_dry_run_does_not_create_local_branches
 test_includes_remote_only_branches_without_pushing
 test_writes_a_log_file
 test_refuses_a_log_file_inside_the_repository
+test_refuses_a_log_file_symlink_to_a_repository_file
+test_refuses_a_dangling_log_file_symlink
 test_filters_branches_by_tip_commit_age
 test_refuses_a_dirty_repository
 test_commit_failure_leaves_changes_on_the_affected_branch
