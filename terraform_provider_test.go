@@ -587,6 +587,25 @@ func TestUpdateProviderVersionAttributeSyntax(t *testing.T) {
 			},
 		},
 		{
+			name: "update every duplicate version entry",
+			inputContent: `terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+      version = "~> 4.1"
+    }
+  }
+}`,
+			providerName: "aws",
+			version:      "~> 5.0",
+			expectUpdate: true,
+			checkContent: func(content string) bool {
+				return strings.Count(content, `version = "~> 5.0"`) == 2 &&
+					!strings.Contains(content, `version = "~> 4.`)
+			},
+		},
+		{
 			name: "no update for non-existent provider (attribute syntax)",
 			inputContent: `terraform {
   required_providers {
