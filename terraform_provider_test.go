@@ -483,11 +483,14 @@ func TestProcessProviderVersion(t *testing.T) {
 	files := []string{file1, file2, file3}
 
 	// Process all files
-	count := processProviderVersion(files, "aws", "~> 5.0", false, "text")
+	count, errors := processProviderVersion(files, "aws", "~> 5.0", false, "text")
 
 	// Should update 2 files (file1 and file2, not file3 which has no provider)
 	if count != 2 {
 		t.Errorf("Expected 2 files updated, got %d", count)
+	}
+	if errors != 0 {
+		t.Errorf("Expected no file errors, got %d", errors)
 	}
 
 	// Verify updates
@@ -773,7 +776,7 @@ func TestProcessProviderVersionAttributeSyntax(t *testing.T) {
 		t.Fatalf("Failed to glob pattern: %v", err)
 	}
 
-	count := processProviderVersion(files, "aws", "~> 5.0", false, "text")
+	count, _ := processProviderVersion(files, "aws", "~> 5.0", false, "text")
 
 	if count != 2 {
 		t.Errorf("Expected 2 files updated, got %d", count)

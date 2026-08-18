@@ -615,6 +615,47 @@ func TestRunCLIModeTerraformAllFilesSucceed(t *testing.T) {
 }
 
 // TestRunCLIModeWithModule tests CLI mode with module
+func TestRunCLIModeProviderAllFilesSucceed(t *testing.T) {
+	tmpDir := t.TempDir()
+	files := []string{filepath.Join(tmpDir, "01.tf"), filepath.Join(tmpDir, "02.tf")}
+	for _, file := range files {
+		if err := os.WriteFile(file, []byte(`terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+`), 0o644); err != nil {
+			t.Fatalf("failed to write Terraform file: %v", err)
+		}
+	}
+
+	stdout, diagnostic, runnerErr := captureRunnerOutput(t, func() error {
+		return runCLIMode(files, &cliFlags{providerName: "aws", toVersion: "~> 5.0", output: "text"})
+	})
+	if runnerErr != nil {
+		t.Fatalf("expected all valid files to succeed: %v", runnerErr)
+	}
+	if diagnostic != "" {
+		t.Errorf("expected no diagnostics, got %q", diagnostic)
+	}
+	if !strings.Contains(stdout, "Successfully updated 'aws' provider version in 2 file(s)") {
+		t.Errorf("expected existing summary in stdout, got %q", stdout)
+	}
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("failed to read updated Terraform file: %v", err)
+		}
+		if !strings.Contains(string(content), `version = "~> 5.0"`) {
+			t.Errorf("expected %s to be updated, got: %s", file, content)
+		}
+	}
+}
+
+// TestRunCLIModeWithModule tests CLI mode with module
 func TestRunCLIModeWithModule(t *testing.T) {
 	tmpDir := t.TempDir()
 

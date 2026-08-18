@@ -135,6 +135,46 @@ func TestRunCLIModeReportsTerraformFileFailure(t *testing.T) {
 	}
 }
 
+func TestRunCLIModeReportsProviderFileFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	malformedFile := filepath.Join(tmpDir, "01-malformed.tf")
+	if err := os.WriteFile(malformedFile, []byte("terraform {"), 0o644); err != nil {
+		t.Fatalf("failed to write malformed Terraform file: %v", err)
+	}
+	validFile := filepath.Join(tmpDir, "02-valid.tf")
+	if err := os.WriteFile(validFile, []byte(`terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+`), 0o644); err != nil {
+		t.Fatalf("failed to write valid Terraform file: %v", err)
+	}
+
+	stdout, diagnostic, runnerErr := captureRunnerOutput(t, func() error {
+		return runCLIMode([]string{malformedFile, validFile}, &cliFlags{providerName: "aws", toVersion: "~> 5.0", output: "text"})
+	})
+	updated, err := os.ReadFile(validFile)
+	if err != nil {
+		t.Fatalf("failed to read updated Terraform file: %v", err)
+	}
+	if !strings.Contains(string(updated), `version = "~> 5.0"`) {
+		t.Fatalf("expected valid file to be updated, got: %s", updated)
+	}
+	if !strings.Contains(diagnostic, "Error processing "+malformedFile+": failed to parse HCL:") {
+		t.Errorf("expected malformed-file diagnostic, got %q", diagnostic)
+	}
+	if !strings.Contains(stdout, "Successfully updated 'aws' provider version in 1 file(s)") {
+		t.Errorf("expected existing summary in stdout, got %q", stdout)
+	}
+	if runnerErr == nil {
+		t.Fatal("expected runner to report the malformed file failure")
+	}
+}
+
 // TestLoadModuleUpdatesErrorCases tests error handling in loadModuleUpdates
 func TestLoadModuleUpdatesErrorCases(t *testing.T) {
 	tests := []struct {
@@ -293,7 +333,7 @@ func TestProcessProviderVersionWithErrors(t *testing.T) {
 	}
 
 	files := []string{invalidFile}
-	count := processProviderVersion(files, "aws", "~> 5.0", false, "text")
+	count, _ := processProviderVersion(files, "aws", "~> 5.0", false, "text")
 
 	if count != 0 {
 		t.Errorf("Expected 0 updates for invalid file, got %d", count)
@@ -318,7 +358,7 @@ func TestProcessProviderVersionDryRun(t *testing.T) {
 	}
 
 	files := []string{tfFile}
-	count := processProviderVersion(files, "aws", "~> 5.0", true, "text")
+	count, _ := processProviderVersion(files, "aws", "~> 5.0", true, "text")
 
 	if count != 1 {
 		t.Errorf("Expected 1 update in dry-run, got %d", count)
@@ -353,7 +393,7 @@ func TestProcessProviderVersionMarkdownOutput(t *testing.T) {
 	}
 
 	files := []string{tfFile}
-	count := processProviderVersion(files, "aws", "~> 5.0", false, "md")
+	count, _ := processProviderVersion(files, "aws", "~> 5.0", false, "md")
 
 	if count != 1 {
 		t.Errorf("Expected 1 update, got %d", count)
