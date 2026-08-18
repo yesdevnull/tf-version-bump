@@ -354,7 +354,7 @@ func runConfigFileMode(files []string, flags *cliFlags) error {
 		return nil
 	}
 
-	var terraformUpdates, terraformErrors, providerUpdates, moduleUpdates, moduleErrors int
+	var terraformUpdates, terraformErrors, providerUpdates, providerErrors, moduleUpdates, moduleErrors int
 
 	// Process terraform version if specified
 	if config.TerraformVersion != "" {
@@ -363,8 +363,9 @@ func runConfigFileMode(files []string, flags *cliFlags) error {
 
 	// Process provider updates if specified
 	for _, provider := range config.Providers {
-		count := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output)
+		count, errors := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output)
 		providerUpdates += count
+		providerErrors += errors
 	}
 
 	// Process module updates if specified
@@ -374,10 +375,10 @@ func runConfigFileMode(files []string, flags *cliFlags) error {
 
 	// Print summary
 	printConfigSummary(terraformUpdates, providerUpdates, moduleUpdates)
-	if terraformErrors == 0 && moduleErrors > 0 {
+	if terraformErrors == 0 && providerErrors == 0 && moduleErrors > 0 {
 		return fmt.Errorf("%d module update error(s)", moduleErrors)
 	}
-	if totalErrors := terraformErrors + moduleErrors; totalErrors > 0 {
+	if totalErrors := terraformErrors + providerErrors + moduleErrors; totalErrors > 0 {
 		return fmt.Errorf("%d update error(s)", totalErrors)
 	}
 	return nil
@@ -401,8 +402,12 @@ func runCLIMode(files []string, flags *cliFlags) error {
 		if flags.toVersion == "" {
 			fatalf("Error: -to flag is required when using -provider")
 		}
-		totalUpdates = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output)
+		var totalErrors int
+		totalUpdates, totalErrors = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output)
 		printProviderSummary(flags.providerName, totalUpdates, flags.dryRun, flags.output)
+		if totalErrors > 0 {
+			return fmt.Errorf("%d provider update error(s)", totalErrors)
+		}
 		return nil
 	default:
 		updates = loadModuleUpdates(flags)
@@ -515,13 +520,14 @@ func processTerraformVersion(files []string, version string, dryRun bool, output
 //   - outputFormat: Output format ("text" or "md")
 //
 // Returns:
-//   - int: Number of files that were updated (or would be updated in dry-run mode)
-func processProviderVersion(files []string, providerName, version string, dryRun bool, outputFormat string) int {
-	totalUpdates := 0
+//   - totalUpdates: Number of files that were updated (or would be updated in dry-run mode)
+//   - totalErrors: Number of files that could not be processed
+func processProviderVersion(files []string, providerName, version string, dryRun bool, outputFormat string) (totalUpdates, totalErrors int) {
 	for _, file := range files {
 		updated, err := updateProviderVersion(file, providerName, version, dryRun)
 		if err != nil {
 			log.Printf("Error processing %s: %v", file, err)
+			totalErrors++
 			continue
 		}
 		if updated {
@@ -535,7 +541,7 @@ func processProviderVersion(files []string, providerName, version string, dryRun
 			totalUpdates++
 		}
 	}
-	return totalUpdates
+	return totalUpdates, totalErrors
 }
 
 // updateTerraformVersion updates the required_version attribute in terraform blocks

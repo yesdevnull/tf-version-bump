@@ -142,7 +142,53 @@ func TestRunConfigModeTerraformAllFilesSucceed(t *testing.T) {
 	}
 }
 
-/*
+func TestRunConfigModeReportsProviderFileFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	malformedFile := filepath.Join(tmpDir, "01-malformed.tf")
+	if err := os.WriteFile(malformedFile, []byte("terraform {"), 0o644); err != nil {
+		t.Fatalf("failed to write malformed Terraform file: %v", err)
+	}
+	validFile := filepath.Join(tmpDir, "02-valid.tf")
+	if err := os.WriteFile(validFile, []byte(`terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+`), 0o644); err != nil {
+		t.Fatalf("failed to write valid Terraform file: %v", err)
+	}
+	configFile := filepath.Join(tmpDir, "updates.yml")
+	if err := os.WriteFile(configFile, []byte(`providers:
+  - name: aws
+    version: "~> 5.0"
+`), 0o644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	stdout, diagnostic, runnerErr := captureRunnerOutput(t, func() error {
+		return runConfigFileMode([]string{malformedFile, validFile}, &cliFlags{configFile: configFile, output: "text"})
+	})
+	updated, err := os.ReadFile(validFile)
+	if err != nil {
+		t.Fatalf("failed to read updated Terraform file: %v", err)
+	}
+	if !strings.Contains(string(updated), `version = "~> 5.0"`) {
+		t.Fatalf("expected valid file to be updated, got: %s", updated)
+	}
+	if !strings.Contains(diagnostic, "Error processing "+malformedFile+": failed to parse HCL:") {
+		t.Errorf("expected malformed-file diagnostic, got %q", diagnostic)
+	}
+	if !strings.Contains(stdout, "Providers: 1 update(s) applied") {
+		t.Errorf("expected existing config summary in stdout, got %q", stdout)
+	}
+	if runnerErr == nil {
+		t.Fatal("expected runner to report the malformed file failure")
+	}
+}
+
 func TestRunConfigModeProviderAllFilesSucceed(t *testing.T) {
 	tmpDir := t.TempDir()
 	files := []string{
@@ -184,8 +230,6 @@ func TestRunConfigModeProviderAllFilesSucceed(t *testing.T) {
 		t.Errorf("expected existing config summary in stdout, got %q", stdout)
 	}
 }
-
-*/
 
 // TestConfigFileWithTerraformVersion tests processing config files with terraform_version
 func TestConfigFileWithTerraformVersion(t *testing.T) {
@@ -286,7 +330,7 @@ func TestConfigFileWithMultipleProviders(t *testing.T) {
 
 	totalUpdates := 0
 	for _, provider := range config.Providers {
-		count := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output)
+		count, _ := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output)
 		totalUpdates += count
 	}
 
@@ -365,7 +409,7 @@ modules:
 	// Process providers
 	providerUpdates := 0
 	for _, provider := range config.Providers {
-		count := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output)
+		count, _ := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output)
 		providerUpdates += count
 	}
 
