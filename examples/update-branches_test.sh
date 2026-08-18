@@ -8,6 +8,7 @@ PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 TEST_ROOT=$(mktemp -d)
 TF_VERSION_BUMP="$TEST_ROOT/tf-version-bump"
 TEST_SIGNING_KEY="$TEST_ROOT/signing-key"
+ORIGINAL_PATH=$PATH
 
 cleanup() {
     rm -rf "$TEST_ROOT"
@@ -324,6 +325,40 @@ test_commit_failure_leaves_changes_on_the_affected_branch() {
     [[ "$working_file" == *'version = "2.0.0"'* ]] || fail "failed commit changes were lost"
 }
 
+test_signing_failure_leaves_changes_on_the_affected_branch() {
+    local repository="$TEST_ROOT/signing-failure"
+    create_repository "$repository"
+    git -C "$repository" branch feature/signing
+    git -C "$repository" config gpg.format ssh
+    git -C "$repository" config gpg.ssh.program ssh-keygen
+    git -C "$repository" config user.signingkey "$TEST_ROOT/missing-signing-key"
+    git -C "$repository" config commit.gpgsign false
+
+    local original_head
+    original_head=$(git -C "$repository" rev-parse feature/signing)
+
+    local output
+    if output=$(PATH="$ORIGINAL_PATH" "$SCRIPT" \
+        --repository "$repository" \
+        --branch-pattern 'feature/*' \
+        --module 'terraform-aws-modules/vpc/aws' \
+        --to '2.0.0' \
+        --binary "$TF_VERSION_BUMP" \
+        --sign-commits 2>&1); then
+        fail "script succeeded without access to the configured signing key"
+    fi
+
+    local current_branch
+    current_branch=$(git -C "$repository" branch --show-current)
+    [[ "$current_branch" == "feature/signing" ]] || fail "failed signed update was moved to another branch"
+    [[ "$(git -C "$repository" rev-parse feature/signing)" == "$original_head" ]] || fail "signing failure created a commit"
+    [[ "$output" == *'not restoring the starting branch'* ]] || fail "signing failure did not explain where the changes remain"
+
+    local working_file
+    working_file=$(<"$repository/main.tf")
+    [[ "$working_file" == *'version = "2.0.0"'* ]] || fail "signing failure discarded the update"
+}
+
 install_git_wrapper
 create_test_signing_key
 build_tf_version_bump
@@ -337,4 +372,5 @@ test_writes_a_log_file
 test_filters_branches_by_tip_commit_age
 test_refuses_a_dirty_repository
 test_commit_failure_leaves_changes_on_the_affected_branch
+test_signing_failure_leaves_changes_on_the_affected_branch
 echo "PASS: update-branches.sh"
