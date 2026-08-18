@@ -614,7 +614,6 @@ func TestRunCLIModeTerraformAllFilesSucceed(t *testing.T) {
 	}
 }
 
-// TestRunCLIModeWithModule tests CLI mode with module
 func TestRunCLIModeProviderAllFilesSucceed(t *testing.T) {
 	tmpDir := t.TempDir()
 	files := []string{filepath.Join(tmpDir, "01.tf"), filepath.Join(tmpDir, "02.tf")}
