@@ -83,6 +83,7 @@ func runMainCommand(t *testing.T, args []string) commandResult {
 			t.Errorf("failed to close stdout reader: %v", err)
 		}
 	}()
+	defer func() { _ = stdoutWriter.Close() }()
 
 	originalStdout := os.Stdout
 	os.Stdout = stdoutWriter
@@ -263,7 +264,7 @@ func TestMainConfigFilePath(t *testing.T) {
 	}
 }
 
-func TestCommandCLIReportsAggregateFileFailure(t *testing.T) {
+func TestCommandReportsAggregateFileFailureCLI(t *testing.T) {
 	tmpDir := t.TempDir()
 	malformedFile := filepath.Join(tmpDir, "01-malformed.tf")
 	if err := os.WriteFile(malformedFile, []byte("!!!\n"), 0o644); err != nil {
@@ -306,7 +307,7 @@ func TestCommandCLIReportsAggregateFileFailure(t *testing.T) {
 	}
 }
 
-func TestCommandConfigReportsAggregateFileFailure(t *testing.T) {
+func TestCommandReportsAggregateFileFailureConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	malformedFile := filepath.Join(tmpDir, "01-malformed.tf")
 	if err := os.WriteFile(malformedFile, []byte("!!!\n"), 0o644); err != nil {
