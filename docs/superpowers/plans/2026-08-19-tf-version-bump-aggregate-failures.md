@@ -1,4 +1,4 @@
-# Aggregate CLI Failure and v1.0.0-rc.7 Release Plan
+# Aggregate CLI Failure and v1.0.0-rc.8 Release Plan
 
 > **For Codex:** Use `superpowers:executing-plans` to implement this plan. Follow
 > `superpowers:test-driven-development` one behaviour at a time. After implementation, run the
@@ -176,7 +176,7 @@ Run `test-cleanup` in a separate subagent. Apply only removals that preserve all
 coverage, rerun the full commands above, inspect the complete diff, then create a signed commit such
 as `docs: define aggregate CLI failure status`.
 
-### Task 4: Merge and publish v1.0.0-rc.7
+### Task 4: Merge and publish v1.0.0-rc.8
 
 This task changes remote state and begins only after review, branch integration, and Dan's explicit
 release approval.
@@ -197,7 +197,7 @@ it did not leave unexpected source changes.
 
 **Step 2: Obtain explicit authorisation**
 
-Stop and ask Dan before creating or pushing `v1.0.0-rc.7`. Do not infer tag approval from approval
+Stop and ask Dan before creating or pushing `v1.0.0-rc.8`. Do not infer tag approval from approval
 to implement this plan.
 
 **Step 3: Create and push the signed annotated tag**
