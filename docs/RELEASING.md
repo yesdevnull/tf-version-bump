@@ -71,8 +71,9 @@ slsa-verifier verify-artifact "tf-version-bump_${VERSION}_linux_x86_64.tar.gz" \
 ```
 
 The release workflow requests GitHub's OIDC token, supplies artefact digests to the reusable SLSA
-generator, and uploads the resulting in-toto JSONL file to the release. GitHub Actions are pinned
-to commit SHAs and jobs declare their required permissions explicitly.
+generator, and uploads the resulting in-toto JSONL file to the release. Third-party actions are
+pinned to commit SHAs, except for the reusable SLSA generator's upstream-required exact semantic
+version tag. Jobs declare their required permissions explicitly.
 
 ## Create a release
 
