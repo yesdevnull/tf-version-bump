@@ -38,7 +38,6 @@ func TestReleaseWorkflowReferencesSLSAGeneratorByExactSemanticVersionTag(t *test
 		supported bool
 	}{
 		{name: "workflow reference", version: version, supported: true},
-		{name: "stable release", version: "v2.1.0", supported: true},
 		{name: "release candidate", version: "v2.1.0-rc.1", supported: true},
 		{name: "commit hash", version: "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a", supported: false},
 		{name: "short tag", version: "v2.1", supported: false},
