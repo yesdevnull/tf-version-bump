@@ -31,8 +31,26 @@ func TestReleaseWorkflowReferencesSLSAGeneratorByExactSemanticVersionTag(t *test
 	}
 
 	version := strings.TrimPrefix(reference, generator)
-	exactSemanticVersion := regexp.MustCompile(`^v\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$`)
-	if !exactSemanticVersion.MatchString(version) {
-		t.Fatalf("SLSA generator reference %q is unsupported; use an exact semantic version tag such as v2.1.0", version)
+	exactSemanticVersion := regexp.MustCompile(`^v[1-9]\d*\.\d+\.\d+(?:-rc\.\d+)?$`)
+	testCases := []struct {
+		name      string
+		version   string
+		supported bool
+	}{
+		{name: "workflow reference", version: version, supported: true},
+		{name: "stable release", version: "v2.1.0", supported: true},
+		{name: "release candidate", version: "v2.1.0-rc.1", supported: true},
+		{name: "commit hash", version: "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a", supported: false},
+		{name: "short tag", version: "v2.1", supported: false},
+		{name: "malformed release candidate", version: "v2.1.0-rc.", supported: false},
+		{name: "unsupported prerelease", version: "v2.1.0-beta.1", supported: false},
+		{name: "zero-leading major", version: "v02.1.0", supported: false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := exactSemanticVersion.MatchString(testCase.version); got != testCase.supported {
+				t.Errorf("SLSA generator reference support for %q = %t, want %t", testCase.version, got, testCase.supported)
+			}
+		})
 	}
 }
