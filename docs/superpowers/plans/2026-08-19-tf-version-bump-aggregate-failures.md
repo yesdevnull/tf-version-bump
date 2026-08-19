@@ -88,27 +88,47 @@ failures`.
 - Modify: `integration_config_test.go`
 - Modify: `terraform_provider_test.go`
 
-**Step 1: Add and satisfy the Terraform-version behaviour**
+**Step 1: Add and satisfy the Terraform-version CLI behaviour**
 
 Add a test with a malformed Terraform file followed by a valid `required_version` file. Assert the
 valid file is updated and the runner reports failure. Run only that test to prove RED, change
-`processTerraformVersion` to return update and error counts, propagate the failure through both CLI
-and config modes, then rerun it GREEN.
+`processTerraformVersion` to return update and error counts, propagate the failure through CLI mode,
+then rerun it GREEN.
 
-**Step 2: Add and satisfy the provider-version behaviour**
+**Step 2: Add and satisfy the Terraform-version config behaviour**
+
+Add an independent `runConfigFileMode` test using a real config that selects the malformed and valid
+Terraform-version files. Prove RED because config mode still discards the aggregate error, propagate
+that error through config mode without changing continuation, then rerun GREEN.
+
+**Step 3: Add and satisfy the provider-version CLI behaviour**
 
 Repeat the focused RED/GREEN cycle for a malformed file followed by a valid `required_providers`
-file. Change `processProviderVersion` and its callers only as required.
+file through CLI mode. Change `processProviderVersion` and its CLI caller only as required.
 
-**Step 3: Add the all-success regression**
+**Step 4: Add and satisfy the provider-version config behaviour**
+
+Add a separate `runConfigFileMode` RED using a real provider config, then propagate the provider
+aggregate error through config mode and rerun GREEN. Do not treat the Terraform config test as
+evidence for this distinct path.
+
+**Step 5: Add mixed-config aggregation and continuation**
+
+Add a config containing module, Terraform, and provider operations where an earlier operation has a
+malformed selected file and later operations have valid updates. Assert every later operation still
+runs, every successful change is written, and the runner returns one aggregate failure after the
+final summary. Prove RED before changing the config-mode orchestration, then implement the smallest
+cross-operation aggregation and rerun GREEN.
+
+**Step 6: Add the all-success regressions**
 
 Add a focused test for each mode showing that multiple valid files retain a successful result and
 the existing summary. This guards against treating “no updates” as an error.
 
-**Step 4: Run the affected suite and commit**
+**Step 7: Run the affected suite and commit**
 
 ```bash
-go test -run 'TestRun.*(Terraform|Provider).*Failure|TestRun.*AllFilesSucceed' -count=1
+go test -run 'TestRun.*(Terraform|Provider|MixedConfig).*Failure|TestRun.*AllFilesSucceed' -count=1
 go test ./...
 ```
 
@@ -123,10 +143,11 @@ Commit with a signed commit such as `fix: propagate Terraform and provider file 
 
 **Step 1: Add an end-to-end main-path status test**
 
-Invoke `main` through the repository's existing `stubExit` and `withFlagArgs` harness against
-malformed and valid files. Assert exit code 1, the exact captured diagnostic, and that the later
-valid file changed. This tests the complete public command path rather than only helper return
-values, without adding a second test binary harness.
+Invoke `main` through the repository's existing `stubExit` and `withFlagArgs` harness with an
+explicit `-config` argument whose real config selects malformed and valid files. Assert exit code 1,
+the exact captured diagnostic, and that the later valid file changed. This tests the complete public
+config command path consumed by the automation rather than only helper return values, without adding
+a second test binary harness. A separate CLI-mode main test may remain for its distinct flag path.
 
 Run the focused test RED before the final `main` propagation, implement the smallest change from a
 runner error to the existing fatal exit mechanism, then rerun it GREEN.
