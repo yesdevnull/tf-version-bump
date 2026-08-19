@@ -35,8 +35,8 @@ lifecycle.
 - Keep target-selected providers away from Actions workflow command files and capture their process
   status through a trusted host supervisor, without claiming that an adversarial provider performs
   semantically honest validation.
-- Prevent unattended downstream pull-request checks from silently escaping the same hostile-code
-  boundary.
+- Prevent unattended downstream push and pull-request workflows from silently escaping the same
+  hostile-code boundary.
 - Show how the same workflow can validate multiple Terraform root modules without complicating the
   root-directory example.
 
@@ -51,9 +51,10 @@ lifecycle.
 - Add configurable post-update command hooks in the initial example.
 - Prove that an adversarial provider truthfully implements its own validation protocol. The
   automation can authenticate Terraform's supervised process result, not the provider's intent.
-- Make Git ref updates and GitHub pull-request API mutations one distributed transaction. The
-  workflow instead uses atomic Git ref updates, exact leases, compensating rollback, and explicit
-  recovery rules.
+- Make state-ref observation, automation-ref mutation, and GitHub pull-request API mutations one
+  distributed transaction. Git omits unchanged refs from a push, so the workflow instead uses
+  pre-push and post-push state checks, exact automation-ref leases, compensating rollback, and
+  explicit crash-recovery rules.
 
 ## Example layout
 
@@ -122,6 +123,12 @@ successful candidate. Publication expects exactly one verified result for its cu
 attempt. A missing, duplicate, unexpected, wrong-attempt, or mismatched artefact is an automation
 failure and can never be interpreted as success.
 
+Only **Re-run all jobs** is supported. Every downstream matrix job compares the discovery matrix's
+run attempt with its current `github.run_attempt`; a mismatch identifies a partial failed-job rerun
+and fails with a diagnostic instructing the operator to rerun the complete workflow. A complete
+rerun creates a new, self-contained artefact lineage for the new attempt. Artefacts from prior
+attempts are never consumed by the new attempt.
+
 The verified-result artefact contains a versioned manifest and the already verified patch needed to
 recreate the staged tree. Its name and manifest bind the run ID, run attempt, policy, control OID,
 state ref, base OID, candidate digest, validation-outcome digest, changed paths, modes, and hashes.
@@ -140,6 +147,10 @@ uses two independent checkouts:
 - A control checkout of the immutable caller SHA supplies the reviewed scripts and
   `tf-version-bump` configuration.
 - A target checkout of the immutable discovered state-branch OID receives the proposed changes.
+
+Every `hashicorp/setup-terraform` step sets `terraform_wrapper: false`. The trusted shell
+supervisor invokes the Terraform executable directly and is solely responsible for timeouts, log
+capture, and status classification; no Actions output wrapper sits between it and Terraform.
 
 Terraform can execute target-selected provider plugins during validation. Therefore checkout
 separation is not treated as a process-security boundary. Preparation uploads the immutable source
@@ -169,11 +180,14 @@ accepting lock-file changes from the pre-provider candidate bundle.
 
 Every stage has a bounded inner operation timeout plus a larger job timeout so the workflow can
 capture logs and classifications before GitHub terminates the job. Discovery is limited to 10
-minutes. Preparation and validation commands are limited to 20 minutes per Terraform root and their
-jobs to 30 minutes. Verification is limited to 15 minutes and its job to 20 minutes; publication is
-limited to 10 minutes and its job to 15 minutes. A preparation initialisation timeout is
-`branch-init`; a validation timeout is `branch-validation`; all other job timeouts are automation
-failures.
+minutes. All update and initialisation work for one state branch shares one cumulative 20-minute
+preparation deadline, and all validation work for that branch shares a separate cumulative
+20-minute validation deadline; neither deadline is renewed for each Terraform root. Their jobs are
+limited to 30 minutes, leaving 10 minutes for bundle creation, log upload, and cleanup.
+Verification is limited to 15 minutes and its job to 20 minutes; publication is limited to 10
+minutes and its job to 15 minutes. A preparation timeout is classified according to the command
+that exhausted the budget (`branch-update` or `branch-init`), and a validation timeout is
+`branch-validation`; all job-level timeouts are automation failures.
 
 ## Triggers and schedules
 
@@ -210,14 +224,16 @@ access is trusted because a writer can submit modified workflow YAML even when n
 is exposed. App-mode callers cap the reusable workflow's `GITHUB_TOKEN` at `contents: read`; only
 the short-lived App token receives publication permissions.
 
-Built-in-token mode is the safe default for repositories whose downstream pull-request workflows
-have not been audited; generated checks remain approval-gated. App mode is accepted only when the
-caller explicitly sets `unattended_checks_safe: true`. That assertion means every downstream
-workflow applicable to the state branches uses reviewed workflow definitions, a read-only token,
-no repository or environment secrets, no privileged environment, and equivalent isolation before
+Built-in-token mode is the safe default for repositories whose downstream workflows have not been
+audited; generated pull-request checks remain approval-gated and push workflows are suppressed.
+App mode is accepted only when the caller explicitly sets `unattended_checks_safe: true`. That
+assertion covers every workflow event caused by App publication, including `push` workflows for
+`update_*` refs and `pull_request` or `pull_request_target` workflows for generated pull requests.
+Each applicable workflow must use reviewed default-branch definitions, a read-only token, no
+repository or environment secrets, no privileged environment, and equivalent isolation before
 executing target-controlled code. The reusable workflow cannot enforce another workflow's runtime
 permissions, so it rejects App mode without this explicit policy assertion and the documentation
-requires a repository audit. App mode is not described as safe for generic unattended checks.
+requires a repository audit. App mode is not described as safe for generic unattended workflows.
 
 ## Reusable workflow interface
 
@@ -347,10 +363,11 @@ Each unprivileged preparation job performs the following sequence:
    verify their reported versions. The released CLI must be the same artefact exercised by tests.
 3. Validate directory containment and reject symlinked or non-regular candidate files before any
    write, including any repository `.terraform` path.
-4. For every configured Terraform directory, run `tf-version-bump` from that directory with the
-   control config and the non-recursive pattern `*.tf`.
+4. Start one cumulative 20-minute preparation deadline for the state branch. For every configured
+   Terraform directory, run `tf-version-bump` from that directory with the control config and the
+   non-recursive pattern `*.tf`; each command receives only the deadline's remaining time.
 5. Create a fresh absolute `TF_DATA_DIR` under the trusted runner temporary directory and, for that
-   same directory, run with a 20-minute command timeout:
+   same directory, run within the same remaining preparation deadline:
 
    ```text
    terraform -chdir=<directory> init -upgrade -backend=false -input=false -no-color
@@ -374,23 +391,40 @@ A fresh unprivileged validation job downloads only its exact run-attempt candida
 manifest, paths, modes, hashes, refs, OIDs, policy, and run identity, and applies the patch to a
 fresh exact-base validation checkout. The host creates a trusted data directory and starts the
 pinned Terraform image with `--rm`, no Docker socket, all capabilities dropped,
-`no-new-privileges`, bounded processes/memory/CPU, the runner UID/GID, and only the disposable
-validation checkout and trusted data directory mounted. It passes no host environment variables
-except explicit non-secret Terraform settings. For each directory with provider selections, the
-container runs under a 20-minute host timeout:
+`no-new-privileges`, `--pids-limit=256`, `--memory=4g`, `--memory-swap=4g`, `--cpus=2`, the runner
+UID/GID, and only the disposable validation checkout and trusted data directory mounted. These
+fixed limits are part of the example contract; consumers with smaller self-hosted runners must
+adjust and retest them before installation. The container receives no host environment variables
+except explicit non-secret Terraform settings.
+
+All roots share one cumulative 20-minute validation deadline. For each directory with provider
+selections, the host first runs a networked initialisation container within the remaining deadline:
 
 ```text
 terraform -chdir=<directory> init -backend=false -input=false -no-color -lockfile=readonly
+```
+
+Initialisation requires registry and module downloads and therefore retains outbound network
+access. Target-controlled source addresses can cause requests to services reachable from the
+runner; consumers that require restricted egress must supply an appropriate runner/network policy.
+Provider executables are installed but not invoked during this phase.
+
+The host then starts a separate container with the same mounts and resource limits plus
+`--network=none`, and runs within the remaining branch deadline:
+
+```text
 terraform -chdir=<directory> validate -no-color
 ```
 
 For a manifest-declared provider-free directory it omits `-lockfile=readonly` because no lock file
-exists, then runs the same validation command. Neither the candidate bundle nor the host outcome
-directory is mounted into the container. After the container stops, the trusted host supervisor
-creates the outcome from the observed exit status, then uploads only that candidate-bound outcome
-and captured logs. A timeout is `branch-validation`. The validation job never uploads source or
-lock-file bytes and discards its checkout and data directory. Provider execution therefore cannot
-alter the immutable candidate, host outcome, or Actions control plane later used for publication.
+exists during the networked initialisation phase, then runs validation with `--network=none` in the
+same way. Neither the candidate bundle nor the host outcome directory is mounted into either
+container. After each container stops, the trusted host supervisor records its observed status; it
+creates the final outcome and uploads only that candidate-bound outcome and captured logs. A
+timeout is `branch-validation`. The validation job never uploads source or lock-file bytes and
+discards its checkout and data directory. Provider execution therefore cannot alter the immutable
+candidate, host outcome, or Actions control plane later used for publication, and it cannot make
+outbound connections during validation.
 
 This boundary authenticates that the supervised Terraform process returned zero; it does not prove
 that an adversarial provider truthfully implemented schema or configuration validation. That
@@ -429,11 +463,12 @@ job boundaries:
    ownership, PR marker, issue author identity, and expected automation-ref OID. No signing key is
    materialised.
 3. **Publish in the same protected job.** Materialise the signing key only after prepublication
-   succeeds, create and locally verify the commit, then use one authenticated atomic Git push
-   containing a no-op state-ref refspec guarded by an exact state-ref lease and the automation-ref
-   create/update guarded by its own exact lease. This makes the state/base comparison atomic with
-   the update-ref transaction. Create or refresh the PR, reconcile the marked issue, remove every
-   credential/key helper in unconditional cleanup, and return the result status.
+   succeeds, create and locally verify the commit, recheck the state ref, then push only the
+   automation-ref create/update guarded by its exact expected-old-OID lease. Recheck the state ref
+   immediately after the push and again after PR mutation. Detected movement triggers exact-lease
+   compensation of only the automation ref written by this invocation. Create or refresh the PR,
+   reconcile the marked issue, remove every credential/key helper in unconditional cleanup, and
+   return the result status.
 
 For example, `state/nonproduction/example-thing` maps to
 `update_state/nonproduction/example-thing`. State branches are read-only bases. The `update_`
@@ -453,28 +488,34 @@ for their exact Git commands; the token is absent from remotes and command argum
 disabled, and both files are removed unconditionally. GitHub CLI commands receive `GH_TOKEN` only
 in their own child environment.
 
-The Git ref transaction guarantees that the state ref equalled the validated base at the instant
-the automation ref was created or updated. GitHub PR API calls are not part of that transaction.
-Reconciliation rechecks the state ref after the push and after PR mutation; detected movement causes
-an exact-lease rollback of the automation ref written by the current invocation and closes or
-restores the managed PR as applicable. State movement after the final check is normal concurrent
-repository activity and is corrected by the next queued run; the documentation does not claim
-strict atomicity across Git and GitHub APIs.
+Git omits an equal old/new ref from its push command list, so an unchanged state ref cannot act as a
+compare-and-swap guard on an automation-ref update. Publication consequently provides best-effort
+consistency rather than cross-ref atomicity: it checks the state OID before the push, pushes the
+automation ref with its own exact lease, and rechecks the state after the push and after PR
+mutation. Detected movement causes an exact-lease rollback of the automation ref written by the
+current invocation and closes or restores the managed PR as applicable. State movement after the
+final check is normal concurrent repository activity and is corrected by the next queued run.
 
 Every mutation boundary has compensation. If initial PR creation fails after creating the ref, the
 workflow exact-lease-deletes that ref. If refreshing an existing PR fails after updating its ref, it
 exact-lease-restores the previous ref OID. Ambiguous API responses are reconciled by re-reading exact
 markers before compensation. A compensation lease failure never triggers an unconditional retry;
 it produces an automation error with explicit manual recovery details. Failpoint integration tests
-cover ref create/update, PR create/edit/close, and ref deletion.
+cover ref create/update, PR create/edit/close, ref deletion, state movement between advertisement
+and update, and termination immediately after push. An abrupt runner loss can leave a transient or
+stale marked ref because no later check can execute. A subsequent run repairs an existing managed
+PR/ref pair normally; a newly created marked ref with no corresponding PR remains unowned under the
+two-marker rule and produces bounded manual-recovery instructions rather than being adopted or
+deleted automatically.
 
-When a successful non-dry run produces no changes, the workflow closes the marked automation PR as
-obsolete and deletes only its verified automation branch using an atomic no-op state ref plus an
-expected-old-OID deletion lease. A lease mismatch fails without an unconditional retry. Deletion is
-performed before PR closure so a failed delete leaves the recoverable marked PR/branch pair intact;
-an API failure after deletion is recovered by locating and closing the marked PR on the next run.
-It also closes any open marked validation-failure issue because the branch completed the update and
-validation flow.
+When a successful non-dry run produces no changes, the workflow prechecks the current state, deletes
+only its verified automation branch using an expected-old-OID deletion lease, and then closes the
+marked automation PR as obsolete. It rechecks the state after deletion; detected movement restores
+the deleted OID only when the ref is still absent, using an exact create lease. A lease mismatch
+fails without an unconditional retry. Deletion is performed before PR closure so a failed delete
+leaves the recoverable marked PR/branch pair intact; an API failure or runner loss after deletion is
+recovered by locating and closing the marked PR on the next run. It also closes any open marked
+validation-failure issue because the branch completed the update and validation flow.
 
 ## Dry-run semantics
 
@@ -524,12 +565,12 @@ Every dynamic value uses the shared Markdown encoder: escape `&`, `<`, and `>`, 
 a zero-width separator, and render scalar values in `<code>` and log tails in bounded `<pre>`
 blocks. Machine markers contain only fixed syntax plus validated policy IDs and hexadecimal hashes.
 
-The workflow recreates the automation commit from the latest state-branch tip instead of
-accumulating obsolete generated commits or rebasing them indefinitely. One atomic push guards the
-unchanged state ref and stable automation ref with their exact expected OIDs after ownership markers
-pass. A lease mismatch or detected state-base movement fails as an automation error and does not
-retry with an unconditional force. Branch deletion uses the same atomic state guard and
-expected-old-OID protection. GitHub API failures use the compensation rules above.
+The workflow recreates the automation commit from the latest observed state-branch tip instead of
+accumulating obsolete generated commits or rebasing them indefinitely. After ownership markers
+pass, the automation ref is pushed with its exact expected OID and the state ref is checked before
+and after the push. A lease mismatch or detected state-base movement fails as an automation error
+and does not retry with an unconditional force. Branch deletion uses the same state pre/post checks
+and expected-old-OID protection. GitHub API failures use the compensation rules above.
 
 ## Failure classification and issues
 
@@ -702,8 +743,11 @@ A maintained shell test creates temporary real Git repositories and bare remotes
 - Stable automation-branch regeneration, ownership-marker validation, unowned-ref refusal, and
   explicit leases for updates and deletion races. A branch marked for a different policy is
   foreign and fails safely even though the required ref name remains `update_<state-branch>`.
-- Atomic publication tests move the state ref at the push boundary and prove that a no-op state-ref
-  update with an exact lease prevents stale update-ref publication.
+- Publication-race tests move the state ref after advertisement but before the automation-ref
+  update, prove that the update may be accepted, and then prove that the post-push check performs
+  exact-lease compensation without touching an unseen writer's ref.
+- A termination-after-push failpoint proves the documented residual stale-ref state and the next
+  run's automatic or bounded manual-recovery path, depending on whether a managed PR already exists.
 - Failpoint tests after ref creation or update, PR creation or edit, PR close, and ref deletion
   prove the documented exact-lease compensation and retry behaviour.
 - Malformed shared-config failure before matrix creation.
@@ -714,16 +758,24 @@ A maintained shell test creates temporary real Git repositories and bare remotes
 - A hostile purpose-built Terraform provider fixture runs in the same constrained container
   boundary as production. It attempts delayed writes after parent exit, credential discovery,
   candidate and lock-file replacement, workflow-command poisoning, outcome forgery, and container
-  escape. Host-side tests verify that it cannot alter the immutable candidate or trusted outcome
-  and that the host records the observed process status. These tests do not claim that a malicious
-  provider must report truthful semantic validation diagnostics. The repository test harness builds
-  the reviewed Linux fixture, places it in a trusted read-only filesystem mirror, and supplies a
-  host-created Terraform CLI configuration only in test mode; neither the mirror nor this test-only
-  configuration is selectable from state-branch content or reusable-workflow inputs.
+  escape, outbound access, and host-service access. Host-side tests verify the exact CPU, memory,
+  swap, and PID limits, prove that validation runs with `--network=none`, verify that the provider
+  cannot alter the immutable candidate or trusted outcome, and confirm that the host records the
+  observed process status. These tests do not claim that a malicious provider must report truthful
+  semantic validation diagnostics. The repository test harness builds the reviewed Linux fixture,
+  places it in a trusted read-only filesystem mirror, and supplies a host-created Terraform CLI
+  configuration only in test mode; neither the mirror nor this test-only configuration is
+  selectable from state-branch content or reusable-workflow inputs.
+- Networked initialisation and offline validation run as separate constrained container commands
+  against the same disposable data directory; only the initialisation command can reach configured
+  registries and module sources.
 - A hanging provider is terminated at the configured timeout and produces the validation-timeout
   classification without unbounded runner use.
 - Artefact names and manifests bind run ID, run attempt, policy ID, control OID, state ref, and base
-  OID. Full-run and failed-job re-run cases cannot consume another attempt's artefacts.
+  OID. A complete rerun creates and consumes only its own attempt's lineage; a failed-job rerun is
+  rejected because its reused discovery output identifies a prior attempt.
+- Two roots sharing an injectable shortened cumulative deadline prove that the second root receives
+  only the remaining budget and that cleanup/artefact upload completes before the job deadline.
 - The command-scoped Git authentication helper works against a real authenticated bare HTTP test
   service without storing a token in a remote URL or process argument and removes its temporary
   files after each command.
@@ -779,14 +831,14 @@ The example README defines an acceptance procedure using a disposable GitHub rep
   secrets.
 - The actual GitHub-hosted validation runner executes the hostile fixture in the digest-pinned
   container through the repository harness's reviewed read-only filesystem mirror and records its
-  mount, environment, permission, delayed-write, and timeout results. This is a CI boundary test,
-  not a state-branch-selectable production input. The fixture has no write/App/signing credentials,
-  workflow-command files, control checkout, immutable candidate, trusted outcome path, or container
-  socket available to it.
+  mount, environment, permission, resource, offline-network, delayed-write, and timeout results.
+  This is a CI boundary test, not a state-branch-selectable production input. The fixture has no
+  write/App/signing credentials, workflow-command files, control checkout, immutable candidate,
+  trusted outcome path, container socket, or outbound network available to it during validation.
 - App mode is rejected unless `unattended_checks_safe: true`. The accepted App case uses reviewed
-  default-branch workflows with a read-only token, no secrets or privileged environments, and an
-  isolated target-code step. A hostile downstream test cannot mutate repository content or read a
-  secret sentinel.
+  default-branch push, `pull_request`, and `pull_request_target` workflows with a read-only token, no
+  secrets or privileged environments, and an isolated target-code step. Hostile downstream push
+  and pull-request tests cannot mutate repository content or read a secret sentinel.
 - Private-repository discovery, fetch, update, and deletion using command-scoped authentication.
 - Successful update, repeated idempotent update, validation failure, issue update, recovery, and
   obsolete-PR cleanup.
@@ -798,8 +850,11 @@ The example README defines an acceptance procedure using a disposable GitHub rep
   logs and artefacts remain available.
 - An unowned update-ref collision and concurrent update/deletion races that preserve the remote
   ref.
-- A state-base movement that prevents stale publication.
-- Full-workflow and failed-job re-runs whose artefacts remain isolated by run attempt.
+- A state-base movement between advertisement and automation-ref update whose accepted update is
+  exact-lease-compensated by the post-push check, plus termination immediately after push and the
+  documented next-run/manual recovery result.
+- A complete workflow rerun whose artefacts remain isolated by run attempt, followed by a failed-job
+  rerun that is rejected with instructions to use **Re-run all jobs**.
 - A policy collision that refuses to adopt or overwrite the foreign marked ref and PR.
 - A built-in-token run with repository PR creation temporarily disabled, demonstrating that a real
   post-push PR-creation rejection triggers exact-lease rollback without deleting an unseen remote
@@ -829,12 +884,14 @@ The acceptance transcript is reviewed before completion is claimed.
 - Unsigned and signed commit setup.
 - Stable branch, PR, issue, and cleanup lifecycles.
 - Reserved namespace, ownership markers, immutable control/base OIDs, and lease failure recovery.
-- Run-ID and run-attempt artefact provenance, command-scoped private-repository Git authentication,
-  publication compensation, and the remaining non-transactional GitHub-API race.
+- Run-ID and run-attempt artefact provenance, the **Re-run all jobs** requirement,
+  command-scoped private-repository Git authentication, best-effort state-ref consistency,
+  publication compensation, crash recovery, and the remaining Git/GitHub races.
 - Single-root and multi-root configurations.
 - Direct-file-per-module processing and the requirement to list every nested module explicitly.
 - Backend-disabled Terraform initialisation.
-- Digest-pinned constrained Terraform execution, trusted `TF_DATA_DIR`, command and job timeouts,
+- Digest-pinned constrained Terraform execution, trusted `TF_DATA_DIR`, cumulative branch and job
+  timeouts, fixed container resource limits, networked-init residual risk, offline validation,
   host-observed process status, and the limit that a malicious provider can lie about semantic
   validation results even though it cannot alter the publishable candidate or obtain credentials.
 - Branch-scoped update, init, and validation issues, including possible transient causes in init
@@ -845,7 +902,8 @@ The acceptance transcript is reviewed before completion is claimed.
   Server consumers to confirm support before installation.
 - The 256-branch matrix ceiling and the controlled failure when an allow-list exceeds it.
 - Built-in-token event suppression and approval-required PR checks, including when App mode is
-  required for unattended checks.
+  required and the push, `pull_request`, and `pull_request_target` workflows its publication can
+  trigger must be audited.
 - Manual identification and cleanup of strongly marked orphaned automation refs and issues when a
   state branch is deleted, renamed, or removed from the allow-list. Automatic orphan garbage
   collection is intentionally deferred until operational need justifies a separate destructive
@@ -873,10 +931,13 @@ The feature is complete when:
   boundaries.
 - Normal runs safely reconcile signed or unsigned commits, stable automation branches, PRs, and
   failure issues.
-- Every run pins one control OID and one validated base OID per state branch; ref movement blocks
-  publication.
+- Every run pins one control OID and one validated base OID per state branch; detected ref movement
+  triggers exact-lease compensation, while abrupt termination and movement after the final check
+  follow the documented recovery rules rather than an impossible cross-ref atomicity guarantee.
 - Existing update refs require verifiable ownership, and every rewrite or deletion uses an exact
   expected remote OID.
+- Complete reruns create a new attempt-bound artefact lineage, and partial failed-job reruns fail
+  safely with instructions to use **Re-run all jobs**.
 - The independently downloaded `v1.0.0-rc.7` CLI reports aggregate per-file failure with a non-zero
   status, and the workflow downloads and verifies the recorded SHA-256 of that exact released
   archive before use.
@@ -885,6 +946,10 @@ The feature is complete when:
   clear failure), provider-free directories may omit the file, disposable `.terraform/` data is
   excluded, and symlinked, escaping, non-regular, or otherwise unexpected paths are rejected before
   writing.
+- Preparation and validation each use one cumulative 20-minute branch deadline inside a 30-minute
+  job, so multiple sequential roots cannot individually consume the entire cleanup reserve.
+- Terraform's Actions wrapper is disabled; validation runs with the documented fixed resource
+  limits and no network after a separate networked initialisation phase.
 - GitHub.com caller and publication concurrency use the supported `queue: max` behaviour so pending
   runs are preserved. The pinned actionlint launcher suppresses only its exact stale-parser
   diagnostic for that property.
