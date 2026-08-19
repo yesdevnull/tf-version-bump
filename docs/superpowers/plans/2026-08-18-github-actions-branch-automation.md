@@ -50,6 +50,13 @@ reopen the partial-publication defect.
   establish only its scaffold, not a batch of unrelated requirements.
 - Every checkout uses `persist-credentials: false`. Every untrusted Actions value enters shell via
   `env:`, never direct expression interpolation into `run:`.
+- Every `hashicorp/setup-terraform` use sets `terraform_wrapper: false`; the processing helper is
+  the only status, timeout, and log supervisor.
+- Only **Re-run all jobs** is supported. Every downstream matrix job rejects a discovery attempt
+  that differs from its current `github.run_attempt`, with a diagnostic explaining that partial
+  reruns cannot produce a complete current-attempt artefact lineage.
+- Preparation and validation each use one cumulative 20-minute deadline per state branch, not per
+  Terraform root, inside their 30-minute job limits.
 - Action pins:
   - `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` (`v7.0.1`)
   - `actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e` (`v7.0.0`)
@@ -154,8 +161,8 @@ Finish by running the complete discovery subset plus `bash -n`, then create a si
 3. Implement a token-free `GIT_ASKPASS` helper plus mode-`0600` token file for the exact child Git
    command. Keep the token out of URLs and process arguments, disable prompts, and remove both files
    in unconditional cleanup. Rerun GREEN and inspect the service request.
-4. Repeat focused RED/GREEN tests for authenticated fetch, atomic update, and exact-lease deletion
-   through the processing helper.
+4. Repeat focused RED/GREEN tests for authenticated fetch, exact-lease update, and exact-lease
+   deletion through the processing helper.
 5. Add a failure-path test proving credential files are removed and no repository config or remote
    URL retains the token.
 
@@ -196,12 +203,15 @@ and create a signed commit.
    `*.tf` plus the control config in one real Terraform root. Implement only that download,
    verification, and update path.
 2. Add a RED test for `terraform init -upgrade -backend=false -input=false -no-color` using the
-   trusted data directory and a 20-minute command timeout. Implement and rerun GREEN.
+   trusted data directory and the state branch's cumulative 20-minute preparation deadline.
+   Implement and rerun GREEN.
 3. Add separate RED/GREEN cases for a provider root requiring a regular persisted lock, a
    provider-free root legitimately omitting one, and an ignored newly required lock failing without
    force-add.
 4. Add a RED test for two roots and deterministic failure attribution. Implement sequential root
-   handling and rerun GREEN.
+   handling with one shared deadline; the second root receives only the remaining budget. Use an
+   injectable short duration to prove cleanup and bundle upload retain the job-level reserve, then
+   rerun GREEN.
 5. Add one manifest field at a time with a focused assertion: schema version; run ID/attempt/policy;
    control/ref/base identity; config and exact tool/archive/image pins; classification; roots and
    provider dependency state; changed paths, modes, and SHA-256 hashes.
@@ -228,21 +238,27 @@ commit.
 2. Add a RED `validate` test that verifies the candidate manifest and applies its patch only to a
    disposable validation checkout. Implement that boundary.
 3. Add a RED test that starts the digest-pinned image with no Docker socket, dropped capabilities,
-   `no-new-privileges`, resource/process limits, runner UID/GID, and only the disposable checkout
-   plus trusted data directory mounted. Pass only explicit non-secret Terraform variables. Implement
-   the smallest container invocation and rerun GREEN.
+   `no-new-privileges`, `--pids-limit=256`, `--memory=4g`, `--memory-swap=4g`, `--cpus=2`, the runner
+   UID/GID, and only the disposable checkout plus trusted data directory mounted. Pass only explicit
+   non-secret Terraform variables. Implement the exact fixed limits and rerun GREEN.
 4. Add a RED test that checks `terraform version -json` in the image before target content is used.
    Reject a tag/digest/version mismatch.
-5. Add focused tests for provider and provider-free init/validate commands, including
-   `-lockfile=readonly` only when a lock exists.
-6. Add hostile delayed/background attempts against credentials, candidate, lock, control checkout,
+5. Add focused tests for provider and provider-free initialisation commands, including
+   `-lockfile=readonly` only when a lock exists. Run initialisation in a networked constrained
+   container, document that configured module/registry addresses can reach services visible to the
+   runner, and retain its trusted data directory for validation.
+6. Add a RED test that runs `terraform validate` in a separate container with the same fixed mounts
+   and limits plus `--network=none`. Prove that the provider cannot reach an outbound listener or a
+   host-gateway test service. Implement the split networked-init/offline-validation flow and rerun
+   GREEN.
+7. Add hostile delayed/background attempts against credentials, candidate, lock, control checkout,
    `GITHUB_ENV`, `GITHUB_PATH`, outcome path, and container socket. The constrained container mounts
    the reviewed test mirror and CLI config read-only only when the harness enables its internal test
    mode. The trusted host—not a mounted target process—must create the outcome from the observed
    container status after termination.
-7. Add a hanging-provider RED test. Enforce the 20-minute per-root timeout with injectable shorter
-   test duration and classify it as `branch-validation`.
-8. State in test names and assertions that a zero supervised exit is all this boundary authenticates;
+8. Add a hanging-provider RED test. Enforce the cumulative 20-minute branch-validation deadline
+   with an injectable shorter duration and classify it as `branch-validation`.
+9. State in test names and assertions that a zero supervised exit is all this boundary authenticates;
    it cannot prove an adversarial provider's semantic honesty.
 
 Run the tests on a host with Docker available and create a signed commit.
@@ -264,7 +280,9 @@ For each check, add a targeted corrupt bundle, observe RED, implement rejection,
 4. Contradictory or unknown result classifications.
 5. Independent `v1.0.0-rc.7` source reproduction against a fresh exact-base checkout, accepting only
    an exact source diff before applying declared lock bytes.
-6. Full-run and failed-job rerun fixtures whose run-attempt-specific artefacts cannot cross-consume.
+6. A complete rerun fixture whose run-attempt-specific artefacts cannot cross-consume, plus a
+   failed-job rerun fixture whose reused discovery attempt is rejected with instructions to use
+   **Re-run all jobs**.
 
 The resulting `verify` mode writes only a local verified-result file. Add a test proving no GitHub
 write token, App key, or signing key exists in its environment or temporary tree. Run the complete
@@ -296,7 +314,7 @@ subset and create a signed commit.
 Local tests cover parsers and real Git. Defer GitHub API assertions to the disposable-repository
 gate. Run the subset and create a signed commit.
 
-### Task 9: Sign and publish with atomic Git guards
+### Task 9: Sign and publish with exact leases and compensation
 
 **Files:**
 
@@ -308,21 +326,26 @@ gate. Run the subset and create a signed commit.
 2. Add a RED signed-commit test using a temporary SSH key. Configure signing only in the target
    repository, require explicit author identity, verify locally, and stop without unsigned fallback
    on signing failure. Add a separate unsigned case when no key is configured.
-3. Add a RED real-bare-remote test for one atomic push containing a no-op state ref guarded by the
-   exact validated-base lease and the create/update automation ref guarded by its expected OID.
-   Implement and rerun GREEN.
-4. Move the state ref at the push boundary and prove neither ref update is accepted. This test must
-   exercise the atomic push, not only an earlier comparison.
+3. Add a RED real-bare-remote test that rechecks the state OID immediately before pushing only the
+   create/update automation ref guarded by its exact expected-old-OID lease. Implement and rerun
+   GREEN.
+4. Move the state ref after advertisement but before the automation-ref update. Prove that Git may
+   accept the update because the unchanged state ref is not sent, then prove the post-push state
+   check exact-lease-deletes a newly created ref or restores the previous automation OID. Never
+   describe the two refs as one atomic transaction.
 5. Add exact-lease tests for automation-ref update and deletion races. Never retry unconditionally.
 6. Add post-push and post-PR state checks. On detected movement, roll back only the OID written by
    the current invocation with an exact lease.
 7. Add failpoints after ref create/update. A later PR failure exact-lease-deletes a newly created
    ref or restores the previous OID. An ambiguous response first re-reads markers. A compensation
-   lease mismatch reports manual recovery and preserves the unseen writer's change.
-8. For no-change cleanup, delete the marked ref atomically before closing the PR. Add recovery for
-   API failure after deletion.
+   lease mismatch reports manual recovery and preserves the unseen writer's change. A termination-
+   after-push failpoint must leave the documented recoverable managed pair or bounded manual-
+   recovery result for a new ref without a PR.
+8. For no-change cleanup, recheck state, exact-lease-delete the marked ref, recheck state again, and
+   restore the deleted OID with an exact absent-ref lease if movement is detected. Delete before
+   closing the PR and add recovery for API failure or runner termination after deletion.
 
-Run the atomic publication suite repeatedly to expose races, then create a signed commit.
+Run the publication-race and compensation suite repeatedly, then create a signed commit.
 
 ### Task 10: Reconcile PRs, issues, and safe Markdown
 
@@ -366,13 +389,18 @@ Add each workflow contract through a focused structural or actionlint RED/GREEN 
    environment secrets, semantic-version tag and digest validation, policy regex, paired
    App/signing inputs, and `unattended_checks_safe` gate.
 2. Add `discover` with `contents: read`, immutable control SHA, released CLI download/verification,
-   command-scoped authenticated discovery, and a 10-minute job timeout.
+   command-scoped authenticated discovery, a matrix-bound current run attempt, and a 10-minute job
+   timeout.
 3. Add `prepare` and `validate` matrices with `fail-fast: false`, `max-parallel`, `contents: read`,
    exact OID checkouts, no credentials/secrets, run-attempt artefact names, unconditional result
-   upload, 20-minute operation timeouts, and 30-minute job timeouts.
+   upload, cumulative 20-minute per-branch operation deadlines, and 30-minute job timeouts. Set
+   `terraform_wrapper: false` on every setup action. Validation uses separate networked-init and
+   `--network=none` validate containers with the exact fixed resource limits from Task 6.
 4. Add a separate `verify` matrix with `always()`, `contents: read`, no publication environment or
    protected secrets, exact artefact enumeration, a 15-minute operation limit, and a 20-minute job
-   timeout. It uploads one narrowly scoped verified-result artefact per current run attempt.
+   timeout. It uploads one narrowly scoped verified-result artefact per current run attempt. Every
+   matrix job rejects a reused discovery attempt before downloading an artefact, so partial failed-
+   job reruns instruct the operator to use **Re-run all jobs**.
 5. Add a dependent `publish` matrix on a fresh protected runner with a 10-minute operation limit and
    15-minute job timeout. It validates the verified-result identity without sourcing it, then uses
    App/built-in auth only for `prepublish` and exact child commands; the signing secret is
@@ -385,8 +413,9 @@ Add each workflow contract through a focused structural or actionlint RED/GREEN 
 8. Add `queue: max` to caller concurrency and to policy-independent state-branch publication
    concurrency, with no in-progress cancellation. Add the exact actionlint 1.7.12 suppression for
    its stale `queue` parser diagnostic and no other warning.
-9. Verify every checkout has `persist-credentials: false`, every action pin matches the approved
-   SHA, and no untrusted expression appears directly in `run:` source.
+9. Verify every checkout has `persist-credentials: false`, every Terraform setup disables the
+   wrapper, every action pin matches the approved SHA, every job enforces the discovery-attempt
+   contract, and no untrusted expression appears directly in `run:` source.
 
 Run the pinned actionlint launcher against the temporary consumer-style `.github` tree after every
 workflow increment. Only the exact documented `queue` diagnostic may be ignored. Create a signed
@@ -452,18 +481,20 @@ Write the example guide specified by the design, including:
 - Protected publication environment, least privileges, fixed secret names, optional signing, and
   no unsigned fallback after signing failure.
 - Command-scoped private-repository Git auth and why checkout persistence remains disabled.
-- Trusted data directories, provider/container boundary, timeouts, lock requirements, and valid
-  provider-free roots.
+- Trusted data directories, the disabled Actions wrapper, cumulative branch timeouts, fixed Docker
+  resource limits, the networked-init egress risk, offline provider validation, lock requirements,
+  and valid provider-free roots.
 - The honest security limit: the host authenticates process status, not semantic truth from a
   malicious provider.
 - Current GitHub.com built-in-token recursion/approval behaviour and the need for GitHub Enterprise
-  Server consumers to verify their installed version. App mode is permitted only after the
-  documented downstream-workflow audit and acknowledgement; App event delivery is not itself a
-  security boundary.
+  Server consumers to verify their installed version. App mode is permitted only after auditing
+  every generated `push`, `pull_request`, and `pull_request_target` workflow and acknowledging that
+  App event delivery is not itself a security boundary.
 - Stable `update_<state-branch>` names, policy-scoped ownership, exact leases, best-effort Git/API
-  compensation, residual race, and manual recovery after a compensation lease conflict.
-- Run-attempt artefact identity, GitHub.com's `queue: max` behaviour and bound, and GitHub Enterprise
-  Server compatibility checks.
+  compensation, the lack of cross-ref atomicity, crash windows, and manual recovery after a
+  compensation lease conflict or newly created ref without a PR.
+- Run-attempt artefact identity, the **Re-run all jobs** requirement and partial-rerun diagnostic,
+  GitHub.com's `queue: max` behaviour and bound, and GitHub Enterprise Server compatibility checks.
 - Failure classification and the manual, strongly marked orphan-cleanup procedure; automatic
   destructive garbage collection remains out of scope.
 - The complete disposable private-repository acceptance procedure from the spec.
@@ -497,7 +528,8 @@ already present in the repository, if any, and create a signed docs commit.
 4. With Dan's explicit approval for external mutations, run the documented acceptance in a
    disposable private repository. It must cover authenticated discovery/push/delete, built-in and
    audited App modes, alternate-ref environment denial, hostile-container and hostile-downstream
-   cases, provider/provider-free roots, run-attempt reruns, policy/unowned collisions, state and
+   push/PR cases, provider/provider-free roots, complete and rejected partial reruns,
+   policy/unowned collisions, advertisement-to-update state movement, termination after push,
    deletion races, a real post-push PR-creation rejection with exact-lease rollback, dry run,
    failure/recovery/cleanup, three rapid dispatches, and optional signed publication.
 5. Review the transcript against every completion criterion in the design. Do not claim completion
