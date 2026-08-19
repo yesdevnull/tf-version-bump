@@ -86,8 +86,8 @@ Before tagging:
 Create and push an annotated tag:
 
 ```bash
-git tag -a v1.0.0-rc.7 -m "Release v1.0.0-rc.7"
-git push origin v1.0.0-rc.7
+git tag -a v1.0.0-rc.8 -m "Release v1.0.0-rc.8"
+git push origin v1.0.0-rc.8
 ```
 
 The tag push starts `.github/workflows/release.yml`, which:

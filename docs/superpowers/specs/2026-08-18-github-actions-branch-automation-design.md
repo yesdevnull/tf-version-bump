@@ -281,7 +281,7 @@ authentication or signing configurations. A GitHub App client ID requires the Ap
 both commit identity inputs rather than inherit a bot default. Environment secrets cannot be passed
 or selected by an untrusted caller.
 
-The example pins `tf_version_bump_version: v1.0.0-rc.7` and the Linux x86-64 archive's actual
+The example pins `tf_version_bump_version: v1.0.0-rc.8` and the Linux x86-64 archive's actual
 published SHA-256. Implementation of this workflow cannot start until the aggregate per-file
 failure change has been merged, released under that tag, and the published artefact has passed
 checksum/provenance verification. Each job downloads that exact archive, verifies it against the
@@ -741,7 +741,7 @@ A maintained shell test creates temporary real Git repositories and bare remotes
 - One immutable control OID across a default-branch movement.
 - Exact discovered base OIDs and rejection when a state ref advances before publication.
 - Successful update, initialisation, and validation with the independently downloaded
-  `v1.0.0-rc.7` release artefact and the digest-pinned Terraform image used by the workflows.
+  `v1.0.0-rc.8` release artefact and the digest-pinned Terraform image used by the workflows.
 - One-to-one mapping of directly changed source files to configured Terraform directories,
   including rejection of omitted, duplicate, and ambiguous roots.
 - Terraform source and lock-file staging into an immutable candidate before provider execution.
@@ -894,7 +894,7 @@ The acceptance transcript is reviewed before completion is claimed.
 - Protected publication-environment setup, default-branch restrictions, trusted-dispatch
   assumptions, and fixed optional secret names.
 - Exact tool-version pinning.
-- The prerequisite `v1.0.0-rc.7` release, its aggregate-failure contract, and verification of the
+- The prerequisite `v1.0.0-rc.8` release, its aggregate-failure contract, and verification of the
   downloaded artefact's checksum and provenance before use.
 - Production and non-production prefix/config separation.
 - Manual narrowing and dry-run behaviour.
@@ -958,7 +958,7 @@ The feature is complete when:
   expected remote OID.
 - Complete reruns create a new attempt-bound artefact lineage, and partial failed-job reruns fail
   safely with instructions to use **Re-run all jobs**.
-- The independently downloaded `v1.0.0-rc.7` CLI reports aggregate per-file failure with a non-zero
+- The independently downloaded `v1.0.0-rc.8` CLI reports aggregate per-file failure with a non-zero
   status, and the workflow downloads and verifies the recorded SHA-256 of that exact released
   archive before use.
 - Every configured Terraform module directory with installed provider packages has a lock file

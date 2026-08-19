@@ -17,7 +17,7 @@ and split reconciliation into credential-free verification, authenticated prefli
 smallest possible publication step.
 
 **Tech stack:** Bash, Git, GitHub CLI, GitHub Actions, jq, Docker,
-`tf-version-bump v1.0.0-rc.7`, Terraform 1.15.5, actionlint 1.7.12.
+`tf-version-bump v1.0.0-rc.8`, Terraform 1.15.5, actionlint 1.7.12.
 
 **Spec:** `docs/superpowers/specs/2026-08-18-github-actions-branch-automation-design.md`
 
@@ -27,7 +27,7 @@ smallest possible publication step.
 
 Do not begin Task 1 until
 `docs/superpowers/plans/2026-08-19-tf-version-bump-aggregate-failures.md` is complete and the
-published `v1.0.0-rc.7` Linux artefact has passed checksum, provenance, version, and aggregate-exit
+published `v1.0.0-rc.8` Linux artefact has passed checksum, provenance, version, and aggregate-exit
 verification. Record the actual Linux x86-64 archive SHA-256 in the release acceptance transcript.
 Tests and workflows must download and verify that archive; substituting a working-tree build would
 reopen the partial-publication defect.
@@ -72,7 +72,7 @@ reopen the partial-publication defect.
   - `actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1`
     (`v3.2.0`)
 - Tool pins:
-  - `tf-version-bump v1.0.0-rc.7`
+  - `tf-version-bump v1.0.0-rc.8`
   - Terraform `1.15.5`
   - `hashicorp/terraform:1.15.5@sha256:15bf5a08b1fb9c9747c8ff01098aeeefb4aec9a6c24eb13e7661bdf9447e4aee`
   - `github.com/rhysd/actionlint/cmd/actionlint@v1.7.12`
@@ -201,7 +201,7 @@ and create a signed commit.
 - Modify: `examples/github-actions/.github/scripts/process-state-branch.sh`
 - Modify: `examples/github-actions/test.sh`
 
-1. Add a RED test for `prepare` downloading the `v1.0.0-rc.7` Linux x86-64 archive, verifying its
+1. Add a RED test for `prepare` downloading the `v1.0.0-rc.8` Linux x86-64 archive, verifying its
    recorded SHA-256 before extraction, checking the binary's reported version, and running it with
    `*.tf` plus the control config in one real Terraform root. Implement only that download,
    verification, and update path.
@@ -289,7 +289,7 @@ For each check, add a targeted corrupt bundle, observe RED, implement rejection,
    undeclared paths.
 3. Patch paths outside the declaration or a changed `.tf` file not mapped directly to one root.
 4. Contradictory or unknown result classifications.
-5. Independent `v1.0.0-rc.7` source reproduction against a fresh exact-base checkout, accepting only
+5. Independent `v1.0.0-rc.8` source reproduction against a fresh exact-base checkout, accepting only
    an exact source diff before applying declared lock bytes.
 6. A complete rerun fixture whose run-attempt-specific artefacts cannot cross-consume, plus a
    failed-job rerun fixture whose reused discovery attempt is rejected with instructions to use
@@ -448,7 +448,7 @@ commit.
 1. Add the non-production caller with manual `branch_prefix`/`dry_run`, a 04:17 daily
    `Australia/Melbourne` schedule, policy `nonproduction`, the three documented prefixes, root `.`,
    exact release/archive/image pins, and `queue: max` concurrency. Populate the archive digest only
-   from the completed `v1.0.0-rc.7` release acceptance record.
+   from the completed `v1.0.0-rc.8` release acceptance record.
 2. Add the production caller with the same manual interface, a Sunday 04:43
    `Australia/Melbourne` schedule, policy `production`, and the two production prefixes.
 3. Make built-in-token mode the copyable default. Add commented/documented App inputs only with the
@@ -490,7 +490,7 @@ Run actionlint and the caller subset, then create a signed commit.
 Write the example guide specified by the design, including:
 
 - Copy paths, default-branch config ownership, single and newline-separated multiple roots.
-- `v1.0.0-rc.7` checksum/provenance prerequisite and digest-pinned Terraform image.
+- `v1.0.0-rc.8` checksum/provenance prerequisite and digest-pinned Terraform image.
 - Literal allow-lists, manual narrowing, dry run, 256-branch limit, and exact schedules.
 - Protected publication environment, least privileges, fixed secret names, optional signing, and
   no unsigned fallback after signing failure.
