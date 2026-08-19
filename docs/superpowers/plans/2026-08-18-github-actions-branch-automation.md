@@ -55,8 +55,11 @@ reopen the partial-publication defect.
 - Only **Re-run all jobs** is supported. Every downstream matrix job rejects a discovery attempt
   that differs from its current `github.run_attempt`, with a diagnostic explaining that partial
   reruns cannot produce a complete current-attempt artefact lineage.
-- Preparation and validation each use one cumulative 20-minute deadline per state branch, not per
-  Terraform root, inside their 30-minute job limits.
+- The first executable step of each preparation and validation job records one absolute 20-minute
+  deadline before checkout and setup. Setup and all Terraform roots consume that same budget
+  inside the 30-minute job limit. Every third-party `uses:` step in those jobs has
+  `timeout-minutes: 10`; collectively overrunning the absolute deadline is a job-level failure for
+  which cleanup cannot be guaranteed.
 - Action pins:
   - `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` (`v7.0.1`)
   - `actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e` (`v7.0.0`)
@@ -202,16 +205,20 @@ and create a signed commit.
    recorded SHA-256 before extraction, checking the binary's reported version, and running it with
    `*.tf` plus the control config in one real Terraform root. Implement only that download,
    verification, and update path.
-2. Add a RED test for `terraform init -upgrade -backend=false -input=false -no-color` using the
-   trusted data directory and the state branch's cumulative 20-minute preparation deadline.
+2. Add a RED test that records the absolute 20-minute preparation deadline before checkout and
+   setup, then runs `terraform init -upgrade -backend=false -input=false -no-color` using the
+   trusted data directory and only the remaining preparation budget.
    Implement and rerun GREEN.
 3. Add separate RED/GREEN cases for a provider root requiring a regular persisted lock, a
    provider-free root legitimately omitting one, and an ignored newly required lock failing without
    force-add.
-4. Add a RED test for two roots and deterministic failure attribution. Implement sequential root
-   handling with one shared deadline; the second root receives only the remaining budget. Use an
-   injectable short duration to prove cleanup and bundle upload retain the job-level reserve, then
-   rerun GREEN.
+4. Add a RED test for setup plus two roots and deterministic failure attribution. Implement
+   sequential handling with one absolute deadline recorded before setup; setup and the first root
+   reduce the second root's remaining budget. Use an injectable short duration to prove normal
+   timeout handling reaches cleanup and bundle upload before the larger job deadline. Add
+   separate late-returning and non-returning setup cases that expect a job-level automation failure
+   and make no cleanup/upload assertion. Add a structural assertion that every third-party action
+   step in the preparation job has `timeout-minutes: 10`, then rerun GREEN.
 5. Add one manifest field at a time with a focused assertion: schema version; run ID/attempt/policy;
    control/ref/base identity; config and exact tool/archive/image pins; classification; roots and
    provider dependency state; changed paths, modes, and SHA-256 hashes.
@@ -256,8 +263,12 @@ commit.
    the reviewed test mirror and CLI config read-only only when the harness enables its internal test
    mode. The trusted host—not a mounted target process—must create the outcome from the observed
    container status after termination.
-8. Add a hanging-provider RED test. Enforce the cumulative 20-minute branch-validation deadline
-   with an injectable shorter duration and classify it as `branch-validation`.
+8. Add a hanging-provider RED test. Record the absolute 20-minute branch-validation deadline before
+   candidate, checkout, and image setup; enforce its remaining time with an injectable shorter
+   duration and classify it as `branch-validation`. Add late-returning and non-returning setup
+   cases that expect a job-level automation failure without promising cleanup or outcome upload.
+   Add a structural assertion that every third-party action step in the validation job has
+   `timeout-minutes: 10`.
 9. State in test names and assertions that a zero supervised exit is all this boundary authenticates;
    it cannot prove an adversarial provider's semantic honesty.
 
@@ -339,8 +350,9 @@ gate. Run the subset and create a signed commit.
 7. Add failpoints after ref create/update. A later PR failure exact-lease-deletes a newly created
    ref or restores the previous OID. An ambiguous response first re-reads markers. A compensation
    lease mismatch reports manual recovery and preserves the unseen writer's change. A termination-
-   after-push failpoint must leave the documented recoverable managed pair or bounded manual-
-   recovery result for a new ref without a PR.
+   after-push failpoint must cover both a new ref without a PR and an updated ref whose PR retains
+   its previous marker. On the next run, both cases fail the two-marker ownership check, emit
+   bounded manual-recovery instructions, and are not adopted automatically.
 8. For no-change cleanup, recheck state, exact-lease-delete the marked ref, recheck state again, and
    restore the deleted OID with an exact absent-ref lease if movement is detected. Delete before
    closing the PR and add recovery for API failure or runner termination after deletion.
@@ -393,7 +405,9 @@ Add each workflow contract through a focused structural or actionlint RED/GREEN 
    timeout.
 3. Add `prepare` and `validate` matrices with `fail-fast: false`, `max-parallel`, `contents: read`,
    exact OID checkouts, no credentials/secrets, run-attempt artefact names, unconditional result
-   upload, cumulative 20-minute per-branch operation deadlines, and 30-minute job timeouts. Set
+   upload, absolute 20-minute per-branch deadlines recorded by the first executable step before
+   checkout/setup, and 30-minute job timeouts. Every later workflow-controlled step checks the
+   deadline before starting work; every third-party action step has `timeout-minutes: 10`. Set
    `terraform_wrapper: false` on every setup action. Validation uses separate networked-init and
    `--network=none` validate containers with the exact fixed resource limits from Task 6.
 4. Add a separate `verify` matrix with `always()`, `contents: read`, no publication environment or
@@ -492,7 +506,8 @@ Write the example guide specified by the design, including:
   App event delivery is not itself a security boundary.
 - Stable `update_<state-branch>` names, policy-scoped ownership, exact leases, best-effort Git/API
   compensation, the lack of cross-ref atomicity, crash windows, and manual recovery after a
-  compensation lease conflict or newly created ref without a PR.
+  compensation lease conflict, a newly created ref without a PR, or an updated ref whose PR marker
+  still identifies the previous commit.
 - Run-attempt artefact identity, the **Re-run all jobs** requirement and partial-rerun diagnostic,
   GitHub.com's `queue: max` behaviour and bound, and GitHub Enterprise Server compatibility checks.
 - Failure classification and the manual, strongly marked orphan-cleanup procedure; automatic
@@ -529,7 +544,8 @@ already present in the repository, if any, and create a signed docs commit.
    disposable private repository. It must cover authenticated discovery/push/delete, built-in and
    audited App modes, alternate-ref environment denial, hostile-container and hostile-downstream
    push/PR cases, provider/provider-free roots, complete and rejected partial reruns,
-   policy/unowned collisions, advertisement-to-update state movement, termination after push,
+   policy/unowned collisions, advertisement-to-update state movement, termination after both ref
+   creation and ref update with bounded manual recovery on the next run,
    deletion races, a real post-push PR-creation rejection with exact-lease rollback, dry run,
    failure/recovery/cleanup, three rapid dispatches, and optional signed publication.
 5. Review the transcript against every completion criterion in the design. Do not claim completion

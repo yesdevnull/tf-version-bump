@@ -179,11 +179,20 @@ fresh exact-base checkout and independently reproduces the `tf-version-bump` sou
 accepting lock-file changes from the pre-provider candidate bundle.
 
 Every stage has a bounded inner operation timeout plus a larger job timeout so the workflow can
-capture logs and classifications before GitHub terminates the job. Discovery is limited to 10
-minutes. All update and initialisation work for one state branch shares one cumulative 20-minute
-preparation deadline, and all validation work for that branch shares a separate cumulative
-20-minute validation deadline; neither deadline is renewed for each Terraform root. Their jobs are
-limited to 30 minutes, leaving 10 minutes for bundle creation, log upload, and cleanup.
+normally capture logs and classifications before GitHub terminates the job. Discovery is limited
+to 10 minutes. The first executable step of each preparation and validation job records an
+absolute 20-minute deadline before checkout, tool installation, path preflight, candidate setup,
+or image setup. Every later workflow-controlled step checks that deadline, and all update,
+initialisation, and validation commands receive only its remaining time; the deadline is not
+renewed for each Terraform root. Those jobs are limited to 30 minutes, giving at most ten minutes
+of nominal headroom after the absolute deadline for bundle creation, log upload, and cleanup.
+Every third-party `uses:` step in those jobs has `timeout-minutes: 10`. That integer per-step cap
+prevents one action from consuming the entire job, but it does not align the step with the remaining
+absolute budget or preserve aggregate headroom across several action steps. A third-party action
+that returns or times out after the absolute deadline can therefore consume some or all of the
+nominal headroom. That is a job-level automation failure without a cleanup/upload guarantee; the
+inner deadline precisely bounds only workflow-controlled work.
+
 Verification is limited to 15 minutes and its job to 20 minutes; publication is limited to 10
 minutes and its job to 15 minutes. A preparation timeout is classified according to the command
 that exhausted the budget (`branch-update` or `branch-init`), and a validation timeout is
@@ -358,38 +367,42 @@ checkout, so a tracked `.terraform` symlink cannot redirect initialisation write
 
 Each unprivileged preparation job performs the following sequence:
 
-1. Check out the control OID and discovered state-branch OID with persisted credentials disabled.
-2. Install the exact released `tf-version-bump` and Terraform versions supplied by the caller and
+1. As the first executable step, record the absolute preparation deadline 20 minutes in the
+   future. Every subsequent workflow-controlled step checks it before starting new work.
+2. Check out the control OID and discovered state-branch OID with persisted credentials disabled.
+3. Install the exact released `tf-version-bump` and Terraform versions supplied by the caller and
    verify their reported versions. The released CLI must be the same artefact exercised by tests.
-3. Validate directory containment and reject symlinked or non-regular candidate files before any
+4. Validate directory containment and reject symlinked or non-regular candidate files before any
    write, including any repository `.terraform` path.
-4. Start one cumulative 20-minute preparation deadline for the state branch. For every configured
-   Terraform directory, run `tf-version-bump` from that directory with the control config and the
-   non-recursive pattern `*.tf`; each command receives only the deadline's remaining time.
-5. Create a fresh absolute `TF_DATA_DIR` under the trusted runner temporary directory and, for that
+5. For every configured Terraform directory, run `tf-version-bump` from that directory with the
+   control config and non-recursive pattern `*.tf`; each command receives only the deadline's
+   remaining time.
+6. Create a fresh absolute `TF_DATA_DIR` under the trusted runner temporary directory and, for that
    same directory, run within the same remaining preparation deadline:
 
    ```text
    terraform -chdir=<directory> init -upgrade -backend=false -input=false -no-color
    ```
 
-6. After successful initialisation, inspect the trusted data directory's provider package tree
+7. After successful initialisation, inspect the trusted data directory's provider package tree
    before removing it. If initialisation installed any provider package, require a regular
    `.terraform.lock.hcl`, including a newly created untracked file. If it installed none, record the
    directory as provider-free and allow the lock file to be absent. If a new required lock file is
    ignored, fail with a repository-configuration error; never force-add it.
-7. Remove disposable `.terraform/` working data, then consume NUL-delimited Git status output and
+8. Remove disposable `.terraform/` working data, then consume NUL-delimited Git status output and
    confirm that every changed `.tf` file is directly inside exactly one configured directory and
    every other change is that directory's lock file. Any other path fails the safety check.
-8. Produce the versioned manifest and patch, verify their hashes locally, upload the immutable
+9. Produce the versioned manifest and patch, verify their hashes locally, upload the immutable
    candidate bundle under a name containing the run ID, run attempt, policy ID, and
    collision-resistant branch hash, and remove the checkouts and trusted data directories.
    Terraform initialisation downloads provider packages but does not execute provider validation
    RPCs, so this captures the publishable candidate before any provider plugin executes.
 
-A fresh unprivileged validation job downloads only its exact run-attempt candidate, validates the
-manifest, paths, modes, hashes, refs, OIDs, policy, and run identity, and applies the patch to a
-fresh exact-base validation checkout. The host creates a trusted data directory and starts the
+A fresh unprivileged validation job records its absolute 20-minute deadline as its first executable
+step, before downloading the exact run-attempt candidate or performing checkout and image setup.
+It validates the manifest, paths, modes, hashes, refs, OIDs, policy, and run identity, and applies
+the patch to a fresh exact-base validation checkout. Every later workflow-controlled step checks
+the deadline before starting new work. The host creates a trusted data directory and starts the
 pinned Terraform image with `--rm`, no Docker socket, all capabilities dropped,
 `no-new-privileges`, `--pids-limit=256`, `--memory=4g`, `--memory-swap=4g`, `--cpus=2`, the runner
 UID/GID, and only the disposable validation checkout and trusted data directory mounted. These
@@ -503,10 +516,12 @@ markers before compensation. A compensation lease failure never triggers an unco
 it produces an automation error with explicit manual recovery details. Failpoint integration tests
 cover ref create/update, PR create/edit/close, ref deletion, state movement between advertisement
 and update, and termination immediately after push. An abrupt runner loss can leave a transient or
-stale marked ref because no later check can execute. A subsequent run repairs an existing managed
-PR/ref pair normally; a newly created marked ref with no corresponding PR remains unowned under the
-two-marker rule and produces bounded manual-recovery instructions rather than being adopted or
-deleted automatically.
+stale marked ref because no later check can execute. If termination occurs after creating or
+updating the ref but before the corresponding PR mutation completes, the PR marker is absent or no
+longer matches the commit marker. The next run refuses that ref under the two-marker rule and emits
+bounded manual-recovery instructions; this applies both to a new ref without a PR and to a
+previously managed ref whose PR still carries the prior identity. Only a ref and PR whose markers
+already agree can be reconciled normally by a later run.
 
 When a successful non-dry run produces no changes, the workflow prechecks the current state, deletes
 only its verified automation branch using an expected-old-OID deletion lease, and then closes the
@@ -746,8 +761,9 @@ A maintained shell test creates temporary real Git repositories and bare remotes
 - Publication-race tests move the state ref after advertisement but before the automation-ref
   update, prove that the update may be accepted, and then prove that the post-push check performs
   exact-lease compensation without touching an unseen writer's ref.
-- A termination-after-push failpoint proves the documented residual stale-ref state and the next
-  run's automatic or bounded manual-recovery path, depending on whether a managed PR already exists.
+- Termination-after-push failpoints for both ref creation and ref update prove the documented
+  residual stale-ref state. The next run must refuse both absent and mismatched PR markers and emit
+  bounded manual-recovery instructions; it must not auto-adopt either ref.
 - Failpoint tests after ref creation or update, PR creation or edit, PR close, and ref deletion
   prove the documented exact-lease compensation and retry behaviour.
 - Malformed shared-config failure before matrix creation.
@@ -774,8 +790,11 @@ A maintained shell test creates temporary real Git repositories and bare remotes
 - Artefact names and manifests bind run ID, run attempt, policy ID, control OID, state ref, and base
   OID. A complete rerun creates and consumes only its own attempt's lineage; a failed-job rerun is
   rejected because its reused discovery output identifies a prior attempt.
-- Two roots sharing an injectable shortened cumulative deadline prove that the second root receives
-  only the remaining budget and that cleanup/artefact upload completes before the job deadline.
+- An injectable shortened absolute deadline recorded before setup proves that setup and the first
+  root reduce the second root's remaining budget, and that normal timeout handling reaches
+  cleanup/artefact upload before the larger job deadline. Separate late-returning and non-returning
+  setup fixtures prove the fixed third-party-step timeout, are classified as job-level automation
+  failures, and make no cleanup/upload guarantee.
 - The command-scoped Git authentication helper works against a real authenticated bare HTTP test
   service without storing a token in a remote URL or process argument and removes its temporary
   files after each command.
@@ -851,8 +870,9 @@ The example README defines an acceptance procedure using a disposable GitHub rep
 - An unowned update-ref collision and concurrent update/deletion races that preserve the remote
   ref.
 - A state-base movement between advertisement and automation-ref update whose accepted update is
-  exact-lease-compensated by the post-push check, plus termination immediately after push and the
-  documented next-run/manual recovery result.
+  exact-lease-compensated by the post-push check, plus termination immediately after ref creation
+  and ref update; both next runs refuse the absent or stale PR marker and report bounded manual
+  recovery.
 - A complete workflow rerun whose artefacts remain isolated by run attempt, followed by a failed-job
   rerun that is rejected with instructions to use **Re-run all jobs**.
 - A policy collision that refuses to adopt or overwrite the foreign marked ref and PR.
@@ -946,8 +966,11 @@ The feature is complete when:
   clear failure), provider-free directories may omit the file, disposable `.terraform/` data is
   excluded, and symlinked, escaping, non-regular, or otherwise unexpected paths are rejected before
   writing.
-- Preparation and validation each use one cumulative 20-minute branch deadline inside a 30-minute
-  job, so multiple sequential roots cannot individually consume the entire cleanup reserve.
+- Preparation and validation each record one absolute 20-minute branch deadline before setup inside
+  a 30-minute job. Setup and all sequential roots consume that same budget, so the deadline is
+  never renewed per root. Every third-party action step is capped at 10 minutes, but actions that
+  collectively overrun the absolute deadline remain job-level failures for which cleanup cannot be
+  guaranteed.
 - Terraform's Actions wrapper is disabled; validation runs with the documented fixed resource
   limits and no network after a separate networked initialisation phase.
 - GitHub.com caller and publication concurrency use the supported `queue: max` behaviour so pending
