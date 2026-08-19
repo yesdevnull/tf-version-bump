@@ -49,6 +49,75 @@ func withFlagArgs(t *testing.T, args []string, fn func()) {
 	fn()
 }
 
+type commandResult struct {
+	stdout      string
+	diagnostics string
+	exitCode    int
+}
+
+func runMainCommand(t *testing.T, args []string) commandResult {
+	t.Helper()
+
+	restoreExit, code := stubExit(t)
+	defer restoreExit()
+
+	var diagnostics bytes.Buffer
+	originalLogWriter := log.Writer()
+	originalLogFlags := log.Flags()
+	originalLogPrefix := log.Prefix()
+	log.SetOutput(&diagnostics)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	defer func() {
+		log.SetOutput(originalLogWriter)
+		log.SetFlags(originalLogFlags)
+		log.SetPrefix(originalLogPrefix)
+	}()
+
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stdout pipe: %v", err)
+	}
+	defer func() {
+		if err := stdoutReader.Close(); err != nil {
+			t.Errorf("failed to close stdout reader: %v", err)
+		}
+	}()
+
+	originalStdout := os.Stdout
+	os.Stdout = stdoutWriter
+	defer func() { os.Stdout = originalStdout }()
+
+	var stdout bytes.Buffer
+	stdoutDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&stdout, stdoutReader)
+		close(stdoutDone)
+	}()
+
+	withFlagArgs(t, args, func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				if _, ok := recovered.(exitCall); !ok {
+					panic(recovered)
+				}
+			}
+		}()
+		main()
+	})
+
+	if err := stdoutWriter.Close(); err != nil {
+		t.Fatalf("failed to close stdout writer: %v", err)
+	}
+	<-stdoutDone
+
+	return commandResult{
+		stdout:      stdout.String(),
+		diagnostics: diagnostics.String(),
+		exitCode:    *code,
+	}
+}
+
 func TestParseFlagsInvalidOutput(t *testing.T) {
 	restoreExit, code := stubExit(t)
 	defer restoreExit()
@@ -194,23 +263,7 @@ func TestMainConfigFilePath(t *testing.T) {
 	}
 }
 
-func TestCommandReportsAggregateFileFailure(t *testing.T) {
-	restoreExit, code := stubExit(t)
-	defer restoreExit()
-
-	var diagnostics bytes.Buffer
-	originalLogWriter := log.Writer()
-	originalLogFlags := log.Flags()
-	originalLogPrefix := log.Prefix()
-	log.SetOutput(&diagnostics)
-	log.SetFlags(0)
-	log.SetPrefix("")
-	defer func() {
-		log.SetOutput(originalLogWriter)
-		log.SetFlags(originalLogFlags)
-		log.SetPrefix(originalLogPrefix)
-	}()
-
+func TestCommandCLIReportsAggregateFileFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	malformedFile := filepath.Join(tmpDir, "01-malformed.tf")
 	if err := os.WriteFile(malformedFile, []byte("!!!\n"), 0o644); err != nil {
@@ -221,59 +274,76 @@ func TestCommandReportsAggregateFileFailure(t *testing.T) {
 		t.Fatalf("failed to write valid Terraform file: %v", err)
 	}
 
-	stdoutReader, stdoutWriter, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("failed to create stdout pipe: %v", err)
-	}
-	defer func() {
-		if err := stdoutReader.Close(); err != nil {
-			t.Errorf("failed to close stdout reader: %v", err)
-		}
-	}()
-	originalStdout := os.Stdout
-	os.Stdout = stdoutWriter
-	defer func() { os.Stdout = originalStdout }()
-	var stdout bytes.Buffer
-	stdoutDone := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(&stdout, stdoutReader)
-		close(stdoutDone)
-	}()
-
-	withFlagArgs(t, []string{
+	result := runMainCommand(t, []string{
 		"tf-version-bump",
 		"-pattern", filepath.Join(tmpDir, "*.tf"),
 		"-module", "example/module",
 		"-to", "2.0.0",
-	}, func() {
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				if _, ok := recovered.(exitCall); !ok {
-					panic(recovered)
-				}
-			}
-		}()
-		main()
 	})
-	if err := stdoutWriter.Close(); err != nil {
-		t.Fatalf("failed to close stdout writer: %v", err)
-	}
-	<-stdoutDone
 
 	wantStdout := "Found 2 file(s) matching pattern '" + filepath.Join(tmpDir, "*.tf") + "'\n" +
 		"✓ Updated module source 'example/module' to version '2.0.0' in " + validFile + "\n" +
 		"\nSuccessfully updated 1 file(s)\n"
-	if got := stdout.String(); got != wantStdout {
-		t.Errorf("stdout = %q, want %q", got, wantStdout)
+	if result.stdout != wantStdout {
+		t.Errorf("stdout = %q, want %q", result.stdout, wantStdout)
 	}
 
 	wantDiagnostic := "Error processing " + malformedFile + ": failed to parse HCL: " + malformedFile + ":1,1-2: Argument or block definition required; An argument or block definition is required here.\n" +
 		"1 module update error(s)\n"
-	if got := diagnostics.String(); got != wantDiagnostic {
-		t.Errorf("stderr = %q, want %q", got, wantDiagnostic)
+	if result.diagnostics != wantDiagnostic {
+		t.Errorf("stderr = %q, want %q", result.diagnostics, wantDiagnostic)
 	}
-	if *code != 1 {
-		t.Fatalf("expected exit code 1, got %d", *code)
+	if result.exitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", result.exitCode)
+	}
+
+	contents, err := os.ReadFile(validFile)
+	if err != nil {
+		t.Fatalf("failed to read valid Terraform file: %v", err)
+	}
+	if !strings.Contains(string(contents), `version = "2.0.0"`) {
+		t.Fatalf("expected later valid file to update, got %q", contents)
+	}
+}
+
+func TestCommandConfigReportsAggregateFileFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	malformedFile := filepath.Join(tmpDir, "01-malformed.tf")
+	if err := os.WriteFile(malformedFile, []byte("!!!\n"), 0o644); err != nil {
+		t.Fatalf("failed to write malformed Terraform file: %v", err)
+	}
+	validFile := filepath.Join(tmpDir, "02-valid.tf")
+	if err := os.WriteFile(validFile, []byte("module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"), 0o644); err != nil {
+		t.Fatalf("failed to write valid Terraform file: %v", err)
+	}
+	configFile := filepath.Join(tmpDir, "updates.yml")
+	if err := os.WriteFile(configFile, []byte("modules:\n  - source: example/module\n    version: 2.0.0\n"), 0o644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump",
+		"-pattern", filepath.Join(tmpDir, "*.tf"),
+		"-config", configFile,
+	})
+
+	wantStdout := "Found 2 file(s) matching pattern '" + filepath.Join(tmpDir, "*.tf") + "'\n" +
+		"✓ Updated module source 'example/module' to version '2.0.0' in " + validFile + "\n" +
+		"\n==================================================\n" +
+		"Config File Update Summary\n" +
+		"==================================================\n" +
+		"Modules: 1 file(s) updated\n"
+	if result.stdout != wantStdout {
+		t.Errorf("stdout = %q, want %q", result.stdout, wantStdout)
+	}
+
+	wantDiagnostic := "Error processing " + malformedFile + ": failed to parse HCL: " + malformedFile + ":1,1-2: Argument or block definition required; An argument or block definition is required here.\n" +
+		"1 module update error(s)\n"
+	if result.diagnostics != wantDiagnostic {
+		t.Errorf("stderr = %q, want %q", result.diagnostics, wantDiagnostic)
+	}
+	if result.exitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", result.exitCode)
 	}
 
 	contents, err := os.ReadFile(validFile)
