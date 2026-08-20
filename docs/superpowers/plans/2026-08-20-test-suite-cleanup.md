@@ -710,6 +710,9 @@ Expected: all checks pass, coverage remains at least 90.0%, and the commit is si
 - Reference only: `terraform_provider_test.go`, `main_integration_test.go`, and
   `main_coverage_test.go`
 
+Do not edit these reference-only files in Task 5. Superseded tests remain temporarily and are
+deleted with their containing files wholesale in Task 6.
+
 **Interfaces:**
 
 - Consumes: `updateTerraformVersion`, `updateProviderVersion`, `writeTestFile`, and
@@ -724,7 +727,8 @@ Create `TestUpdateTerraformVersionContract` with complete input and output strin
 - update an existing `required_version` while preserving `required_providers`;
 - update every Terraform block containing `required_version`;
 - leave a file with no Terraform block unchanged; and
-- leave a Terraform block without `required_version` unchanged.
+- add `required_version` to a Terraform block without one while preserving its
+  `required_providers`.
 
 Assert `updated`, `err`, and exact file content for every row. Add
 `TestUpdateTerraformVersionDryRunContract`: assert `updated == true`, no error, and byte-for-byte
@@ -734,9 +738,9 @@ unchanged content.
 
 Add `TestUpdateTerraformVersionErrors` covering missing file, malformed HCL, and write failure. Use
 `errors.Is(err, os.ErrNotExist)` for the missing file, assert `failed to parse HCL:` for malformed
-input, and retain the read-only-file skip only for effective UID zero. Do not retain a separate
-`processTerraformVersion` counter test; Task 6 owns continuation and aggregate failure through the
-runner boundary.
+input, and retain the read-only-file skip only for effective UID zero. Do not migrate a separate
+`processTerraformVersion` counter test into the new owners; Task 6 deletes the legacy copies
+wholesale. Task 6 owns continuation and aggregate failure through the runner boundary.
 
 - [ ] **Step 3: Add real-file provider syntax and preservation contracts**
 
@@ -749,8 +753,9 @@ Create `TestUpdateProviderVersionContract` with exact input/output rows for:
 - mixed block and attribute syntax across two Terraform blocks; and
 - a missing target provider leaving the file byte-for-byte unchanged.
 
-Every row must call `updateProviderVersion` on a real temporary file. Delete rather than migrate
-the mocked-AST `TestUpdateProviderAttributeVersionVariants` cases.
+Every row must call `updateProviderVersion` on a real temporary file. Do not migrate the mocked-AST
+`TestUpdateProviderAttributeVersionVariants` cases. Leave the legacy file untouched in Task 5;
+Task 6 deletes it wholesale.
 
 - [ ] **Step 4: Add provider dry-run and error contracts**
 
@@ -762,8 +767,9 @@ func TestUpdateProviderVersionErrors(t *testing.T)
 ```
 
 Mirror the Terraform boundaries using real provider HCL. The dry-run test must prove
-`updated == true` without file mutation. Do not retain a separate `processProviderVersion` counter
-test; Task 6 owns continuation and aggregate failure through the runner boundary.
+`updated == true` without file mutation. Do not migrate a separate `processProviderVersion`
+counter test into the new owners; Task 6 deletes the legacy copies wholesale. Task 6 owns
+continuation and aggregate failure through the runner boundary.
 
 - [ ] **Step 5: Prove provider preservation is sensitive**
 
