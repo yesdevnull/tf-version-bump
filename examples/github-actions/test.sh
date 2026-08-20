@@ -65,6 +65,32 @@ fixture_commit() {
         commit "$@" -m "$message" >/dev/null
 }
 
+# Writes an executable fake `terraform` at $1 that answers `version -json` with the pinned
+# 1.15.5 fixture version (delayed by $3 seconds if given) and runs $2 -- a literal script body,
+# captured by the caller from a quoted heredoc so its own `$`-references stay unevaluated until
+# the stub itself runs -- for every other invocation.
+write_terraform_stub() {
+    local path=$1 body=$2 version_delay_seconds=${3-0}
+    local sleep_line=""
+    [[ "$version_delay_seconds" -eq 0 ]] || sleep_line="    sleep $version_delay_seconds"$'\n'
+    local preamble
+    preamble=$(cat <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "version" && "${2:-}" == "-json" ]]; then
+__SLEEP_LINE__    printf '%s\n' '{"terraform_version":"1.15.5"}'
+    exit 0
+fi
+EOF
+    )
+    {
+        printf '%s\n' "${preamble/__SLEEP_LINE__/$sleep_line}"
+        printf '\n%s\n' "$body"
+    } >"$path"
+    chmod 755 "$path"
+}
+
 
 cleanup_discovery_repository() {
     if [[ -n "$DISCOVERY_TMP_ROOT" ]]; then
@@ -279,8 +305,27 @@ create_validation_candidate_bundle() {
     PROCESS_TARGET_CHECKOUT="$validation_checkout"
 }
 
+# Populates the PROCESSING_SHARED_DOCKER_ENV array with the `docker exec --env ...` pairs common
+# to both run_processing_prepare and run_processing_validate (run identity, immutable state-branch
+# lineage, the pinned Terraform version, RUNNER_TEMP, and PATH).
+processing_shared_docker_env() {
+    PROCESSING_SHARED_DOCKER_ENV=(
+        --env "PROCESS_RUN_ID=${PROCESS_RUN_ID-123456}"
+        --env "PROCESS_RUN_ATTEMPT=${PROCESS_RUN_ATTEMPT-2}"
+        --env "PROCESS_AUTOMATION_POLICY_ID=${PROCESS_AUTOMATION_POLICY_ID-nonproduction}"
+        --env "PROCESS_CONTROL_OID=${PROCESS_CONTROL_OID-$(processing_control_oid)}"
+        --env "PROCESS_STATE_BRANCH=${PROCESS_STATE_BRANCH:?}"
+        --env "PROCESS_BASE_OID=${PROCESS_BASE_OID-$(processing_base_oid)}"
+        --env "PROCESS_REF_HASH=${PROCESS_REF_HASH-$(processing_ref_hash)}"
+        --env "PROCESS_TERRAFORM_VERSION=${PROCESS_TERRAFORM_VERSION-$TERRAFORM_VERSION}"
+        --env "RUNNER_TEMP=${RUNNER_TEMP-$PROCESS_RUNNER_TEMP}"
+        --env "PATH=${PROCESS_PATH_PREFIX:+$PROCESS_PATH_PREFIX:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    )
+}
+
 run_processing_validate() {
     ensure_processing_container
+    processing_shared_docker_env
     docker exec \
         --user "$(id -u):$(id -g)" \
         --env GIT_CONFIG_COUNT=1 \
@@ -290,17 +335,8 @@ run_processing_validate() {
         --env "PROCESS_PREPARATION_BUNDLE_DIR=$PROCESS_PREPARATION_BUNDLE_DIR" \
         --env "PROCESS_VALIDATION_OUTCOME_DIR=$PROCESS_VALIDATION_OUTCOME_DIR" \
         --env "PROCESS_VALIDATION_DEADLINE_EPOCH=${PROCESS_VALIDATION_DEADLINE_EPOCH-$(($(date +%s) + 1200))}" \
-        --env "PROCESS_RUN_ID=${PROCESS_RUN_ID-123456}" \
-        --env "PROCESS_RUN_ATTEMPT=${PROCESS_RUN_ATTEMPT-2}" \
-        --env "PROCESS_AUTOMATION_POLICY_ID=${PROCESS_AUTOMATION_POLICY_ID-nonproduction}" \
-        --env "PROCESS_CONTROL_OID=${PROCESS_CONTROL_OID-$(processing_control_oid)}" \
-        --env "PROCESS_STATE_BRANCH=${PROCESS_STATE_BRANCH:?}" \
-        --env "PROCESS_BASE_OID=${PROCESS_BASE_OID-$(processing_base_oid)}" \
-        --env "PROCESS_REF_HASH=${PROCESS_REF_HASH-$(processing_ref_hash)}" \
-        --env "PROCESS_TERRAFORM_VERSION=${PROCESS_TERRAFORM_VERSION-$TERRAFORM_VERSION}" \
-        --env "RUNNER_TEMP=${RUNNER_TEMP-$PROCESS_RUNNER_TEMP}" \
+        "${PROCESSING_SHARED_DOCKER_ENV[@]}" \
         --env "TF_CLI_CONFIG_FILE=${TF_CLI_CONFIG_FILE-}" \
-        --env "PATH=${PROCESS_PATH_PREFIX:+$PROCESS_PATH_PREFIX:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
         "$PROCESS_CONTAINER_ID" \
         /bin/bash "$PROCESS_SCRIPT" validate
 }
@@ -321,6 +357,7 @@ processing_ref_hash() {
 
 run_processing_prepare() {
     ensure_processing_container
+    processing_shared_docker_env
     docker exec \
         --user "$(id -u):$(id -g)" \
         --env GIT_CONFIG_COUNT=2 \
@@ -332,21 +369,12 @@ run_processing_prepare() {
         --env "PROCESS_TARGET_CHECKOUT=$PROCESS_TARGET_CHECKOUT" \
         --env "PROCESS_CONFIG_PATH=${PROCESS_CONFIG_PATH-.github/tf-version-bump/test.yml}" \
         --env "PROCESS_TERRAFORM_ROOTS=${PROCESS_TERRAFORM_ROOTS-root}" \
-        --env "RUNNER_TEMP=${RUNNER_TEMP-$PROCESS_RUNNER_TEMP}" \
-        --env "PROCESS_RUN_ID=${PROCESS_RUN_ID-123456}" \
-        --env "PROCESS_RUN_ATTEMPT=${PROCESS_RUN_ATTEMPT-2}" \
-        --env "PROCESS_AUTOMATION_POLICY_ID=${PROCESS_AUTOMATION_POLICY_ID-nonproduction}" \
-        --env "PROCESS_CONTROL_OID=${PROCESS_CONTROL_OID-$(processing_control_oid)}" \
-        --env "PROCESS_STATE_BRANCH=${PROCESS_STATE_BRANCH:?}" \
-        --env "PROCESS_BASE_OID=${PROCESS_BASE_OID-$(processing_base_oid)}" \
-        --env "PROCESS_REF_HASH=${PROCESS_REF_HASH-$(processing_ref_hash)}" \
+        "${PROCESSING_SHARED_DOCKER_ENV[@]}" \
         --env "PROCESS_TF_VERSION_BUMP_VERSION=${PROCESS_TF_VERSION_BUMP_VERSION-$TF_VERSION_BUMP_VERSION}" \
         --env "PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256=${PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256-$TF_VERSION_BUMP_ARCHIVE_SHA256}" \
-        --env "PROCESS_TERRAFORM_VERSION=${PROCESS_TERRAFORM_VERSION-$TERRAFORM_VERSION}" \
         --env "PROCESS_PREPARATION_DEADLINE_EPOCH=${PROCESS_PREPARATION_DEADLINE_EPOCH-$(($(date +%s) + 1200))}" \
         --env "PROCESS_PREPARATION_BUNDLE_DIR=${PROCESS_PREPARATION_BUNDLE_DIR-$PROCESS_RUNNER_TEMP/preparation-bundle}" \
         --env "PROCESS_TEST_CALL_LOG=${PROCESS_TEST_CALL_LOG-}" \
-        --env "PATH=${PROCESS_PATH_PREFIX:+$PROCESS_PATH_PREFIX:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
         "$PROCESS_CONTAINER_ID" \
         /bin/bash "$PROCESS_SCRIPT" prepare
 }
@@ -358,7 +386,7 @@ processing_container_file_mode() {
 }
 
 prepopulate_verified_processing_release_cache() {
-    local verified_archive="$TEST_TMP_ROOT/tf-version-bump_1.0.0-rc.8_linux_x86_64.tar.gz"
+    local verified_archive="$TEST_TMP_ROOT/${TF_VERSION_BUMP_ARCHIVE_URL##*/}"
     if [[ ! -f "$verified_archive" ]]; then
         curl --fail --silent --show-error --location \
             --connect-timeout "$TF_VERSION_BUMP_PREFETCH_CONNECT_TIMEOUT_SECONDS" \
@@ -379,21 +407,38 @@ prepopulate_verified_processing_release_cache() {
         || fail "trusted processing fixture cache failed checksum verification"
 }
 
-assert_processing_failure() {
-    local expected_diagnostic=$1
-    local description=$2
-    local stdout_file="$PROCESS_TMP_ROOT/failure.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/failure.stderr"
+# Runs $4.. (redirected to $2/$3), asserts it succeeded, and asserts it emitted nothing on
+# either stream.
+assert_silent_success() {
+    local description=$1 stdout_file=$2 stderr_file=$3
+    shift 3
+    if ! "$@" >"$stdout_file" 2>"$stderr_file"; then
+        fail "$description failed: $(<"$stderr_file")"
+    fi
+    [[ ! -s "$stdout_file" && ! -s "$stderr_file" ]] \
+        || fail "$description emitted unexpected output: stdout=$(<"$stdout_file") stderr=$(<"$stderr_file")"
+}
 
-    if run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
+assert_command_failure() {
+    local run_command=$1 tmp_root=$2 stdout_failure_description=$3
+    local expected_diagnostic=$4 description=$5
+    local stdout_file="$tmp_root/failure.stdout"
+    local stderr_file="$tmp_root/failure.stderr"
+
+    if "$run_command" >"$stdout_file" 2>"$stderr_file"; then
         fail "$description succeeded"
     fi
-    [[ ! -s "$stdout_file" ]] || fail "$description emitted unexpected output"
+    [[ ! -s "$stdout_file" ]] || fail "$description $stdout_failure_description"
 
     local diagnostic
     diagnostic=$(<"$stderr_file")
     [[ "$diagnostic" == *"$expected_diagnostic"* ]] \
         || fail "$description did not report '$expected_diagnostic': $diagnostic"
+}
+
+assert_processing_failure() {
+    assert_command_failure run_processing_prepare "$PROCESS_TMP_ROOT" \
+        "emitted unexpected output" "$1" "$2"
 }
 
 setup_discovery_repository() {
@@ -457,7 +502,7 @@ run_discovery() {
             DISCOVERY_DEFAULT_BRANCH=${DISCOVERY_DEFAULT_BRANCH-main} \
             RUNNER_TEMP=${RUNNER_TEMP-$DISCOVERY_TMP_ROOT/client-credentials} \
             CONTROL_CHECKOUT=${CONTROL_CHECKOUT-$DISCOVERY_REPO} \
-            PATH="$PATH:$DISCOVERY_TMP_ROOT/git-bin" \
+            PATH=${DISCOVERY_PATH-$PATH} \
             "$DISCOVER_SCRIPT"
     )
 }
@@ -496,23 +541,52 @@ test_discovery_resolves_origin_from_control_checkout() {
 
 test_discovery_uses_runner_git_not_a_workstation_shim() {
     # Production break caught: a workstation-style PATH entry (e.g. an asdf/direnv shim directory
-    # appended after the runner's own bin dirs) silently becomes the Git the shipped discovery
-    # script runs, instead of ordinary PATH order picking the runner's real Git first. run_discovery
-    # wires this poison shim onto the low-priority end of PATH so a regression that reorders PATH
-    # construction (or that shells out via a path search reaching the shim) would hit `exit 99` and
-    # fail this test; unwired, the fixture would never be reachable and the test would be vacuous.
+    # placed ahead of the runner's own bin dirs) silently becomes the Git the shipped discovery
+    # script runs. This proves both halves of that claim, not just that the script tolerates an
+    # unreachable shim: with the poison shim as the ONLY Git reachable on PATH, discovery must
+    # fail -- proving the script resolves `git` through an ordinary PATH search that reaches the
+    # shim, not some absolute path or side channel that would bypass it. With the runner's real
+    # Git placed ahead of the same shim on PATH, discovery must succeed -- proving PATH order,
+    # not the shim's mere presence, is what decides which Git actually runs.
     setup_discovery_repository
     add_discovery_branch "state/nonproduction/example"
-    mkdir -m 700 "$DISCOVERY_TMP_ROOT/git-bin"
-    cat >"$DISCOVERY_TMP_ROOT/git-bin/git" <<'EOF'
+    DISCOVERY_ALLOWED_PREFIXES="state/nonproduction/"
+
+    local real_git
+    real_git=$(command -v "$TEST_GIT")
+    local real_bash
+    real_bash=$(command -v bash)
+    local shim_toolchain="$DISCOVERY_TMP_ROOT/shim-toolchain"
+    mkdir -m 700 "$shim_toolchain"
+    local tool tool_path
+    for tool in bash jq mktemp realpath rm sha256sum sort; do
+        tool_path=$(command -v "$tool") || fail "missing required tool: $tool"
+        ln -s "$tool_path" "$shim_toolchain/$tool"
+    done
+    cat >"$shim_toolchain/git" <<'EOF'
 #!/usr/bin/env bash
 exit 99
 EOF
-    chmod 700 "$DISCOVERY_TMP_ROOT/git-bin/git"
+    chmod 700 "$shim_toolchain/git"
 
-    DISCOVERY_ALLOWED_PREFIXES="state/nonproduction/"
+    # bash itself must resolve from the shim toolchain too, or the script's own
+    # `#!/usr/bin/env bash` shebang fails before any git resolution is ever attempted, making
+    # this half pass (with a vacuous exit 127) regardless of how discovery resolves `git`.
+    if DISCOVERY_PATH="$shim_toolchain" run_discovery \
+        >"$DISCOVERY_TMP_ROOT/shim-only.stdout" 2>"$DISCOVERY_TMP_ROOT/shim-only.stderr"; then
+        fail "discovery succeeded with only the poison Git shim reachable on PATH"
+    fi
+    [[ ! -s "$DISCOVERY_TMP_ROOT/shim-only.stdout" ]] \
+        || fail "shim-only discovery emitted JSON despite failing"
+    [[ "$(<"$DISCOVERY_TMP_ROOT/shim-only.stderr")" \
+        == "discovery input error: allowed prefix is not a valid literal branch prefix" ]] \
+        || fail "shim-only discovery did not fail from the poison Git shim itself: $(<"$DISCOVERY_TMP_ROOT/shim-only.stderr")"
+
+    # The runner's real Git and real bash are both placed ahead of the same shim toolchain, so
+    # only PATH order -- not the shim's mere presence -- decides which of each actually runs.
     local output
-    if ! output=$(run_discovery 2>"$DISCOVERY_TMP_ROOT/runner-git.stderr"); then
+    if ! output=$(DISCOVERY_PATH="$(dirname "$real_git"):$(dirname "$real_bash"):$shim_toolchain" \
+        run_discovery 2>"$DISCOVERY_TMP_ROOT/runner-git.stderr"); then
         fail "discovery depended on the workstation-only Git shim: $(<"$DISCOVERY_TMP_ROOT/runner-git.stderr")"
     fi
     jq -e '.include | map(.branch) == ["state/nonproduction/example"]' <<<"$output" >/dev/null \
@@ -539,20 +613,8 @@ test_processing_exposes_only_prepare_and_validate() {
 }
 
 assert_discovery_failure() {
-    local expected_diagnostic=$1
-    local description=$2
-    local stdout_file="$DISCOVERY_TMP_ROOT/failure.stdout"
-    local stderr_file="$DISCOVERY_TMP_ROOT/failure.stderr"
-
-    if run_discovery >"$stdout_file" 2>"$stderr_file"; then
-        fail "$description succeeded"
-    fi
-    [[ ! -s "$stdout_file" ]] || fail "$description emitted JSON"
-
-    local diagnostic
-    diagnostic=$(<"$stderr_file")
-    [[ "$diagnostic" == *"$expected_diagnostic"* ]] \
-        || fail "$description did not report '$expected_diagnostic': $diagnostic"
+    assert_command_failure run_discovery "$DISCOVERY_TMP_ROOT" \
+        "emitted JSON" "$1" "$2"
 }
 
 test_actionlint_launcher_reports_pinned_version() {
@@ -829,14 +891,15 @@ test_config_validation_workflow_is_read_only() {
 
     yq -o=json '.jobs["validate-configs"].steps' "$CONFIG_VALIDATION_WORKFLOW" | jq -e \
         --arg archive_url "$TF_VERSION_BUMP_ARCHIVE_URL" \
-        --arg archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" '
+        --arg archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" \
+        --arg release_version "${TF_VERSION_BUMP_VERSION#v}" '
         any(.[]; .name == "Download and verify tf-version-bump" and
             (.run | contains($archive_url)) and
             (.run | contains($archive_sha256)) and
             (.run | contains("sha256sum --check --status")) and
             (.run | contains("tar -xzf")) and
             ((.run | index("sha256sum --check --status")) < (.run | index("tar -xzf"))) and
-            (.run | contains("tf-version-bump 1.0.0-rc.8"))) and
+            (.run | contains("tf-version-bump " + $release_version))) and
         any(.[]; .name == "Validate configuration dry runs" and
             (.run | contains("mktemp -d")) and
             (.run | contains(".github/tf-version-bump/nonproduction.yml")) and
@@ -1071,19 +1134,14 @@ test_processing_allocates_fresh_trusted_data_directory_per_nested_root() {
 
     local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
     mkdir "$fixture_bin"
-    cat >"$fixture_bin/terraform" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-if [[ "${1:-}" == "version" && "${2:-}" == "-json" ]]; then
-    printf '%s\n' '{"terraform_version":"1.15.5"}'
-    exit 0
-fi
+    local stub_body
+    stub_body=$(cat <<'EOF'
 printf '%s\t%s\n' "$TF_DATA_DIR" "$(stat -c '%a' "$TF_DATA_DIR")" \
     >>"${PROCESS_TEST_CALL_LOG:?}"
 printf '%s\n' 'Terraform has been successfully initialized!'
 EOF
-    chmod 755 "$fixture_bin/terraform"
+    )
+    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
     PROCESS_PATH_PREFIX=$fixture_bin
     PROCESS_TEST_CALL_LOG="$PROCESS_TMP_ROOT/data-directories.log"
 
@@ -1193,21 +1251,16 @@ test_processing_rejects_non_utf8_changed_path() {
     setup_processing_workspace
     local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
     mkdir "$fixture_bin"
-    cat >"$fixture_bin/terraform" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-if [[ "${1:-}" == "version" && "${2:-}" == "-json" ]]; then
-    printf '%s\n' '{"terraform_version":"1.15.5"}'
-    exit 0
-fi
+    local stub_body
+    stub_body=$(cat <<'EOF'
 invalid_path="${PROCESS_TARGET_CHECKOUT:?}/root/module"
 invalid_path+=$'\377'
 invalid_path+='.tf'
 printf '%s\n' 'terraform {}' >"$invalid_path"
 printf '%s\n' 'Terraform has been successfully initialized!'
 EOF
-    chmod 755 "$fixture_bin/terraform"
+    )
+    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
     PROCESS_PATH_PREFIX=$fixture_bin
     prepopulate_verified_processing_release_cache
     ensure_processing_container
@@ -1451,11 +1504,8 @@ test_processing_prepares_with_released_cli_and_pinned_terraform() {
 
     local stdout_file="$PROCESS_TMP_ROOT/preparation.stdout"
     local stderr_file="$PROCESS_TMP_ROOT/preparation.stderr"
-    if ! run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
-        fail "released candidate preparation failed: $(<"$stderr_file")"
-    fi
-    [[ ! -s "$stdout_file" && ! -s "$stderr_file" ]] \
-        || fail "released candidate preparation emitted unexpected output: stdout=$(<"$stdout_file") stderr=$(<"$stderr_file")"
+    assert_silent_success "released candidate preparation" \
+        "$stdout_file" "$stderr_file" run_processing_prepare
     grep -F 'required_version = ">= 1.15.0"' \
         "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
         || fail "released CLI did not apply the reviewed Terraform version update"
@@ -1524,11 +1574,8 @@ EOF
 
     local stdout_file="$PROCESS_TMP_ROOT/init.stdout"
     local stderr_file="$PROCESS_TMP_ROOT/init.stderr"
-    if ! run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
-        fail "deadline-bound Terraform initialisation failed: $(<"$stderr_file")"
-    fi
-    [[ ! -s "$stdout_file" && ! -s "$stderr_file" ]] \
-        || fail "deadline-bound Terraform initialisation emitted unexpected output"
+    assert_silent_success "deadline-bound Terraform initialisation" \
+        "$stdout_file" "$stderr_file" run_processing_prepare
     [[ ! -e "$PROCESS_TARGET_CHECKOUT/root/.terraform" ]] \
         || fail "Terraform initialisation wrote data inside the target checkout"
 
@@ -1594,16 +1641,8 @@ test_processing_init_timeout_preserves_failure_bundle_after_shared_budget() {
 
     local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
     mkdir "$fixture_bin"
-    cat >"$fixture_bin/terraform" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-if [[ "${1:-}" == "version" && "${2:-}" == "-json" ]]; then
-    sleep 1
-    printf '%s\n' '{"terraform_version":"1.15.5"}'
-    exit 0
-fi
-
+    local stub_body
+    stub_body=$(cat <<'EOF'
 root=${1#-chdir=}
 printf '%s\n' "${root##*/}" >>"${PROCESS_TEST_CALL_LOG:?}"
 if [[ "${root##*/}" == "root" ]]; then
@@ -1614,7 +1653,8 @@ else
 fi
 printf '%s\n' 'Terraform has been successfully initialized!'
 EOF
-    chmod 755 "$fixture_bin/terraform"
+    )
+    write_terraform_stub "$fixture_bin/terraform" "$stub_body" 1
 
     PROCESS_PATH_PREFIX=$fixture_bin
     PROCESS_TEST_CALL_LOG="$PROCESS_TMP_ROOT/terraform-calls.log"
@@ -1660,15 +1700,8 @@ test_processing_timeout_terminates_the_supervised_process_tree() {
     setup_processing_workspace
     local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
     mkdir "$fixture_bin"
-    cat >"$fixture_bin/terraform" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-if [[ "${1:-}" == "version" && "${2:-}" == "-json" ]]; then
-    printf '%s\n' '{"terraform_version":"1.15.5"}'
-    exit 0
-fi
-
+    local stub_body
+    stub_body=$(cat <<'EOF'
 trap '' TERM
 (
     sleep 6
@@ -1677,7 +1710,8 @@ trap '' TERM
 printf '%s\n' "$!" >"${PROCESS_TEST_CALL_LOG:?}.pid"
 wait
 EOF
-    chmod 755 "$fixture_bin/terraform"
+    )
+    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
 
     PROCESS_PATH_PREFIX=$fixture_bin
     PROCESS_TEST_CALL_LOG="$PROCESS_TMP_ROOT/process-tree"
@@ -1696,9 +1730,10 @@ EOF
         || fail "supervised descendant survived timeout and wrote after cleanup"
 }
 
-test_processing_aggregate_update_failure_has_no_publishable_patch() {
-    # Production break caught: rc.8's aggregate non-zero status is ignored after it changes a
-    # valid sibling file, allowing a partial source update to become a publishable candidate.
+# Shared by test_processing_aggregate_update_failure_has_no_publishable_patch and
+# test_processing_failure_manifest_binds_candidate_lineage: a workspace where rc.8's own
+# aggregate non-zero status (after it has already changed a valid sibling file) fails prepare.
+create_aggregate_update_failure_fixture() {
     setup_processing_workspace
     printf '%s\n' 'terraform {' >"$PROCESS_TARGET_CHECKOUT/root/broken.tf"
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/broken.tf"
@@ -1707,6 +1742,12 @@ test_processing_aggregate_update_failure_has_no_publishable_patch() {
     assert_processing_failure \
         "processing status error: tf-version-bump failed for Terraform root root" \
         "aggregate tf-version-bump failure"
+}
+
+test_processing_aggregate_update_failure_has_no_publishable_patch() {
+    # Production break caught: rc.8's aggregate non-zero status is ignored after it changes a
+    # valid sibling file, allowing a partial source update to become a publishable candidate.
+    create_aggregate_update_failure_fixture
     grep -F 'required_version = ">= 1.15.0"' \
         "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
         || fail "aggregate failure fixture did not prove a later valid file was updated"
@@ -1723,7 +1764,7 @@ test_processing_aggregate_update_failure_has_no_publishable_patch() {
 test_processing_failure_manifest_binds_candidate_lineage() {
     # Production break caught: a non-publishable failure bundle can cross run attempts, policies,
     # control/base revisions, or state refs because its upload identity is not manifest-bound.
-    test_processing_aggregate_update_failure_has_no_publishable_patch
+    create_aggregate_update_failure_fixture
     local expected_control_oid
     local expected_base_oid
     local expected_ref_hash
@@ -1762,11 +1803,8 @@ ensure_successful_preparation_bundle() {
 
     local stdout_file="$PROCESS_TMP_ROOT/success.stdout"
     local stderr_file="$PROCESS_TMP_ROOT/success.stderr"
-    if ! run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
-        fail "successful provider and provider-free preparation failed: $(<"$stderr_file")"
-    fi
-    [[ ! -s "$stdout_file" && ! -s "$stderr_file" ]] \
-        || fail "successful preparation emitted unexpected output"
+    assert_silent_success "successful provider and provider-free preparation" \
+        "$stdout_file" "$stderr_file" run_processing_prepare
     [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" ]] \
         || fail "successful preparation did not produce a manifest"
     SUCCESSFUL_PREPARATION_READY=true
@@ -1902,10 +1940,7 @@ test_processing_success_manifest_records_correct_mode_for_glob_metacharacter_pat
         >"$PROCESS_TARGET_CHECKOUT/root/a5.tf"
     chmod 755 "$PROCESS_TARGET_CHECKOUT/root/a5.tf"
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/a[5].tf" "root/a5.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: add glob-metacharacter sibling fixture" >/dev/null
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add glob-metacharacter sibling fixture"
 
     local stdout_file="$PROCESS_TMP_ROOT/glob-metacharacter.stdout"
     local stderr_file="$PROCESS_TMP_ROOT/glob-metacharacter.stderr"
@@ -2019,12 +2054,9 @@ test_processing_validation_runs_provider_root() {
     lock_sha256=$(sha256sum "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl")
     local stdout_file="$PROCESS_TMP_ROOT/provider-validation.stdout"
     local stderr_file="$PROCESS_TMP_ROOT/provider-validation.stderr"
-    if ! GITHUB_TOKEN="must-not-enter-container" \
-        run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
-        fail "real test-provider validation failed: $(<"$stderr_file")"
-    fi
-    [[ ! -s "$stdout_file" && ! -s "$stderr_file" ]] \
-        || fail "real test-provider validation emitted unexpected output"
+    GITHUB_TOKEN="must-not-enter-container" \
+        assert_silent_success "real test-provider validation" \
+        "$stdout_file" "$stderr_file" run_processing_validate
     grep -F 'required_version = ">= 1.15.0"' \
         "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
         || fail "verified candidate patch was not applied to the disposable checkout"
@@ -2072,11 +2104,8 @@ test_processing_validation_runs_directly_without_docker_executable() {
 
     local stdout_file="$PROCESS_TMP_ROOT/direct-validation.stdout"
     local stderr_file="$PROCESS_TMP_ROOT/direct-validation.stderr"
-    if ! run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
-        fail "direct Terraform validation without Docker failed: $(<"$stderr_file")"
-    fi
-    [[ ! -s "$stdout_file" && ! -s "$stderr_file" ]] \
-        || fail "direct Terraform validation emitted unexpected output"
+    assert_silent_success "direct Terraform validation without Docker" \
+        "$stdout_file" "$stderr_file" run_processing_validate
     [[ ! -e "$PROCESS_TARGET_CHECKOUT/root/.terraform" ]] \
         || fail "direct Terraform validation left a .terraform directory in the candidate checkout"
     [[ "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" diff --name-only)" == "root/main.tf" ]] \
@@ -2189,6 +2218,7 @@ test_processing_preparation() {
     test_processing_rejects_ignored_new_provider_lock
     test_processing_init_timeout_preserves_failure_bundle_after_shared_budget
     test_processing_timeout_terminates_the_supervised_process_tree
+    test_processing_aggregate_update_failure_has_no_publishable_patch
     test_processing_failure_manifest_binds_candidate_lineage
     test_processing_success_manifest_binds_run_and_repository_identity
     test_processing_success_manifest_binds_config_and_tool_pins

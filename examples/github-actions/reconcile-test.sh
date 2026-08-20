@@ -33,6 +33,18 @@ fixture_commit() {
         commit "$@" -m "$message" >/dev/null
 }
 
+# Runs $4.. (redirected to $2/$3), asserts it succeeded, and asserts it emitted nothing on
+# either stream.
+assert_silent_success() {
+    local description=$1 stdout_file=$2 stderr_file=$3
+    shift 3
+    if ! "$@" >"$stdout_file" 2>"$stderr_file"; then
+        fail "$description failed: $(<"$stderr_file")"
+    fi
+    [[ ! -s "$stdout_file" && ! -s "$stderr_file" ]] \
+        || fail "$description emitted unexpected output: stdout=$(<"$stdout_file") stderr=$(<"$stderr_file")"
+}
+
 ref_hash() {
     local digest
     digest=$(printf '%s' "refs/heads/${FIXTURE_STATE_BRANCH-state/nonproduction/example}" | sha256sum)
@@ -200,15 +212,26 @@ prepare_publication_fixture() {
     setup_gh_capture
 }
 
+# Mutates the preparation bundle set up by setup_success_fixture into a bounded branch-update
+# failure (dropping the outcome and patch, which a branch-update failure never has), then verifies
+# it. $1 overrides the failure root (default "root") for tests that need a hostile value there.
+mutate_bundle_into_branch_update_failure() {
+    local root=${1-root}
+    jq --arg root "$root" \
+        '.classification = "branch-update" |
+         .failure = {stage: "tf-version-bump", root: $root, command: "tf-version-bump", status: 1}' \
+        "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/failure.json"
+    mv "$FIXTURE_ROOT/failure.json" "$FIXTURE_BUNDLE/manifest.json"
+    rm -rf "$FIXTURE_OUTCOME" "$FIXTURE_BUNDLE/candidate.patch"
+    RECONCILE_VALIDATION_OUTCOME_DIR="" run_verify
+}
+
 test_verifies_successful_candidate_without_credentials() {
     # Production break caught: verification cannot bind and replay one valid preparation and
     # validation result without receiving publication credentials.
     setup_success_fixture
-    if ! run_verify >"$FIXTURE_ROOT/verify.stdout" 2>"$FIXTURE_ROOT/verify.stderr"; then
-        fail "valid candidate verification failed: $(<"$FIXTURE_ROOT/verify.stderr")"
-    fi
-    [[ ! -s "$FIXTURE_ROOT/verify.stdout" && ! -s "$FIXTURE_ROOT/verify.stderr" ]] \
-        || fail "valid candidate verification emitted unexpected output"
+    assert_silent_success "valid candidate verification" \
+        "$FIXTURE_ROOT/verify.stdout" "$FIXTURE_ROOT/verify.stderr" run_verify
     grep -F 'required_version = ">= 1.15.0"' "$FIXTURE_CHECKOUT/root/main.tf" >/dev/null \
         || fail "verification did not apply the candidate patch"
     jq -e \
@@ -230,11 +253,8 @@ test_verifies_candidate_with_valid_tab_in_path() {
     # candidate manifest and the replayed patch.
     FIXTURE_TERRAFORM_PATH=$'root/module\tname.tf'
     setup_success_fixture
-    if ! run_verify >"$FIXTURE_ROOT/verify.stdout" 2>"$FIXTURE_ROOT/verify.stderr"; then
-        fail "valid special-character path verification failed: $(<"$FIXTURE_ROOT/verify.stderr")"
-    fi
-    [[ ! -s "$FIXTURE_ROOT/verify.stdout" && ! -s "$FIXTURE_ROOT/verify.stderr" ]] \
-        || fail "special-character path verification emitted unexpected output"
+    assert_silent_success "special-character path verification" \
+        "$FIXTURE_ROOT/verify.stdout" "$FIXTURE_ROOT/verify.stderr" run_verify
     grep -F 'required_version = ">= 1.15.0"' \
         "$FIXTURE_CHECKOUT/$FIXTURE_TERRAFORM_PATH" >/dev/null \
         || fail "verification did not apply the special-character candidate patch"
@@ -289,6 +309,55 @@ test_rejects_mismatched_or_corrupt_candidates() {
         assert_verification_failure "$row verification"
     done
     unset RECONCILE_RUN_ATTEMPT
+}
+
+test_verifies_deleting_candidate_reports_a_classified_digest_error() {
+    # Production break caught: a candidate patch that deletes a declared file makes the batched
+    # `sha256sum -- "${actual_paths[@]}"` read fail for that path (it no longer exists), which
+    # without a result-count check left `${file_sha256s[$index]}` reading past the end of a short
+    # array and crashing with bash's raw unbound-variable error, instead of the classified
+    # "candidate file digest does not match the manifest" error the old per-file code produced.
+    setup_success_fixture
+    local extra_path="root/extra.tf"
+    printf '%s\n' 'resource "null_resource" "extra" {}' >"$FIXTURE_SOURCE/$extra_path"
+    "$TEST_GIT" -C "$FIXTURE_SOURCE" add -- "$extra_path"
+    fixture_commit "$FIXTURE_SOURCE" 'test: add file the candidate will delete'
+    FIXTURE_BASE_OID=$("$TEST_GIT" -C "$FIXTURE_SOURCE" rev-parse HEAD)
+    "$TEST_GIT" -C "$FIXTURE_SOURCE" push --quiet origin "HEAD:refs/heads/$FIXTURE_STATE_BRANCH"
+    rm -rf "$FIXTURE_CHECKOUT"
+    "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$FIXTURE_CHECKOUT"
+
+    local candidate="$FIXTURE_ROOT/deleting-candidate"
+    "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$candidate"
+    rm -f "$candidate/$extra_path"
+    "$TEST_GIT" -C "$candidate" diff --binary --full-index --no-color \
+        >"$FIXTURE_BUNDLE/candidate.patch"
+
+    local patch_digest
+    patch_digest=$(sha256_file "$FIXTURE_BUNDLE/candidate.patch")
+    jq --arg base_oid "$FIXTURE_BASE_OID" \
+        --arg patch_digest "$patch_digest" \
+        --arg extra_path "$extra_path" \
+        '.base_oid = $base_oid | .patch_sha256 = $patch_digest |
+         .changed_files = [{path: $extra_path, mode: "100644", sha256: ("0" * 64)}]' \
+        "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/deleting-manifest.json"
+    mv "$FIXTURE_ROOT/deleting-manifest.json" "$FIXTURE_BUNDLE/manifest.json"
+    local manifest_digest
+    manifest_digest=$(sha256_file "$FIXTURE_BUNDLE/manifest.json")
+    jq --arg base_oid "$FIXTURE_BASE_OID" \
+        --arg manifest_digest "$manifest_digest" \
+        '.base_oid = $base_oid | .candidate_manifest_sha256 = $manifest_digest' \
+        "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/deleting-outcome.json"
+    mv "$FIXTURE_ROOT/deleting-outcome.json" "$FIXTURE_OUTCOME/manifest.json"
+
+    if run_verify >"$FIXTURE_ROOT/delete.stdout" 2>"$FIXTURE_ROOT/delete.stderr"; then
+        fail "deleting-candidate verification succeeded"
+    fi
+    [[ ! -e "$FIXTURE_VERIFIED" ]] \
+        || fail "deleting-candidate verification produced a verified result"
+    [[ "$(<"$FIXTURE_ROOT/delete.stderr")" \
+        == "reconciliation error: candidate file digest does not match the manifest" ]] \
+        || fail "deleting-candidate verification did not report the classified digest error: $(<"$FIXTURE_ROOT/delete.stderr")"
 }
 
 test_verifies_only_bounded_branch_failures_without_a_patch() {
@@ -359,20 +428,20 @@ test_publish_failure_requires_dry_run_to_be_set() {
     # Production break caught: a manual failure-publish replay without RECONCILE_DRY_RUN set
     # defaulted to the mutating direction instead of failing closed, unlike the success path.
     setup_success_fixture
-    jq '.classification = "branch-update" |
-        .failure = {stage: "tf-version-bump", root: "root", command: "tf-version-bump", status: 1}' \
-        "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/failure.json"
-    mv "$FIXTURE_ROOT/failure.json" "$FIXTURE_BUNDLE/manifest.json"
-    rm -rf "$FIXTURE_OUTCOME" "$FIXTURE_BUNDLE/candidate.patch"
-    RECONCILE_VALIDATION_OUTCOME_DIR=""
-    run_verify
-    unset RECONCILE_VALIDATION_OUTCOME_DIR
+    mutate_bundle_into_branch_update_failure
     setup_gh_capture
 
-    if RECONCILE_RUN_ID=100 RECONCILE_RUN_ATTEMPT=1 RECONCILE_AUTOMATION_POLICY_ID=nonproduction \
+    # RECONCILE_REPOSITORY/GH_TOKEN/RUNNER_TEMP are set and $FIXTURE_BIN (the gh sentinel) is put
+    # on PATH so that if the RECONCILE_DRY_RUN:? guard ever regressed, the script would actually
+    # reach and execute the sentinel `gh` rather than dying on some other unrelated missing input
+    # -- making the "no GitHub lifecycle commands invoked" assertion below load-bearing.
+    if PATH="$FIXTURE_BIN:$PATH" GH_CAPTURE_DIR="$FIXTURE_GH_CAPTURE" \
+        RECONCILE_RUN_ID=100 RECONCILE_RUN_ATTEMPT=1 RECONCILE_AUTOMATION_POLICY_ID=nonproduction \
         RECONCILE_CONTROL_OID="$FIXTURE_CONTROL_OID" RECONCILE_STATE_BRANCH="$FIXTURE_STATE_BRANCH" \
         RECONCILE_BASE_OID="$FIXTURE_BASE_OID" RECONCILE_REF_HASH="$(ref_hash)" \
         RECONCILE_VERIFIED_RESULT_DIR="$FIXTURE_VERIFIED" \
+        RECONCILE_REPOSITORY=yesdevnull/reconciliation-test GH_TOKEN=test-only-token \
+        RUNNER_TEMP="$FIXTURE_ROOT/runner-temp" \
         "$RECONCILE_SCRIPT" publish >"$FIXTURE_ROOT/unset-dry-run.stdout" \
         2>"$FIXTURE_ROOT/unset-dry-run.stderr"; then
         fail "failure publish without RECONCILE_DRY_RUN set succeeded"
@@ -388,11 +457,8 @@ test_dry_run_constructs_unsigned_owned_commit_without_external_mutation() {
     prepare_publication_fixture
     "$TEST_GIT" -C "$FIXTURE_CHECKOUT" config --local commit.gpgsign true
 
-    if ! run_publish >"$FIXTURE_ROOT/publish.stdout" 2>"$FIXTURE_ROOT/publish.stderr"; then
-        fail "dry-run publication failed: $(<"$FIXTURE_ROOT/publish.stderr")"
-    fi
-    [[ ! -s "$FIXTURE_ROOT/publish.stdout" && ! -s "$FIXTURE_ROOT/publish.stderr" ]] \
-        || fail "dry-run publication emitted unexpected output"
+    assert_silent_success "dry-run publication" \
+        "$FIXTURE_ROOT/publish.stdout" "$FIXTURE_ROOT/publish.stderr" run_publish
     local commit_message
     commit_message=$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" log -1 --format=%B)
     [[ "$commit_message" == *'Tf-Version-Bump-Automation: nonproduction/'"$(ref_hash)"* ]] \
@@ -491,13 +557,7 @@ test_reconciles_marked_pull_request_or_failure_issue_payload() {
         || fail "success publication did not close the marked failure issue"
 
     setup_success_fixture
-    jq '.classification = "branch-update" |
-        .failure = {stage: "tf-version-bump", root: "root", command: "tf-version-bump", status: 1}' \
-        "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/failure.json"
-    mv "$FIXTURE_ROOT/failure.json" "$FIXTURE_BUNDLE/manifest.json"
-    rm -rf "$FIXTURE_OUTCOME" "$FIXTURE_BUNDLE/candidate.patch"
-    RECONCILE_VALIDATION_OUTCOME_DIR=""
-    run_verify
+    mutate_bundle_into_branch_update_failure
     setup_gh_capture
     printf '[{"number":42,"body":"%s","closed":true}]\n' \
         '<!-- tf-version-bump:nonproduction:'"$(ref_hash)"' -->' \
@@ -549,14 +609,7 @@ test_escapes_hostile_branch_values_and_uses_constant_titles() {
         || fail "PR body retained the raw hostile branch"
 
     setup_success_fixture
-    jq '.classification = "branch-update" |
-        .failure = {stage: "tf-version-bump", root: "root</code>@ops",
-                    command: "tf-version-bump", status: 1}' \
-        "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/failure.json"
-    mv "$FIXTURE_ROOT/failure.json" "$FIXTURE_BUNDLE/manifest.json"
-    rm -rf "$FIXTURE_OUTCOME" "$FIXTURE_BUNDLE/candidate.patch"
-    RECONCILE_VALIDATION_OUTCOME_DIR=""
-    run_verify
+    mutate_bundle_into_branch_update_failure "root</code>@ops"
     setup_gh_capture
     RECONCILE_DRY_RUN=false run_publish
     [[ "$(<"$FIXTURE_GH_CAPTURE/issue-title")" == 'Terraform dependency update failed' ]] \
@@ -576,13 +629,7 @@ test_issue_lookup_searches_the_ref_hash_in_bodies() {
     # Production break caught: issue reconciliation scans an unrelated bounded page instead of
     # narrowing candidates by the stable complete-ref hash before the exact marker check.
     setup_success_fixture
-    jq '.classification = "branch-update" |
-        .failure = {stage: "tf-version-bump", root: "root", command: "tf-version-bump", status: 1}' \
-        "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/failure.json"
-    mv "$FIXTURE_ROOT/failure.json" "$FIXTURE_BUNDLE/manifest.json"
-    rm -rf "$FIXTURE_OUTCOME" "$FIXTURE_BUNDLE/candidate.patch"
-    RECONCILE_VALIDATION_OUTCOME_DIR=""
-    run_verify
+    mutate_bundle_into_branch_update_failure
     setup_gh_capture
     RECONCILE_DRY_RUN=false run_publish
 
@@ -596,6 +643,7 @@ if [[ $# -eq 0 ]]; then
     test_verifies_successful_candidate_without_credentials
     test_verifies_candidate_with_valid_tab_in_path
     test_rejects_mismatched_or_corrupt_candidates
+    test_verifies_deleting_candidate_reports_a_classified_digest_error
     test_verifies_only_bounded_branch_failures_without_a_patch
     test_publish_failure_requires_dry_run_to_be_set
     test_dry_run_constructs_unsigned_owned_commit_without_external_mutation

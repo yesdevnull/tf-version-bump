@@ -354,7 +354,9 @@ write_preparation_candidate_bundle() {
         local sha_line
         while IFS= read -r sha_line; do
             file_sha256s+=("${sha_line%% *}")
-        done < <(cd "$PREPARATION_TARGET_CHECKOUT" && sha256sum -- "${relative_paths[@]}")
+        done < <(cd "$PREPARATION_TARGET_CHECKOUT" && sha256sum -- "${relative_paths[@]}" 2>/dev/null)
+        [[ ${#file_sha256s[@]} -eq ${#relative_paths[@]} ]] \
+            || processing_status_error "candidate index is missing a changed path"
     fi
     local -a interleaved=()
     local index
