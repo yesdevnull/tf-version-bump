@@ -160,7 +160,7 @@ func captureRunnerOutput(t *testing.T, run func() error) (stdout, diagnostic str
 	return string(output), logOutput.String(), runnerErr
 }
 
-func requireExitCall(t *testing.T, wantCode int, fn func()) {
+func requireExitCall(t *testing.T, fn func()) {
 	t.Helper()
 
 	var recovered any
@@ -173,8 +173,8 @@ func requireExitCall(t *testing.T, wantCode int, fn func()) {
 	if !ok {
 		t.Fatalf("recovered value = %#v, want exitCall", recovered)
 	}
-	if call.code != wantCode {
-		t.Fatalf("exit code = %d, want %d", call.code, wantCode)
+	if call.code != 1 {
+		t.Fatalf("exit code = %d, want 1", call.code)
 	}
 }
 

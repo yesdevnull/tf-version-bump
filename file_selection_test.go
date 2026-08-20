@@ -86,17 +86,18 @@ func TestFindMatchingFilesExcludesSymlinksAndDirectories(t *testing.T) {
 }
 
 func TestFindMatchingFilesRejectsInvalidSelection(t *testing.T) {
+	noMatchPattern := filepath.Join(t.TempDir(), "no-such-tf-version-bump-file-*.tf")
 	tests := []struct{ name, pattern, want string }{
 		{name: "missing pattern", want: "Error: -pattern flag is required\n"},
 		{name: "invalid glob", pattern: "[", want: "Error matching pattern: syntax error in pattern\n"},
-		{name: "no matches", pattern: filepath.Join("/tmp", "no-such-tf-version-bump-file-*.tf"), want: "No files matched pattern: /tmp/no-such-tf-version-bump-file-*.tf\n"},
+		{name: "no matches", pattern: noMatchPattern, want: "No files matched pattern: " + noMatchPattern + "\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			restore, _ := stubExit(t)
 			defer restore()
 			flags := &cliFlags{pattern: tt.pattern, output: "text"}
-			logs := captureLog(t, func() { requireExitCall(t, 1, func() { findMatchingFiles(flags) }) })
+			logs := captureLog(t, func() { requireExitCall(t, func() { findMatchingFiles(flags) }) })
 			if logs != tt.want {
 				t.Errorf("diagnostics = %q, want %q", logs, tt.want)
 			}
