@@ -52,6 +52,17 @@ type commandResult struct {
 
 var testOutputMu sync.Mutex
 
+func startPipeDrain(reader *os.File) (output *bytes.Buffer, done <-chan struct{}) {
+	output = new(bytes.Buffer)
+	doneChannel := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(output, reader)
+		close(doneChannel)
+	}()
+	done = doneChannel
+	return output, done
+}
+
 func runMainCommand(t *testing.T, args []string) commandResult {
 	t.Helper()
 	testOutputMu.Lock()
@@ -127,6 +138,10 @@ func captureRunnerOutput(t *testing.T, run func() error) (stdout, diagnostic str
 	if err != nil {
 		t.Fatalf("failed to create stdout pipe: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = stdoutWriter.Close()
+		_ = stdoutReader.Close()
+	})
 	defer func() {
 		if err := stdoutReader.Close(); err != nil {
 			t.Errorf("failed to close stdout reader: %v", err)
@@ -134,8 +149,10 @@ func captureRunnerOutput(t *testing.T, run func() error) (stdout, diagnostic str
 	}()
 
 	originalStdout := os.Stdout
+	restore := func() { os.Stdout = originalStdout }
+	t.Cleanup(restore)
+	defer restore()
 	os.Stdout = stdoutWriter
-	defer func() { os.Stdout = originalStdout }()
 
 	originalLogOutput := log.Writer()
 	originalLogFlags := log.Flags()
@@ -147,17 +164,15 @@ func captureRunnerOutput(t *testing.T, run func() error) (stdout, diagnostic str
 		log.SetFlags(originalLogFlags)
 	}()
 
+	stdoutBuffer, stdoutDone := startPipeDrain(stdoutReader)
 	runnerErr = run()
 
 	if err := stdoutWriter.Close(); err != nil {
 		t.Fatalf("failed to close stdout writer: %v", err)
 	}
-	output, err := io.ReadAll(stdoutReader)
-	if err != nil {
-		t.Fatalf("failed to read stdout: %v", err)
-	}
+	<-stdoutDone
 
-	return string(output), logOutput.String(), runnerErr
+	return stdoutBuffer.String(), logOutput.String(), runnerErr
 }
 
 func requireExitCall(t *testing.T, fn func()) {
@@ -215,16 +230,14 @@ func captureStream(t *testing.T, stream **os.File, name string, fn func()) strin
 	defer restore()
 	*stream = writer
 
+	output, outputDone := startPipeDrain(reader)
 	fn()
 	restore()
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close %s writer: %v", name, err)
 	}
-	output, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatalf("read %s: %v", name, err)
-	}
-	return string(output)
+	<-outputDone
+	return output.String()
 }
 
 func captureStdout(t *testing.T, fn func()) string {
