@@ -8,6 +8,7 @@ import (
 )
 
 type versionSchema struct {
+	Type    string `json:"type"`
 	Pattern string `json:"pattern"`
 	OneOf   []struct {
 		Pattern string `json:"pattern"`
@@ -48,6 +49,9 @@ func loadConfigSchema(t *testing.T) configSchema {
 func TestConfigSchemaExposesConfigurationOptions(t *testing.T) {
 	schema := loadConfigSchema(t)
 
+	if schema.Definitions.VersionConstraint.Type != "string" {
+		t.Fatalf("version constraint definition type = %q, want string", schema.Definitions.VersionConstraint.Type)
+	}
 	if len(schema.Properties.TerraformVersion) == 0 {
 		t.Fatal("terraform_version schema is missing")
 	}
@@ -128,7 +132,7 @@ func hasOneOfShape(t *testing.T, raw json.RawMessage, shapes ...string) bool {
 			found[typeName] = true
 			continue
 		}
-		if allOf, ok := entry["allOf"].([]any); ok && len(allOf) > 0 {
+		if allOf, ok := entry["allOf"].([]any); ok && len(allOf) > 0 && referencesVersionConstraint(t, option) {
 			found["string"] = true
 		}
 	}

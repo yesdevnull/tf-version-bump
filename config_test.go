@@ -87,13 +87,14 @@ modules:
 func TestLoadConfigRejectsInvalidInput(t *testing.T) {
 	tests := []struct {
 		name, data, want string
+		exact            bool
 	}{
 		{name: "unknown top-level field", data: "unknown: true\nmodules: []\n", want: "field unknown not found"},
 		{name: "malformed YAML", data: "modules:\n  - source: \"unterminated\n", want: "failed to parse YAML"},
-		{name: "module missing source", data: "modules:\n  - version: 5.0.0\n", want: "module at index 0 is missing 'source' field"},
-		{name: "module missing version", data: "modules:\n  - source: example/module\n", want: "module at index 0 is missing 'version' field"},
-		{name: "provider missing name", data: "providers:\n  - version: 5.0.0\n", want: "provider at index 0 is missing 'name' field"},
-		{name: "provider missing version", data: "providers:\n  - name: aws\n", want: "provider at index 0 is missing 'version' field"},
+		{name: "module missing source", data: "modules:\n  - version: 5.0.0\n", want: "module at index 0 is missing 'source' field", exact: true},
+		{name: "module missing version", data: "modules:\n  - source: example/module\n", want: "module at index 0 is missing 'version' field", exact: true},
+		{name: "provider missing name", data: "providers:\n  - version: 5.0.0\n", want: "provider at index 0 is missing 'name' field", exact: true},
+		{name: "provider missing version", data: "providers:\n  - name: aws\n", want: "provider at index 0 is missing 'version' field", exact: true},
 		{name: "invalid from mapping", data: "modules:\n  - source: example/module\n    version: 5.0.0\n    from: {old: 4.0.0}\n", want: "must be either a string or an array of strings"},
 	}
 
@@ -104,7 +105,7 @@ func TestLoadConfigRejectsInvalidInput(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err := loadConfig(configFile)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
+			if err == nil || (tt.exact && err.Error() != tt.want) || (!tt.exact && !strings.Contains(err.Error(), tt.want)) {
 				t.Fatalf("error = %v, want component %q", err, tt.want)
 			}
 		})
