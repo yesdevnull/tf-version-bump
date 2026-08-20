@@ -17,6 +17,12 @@ type FromVersions []string
 func (f *FromVersions) UnmarshalYAML(value *yaml.Node) error {
 	// Check if it's a sequence (array)
 	if value.Kind == yaml.SequenceNode {
+		for _, item := range value.Content {
+			if item.ShortTag() != "!!str" {
+				return fmt.Errorf("from field array contains non-string values")
+			}
+		}
+
 		var slice []string
 		if err := value.Decode(&slice); err != nil {
 			return fmt.Errorf("from field array contains non-string values: %w", err)
