@@ -1,0 +1,62 @@
+name: Terraform version bump configuration validation
+
+on:
+  pull_request:
+    paths:
+      - .github/tf-version-bump/nonproduction.yml
+      - .github/tf-version-bump/production.yml
+
+permissions:
+  contents: read
+
+jobs:
+  validate-configs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download and verify tf-version-bump
+        run: |
+          archive_path="$RUNNER_TEMP/tf-version-bump_1.0.0-rc.8_linux_x86_64.tar.gz"
+          tool_directory="$RUNNER_TEMP/tf-version-bump-config-validation"
+          rm -rf -- "$archive_path" "$tool_directory"
+          mkdir -p -- "$tool_directory"
+          curl --fail --silent --show-error --location \
+            --output "$archive_path" \
+            https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0-rc.8/tf-version-bump_1.0.0-rc.8_linux_x86_64.tar.gz
+          printf '%s  %s\n' \
+            af30c90f06b2a3c371e86f1bd7b1a7d09dcdc4eb500fef0491a046cc9030adad \
+            "$archive_path" | sha256sum --check --status
+          tar -xzf "$archive_path" -C "$tool_directory"
+          version_output=$("$tool_directory/tf-version-bump" -version)
+          [[ "${version_output%%$'\n'*}" == "tf-version-bump 1.0.0-rc.8" ]]
+          printf 'TF_VERSION_BUMP_BINARY=%s\n' "$tool_directory/tf-version-bump" >> "$GITHUB_ENV"
+      - name: Validate configuration dry runs
+        run: |
+          fixture_directory=$(mktemp -d "$RUNNER_TEMP/tf-version-bump-config-validation-fixture.XXXXXX")
+          trap 'rm -rf -- "$fixture_directory"' EXIT
+          cat > "$fixture_directory/main.tf" <<'EOF'
+          terraform {
+            required_providers {
+              aws = {
+                source  = "hashicorp/aws"
+                version = "~> 5.0"
+              }
+            }
+          }
+
+          module "vpc" {
+            source  = "terraform-aws-modules/vpc/aws"
+            version = "4.0.0"
+          }
+          EOF
+
+          for config in \
+            .github/tf-version-bump/nonproduction.yml \
+            .github/tf-version-bump/production.yml; do
+            "$TF_VERSION_BUMP_BINARY" -pattern "$fixture_directory/main.tf" -config "$config" -dry-run
+          done
+      - name: Remove downloaded tf-version-bump
+        if: ${{ always() }}
+        run: rm -rf -- "$RUNNER_TEMP/tf-version-bump_1.0.0-rc.8_linux_x86_64.tar.gz" "$RUNNER_TEMP/tf-version-bump-config-validation"

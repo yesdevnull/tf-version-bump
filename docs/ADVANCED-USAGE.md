@@ -7,6 +7,34 @@ This is intentionally separate from the core CLI. `tf-version-bump` edits one ch
 worktree; the example script is responsible for branch selection, checkouts, commits, and
 restoring the starting branch.
 
+## GitHub Actions state-branch automation POC
+
+For a scheduled or manually dispatched GitHub Actions proof of concept, see
+[`examples/github-actions`](../examples/github-actions/README.md). It copies into a consuming
+repository's `.github` directory and provides separate production and non-production callers that
+run only from the default branch, plus config-change triggers, read-only pull-request config
+validation, dry-run support, update pull requests, and marked failure issues. The pull-request
+check validates only the control config with `tf-version-bump`; full state-branch dry runs remain
+deferred.
+
+The POC is designed for organisation-authored modules, official HashiCorp or organisation-developed
+providers, and NVA-controlled egress. It is not a malicious-Terraform sandbox; read the example's
+limits and operator-run disposable-repository battle test before enabling publication.
+
+The reusable workflow installs the pinned Terraform CLI with `hashicorp/setup-terraform` in both
+Terraform jobs and invokes it directly. Docker is neither a production workflow requirement nor a
+validation sandbox; the repository harness uses it only to supply a reproducible local Terraform
+fixture. Checkout v7 manages the built-in token for discovery's control checkout and publication's
+target checkout, while all Terraform and verification checkouts disable persisted credentials.
+The reconciliation helper performs its own exact-ref fetches and exact-lease publication; the
+processing helper only prepares and validates candidates.
+
+Publication uses the workflow `GITHUB_TOKEN` only and creates explicitly unsigned automation
+commits. Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to
+create and approve pull requests** before live publication. GitHub App authentication, commit
+signing, and publication-environment approval are deferred; token-created push events are
+suppressed and pull-request event workflows require approval.
+
 ## Before you run it
 
 The script:
