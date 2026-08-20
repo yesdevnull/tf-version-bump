@@ -2,11 +2,52 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+type capturedStreams struct {
+	stdout string
+	stderr string
+}
+
+func captureStdoutAndStderr(t *testing.T, fn func()) capturedStreams {
+	t.Helper()
+	testOutputMu.Lock()
+	defer testOutputMu.Unlock()
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stdout pipe: %v", err)
+	}
+	stderrReader, stderrWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stderr pipe: %v", err)
+	}
+	originalStdout, originalStderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = stdoutWriter, stderrWriter
+	fn()
+	os.Stdout, os.Stderr = originalStdout, originalStderr
+	if err := stdoutWriter.Close(); err != nil {
+		t.Fatalf("close stdout writer: %v", err)
+	}
+	if err := stderrWriter.Close(); err != nil {
+		t.Fatalf("close stderr writer: %v", err)
+	}
+	stdout, err := io.ReadAll(stdoutReader)
+	if err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+	stderr, err := io.ReadAll(stderrReader)
+	if err != nil {
+		t.Fatalf("read stderr: %v", err)
+	}
+	_ = stdoutReader.Close()
+	_ = stderrReader.Close()
+	return capturedStreams{stdout: string(stdout), stderr: string(stderr)}
+}
 
 func TestUpdateModuleVersionContract(t *testing.T) {
 	type moduleCase struct {
@@ -40,19 +81,9 @@ func TestUpdateModuleVersionContract(t *testing.T) {
 			file := writeTestFile(t, t.TempDir(), "main.tf", tc.input)
 			var updated bool
 			var err error
-			var stdout string
-			var stderr string
-			if tc.verbose {
-				stdout = captureStdout(t, func() {
-					updated, err = updateModuleVersion(file, tc.source, tc.version, tc.from, tc.ignoreVersions, tc.ignoreModules, tc.forceAdd, tc.dryRun, tc.verbose, "text")
-				})
-			} else if strings.Contains(tc.name, "local source") {
-				stderr = captureStderr(t, func() {
-					updated, err = updateModuleVersion(file, tc.source, tc.version, tc.from, tc.ignoreVersions, tc.ignoreModules, tc.forceAdd, tc.dryRun, tc.verbose, "text")
-				})
-			} else {
+			output := captureStdoutAndStderr(t, func() {
 				updated, err = updateModuleVersion(file, tc.source, tc.version, tc.from, tc.ignoreVersions, tc.ignoreModules, tc.forceAdd, tc.dryRun, tc.verbose, "text")
-			}
+			})
 			if err != nil {
 				t.Fatalf("updateModuleVersion: %v", err)
 			}
@@ -62,14 +93,17 @@ func TestUpdateModuleVersionContract(t *testing.T) {
 			if got := readTestFile(t, file); got != tc.wantContent {
 				t.Errorf("content = %q, want %q", got, tc.wantContent)
 			}
-			if tc.verbose && (!strings.Contains(stdout, "matches 'ignore-version' filter") || strings.Contains(stdout, "does not match any 'from' filter")) {
-				t.Errorf("unexpected precedence output: %s", stdout)
-			}
-			if strings.Contains(tc.name, "local source") {
-				want := fmt.Sprintf("Warning: Module 'vpc' in %s (source: './modules/vpc') is a local module and cannot be version-bumped, skipping\n", file)
-				if stderr != want {
-					t.Errorf("stderr = %q, want %q", stderr, want)
+			if tc.verbose {
+				if !strings.Contains(output.stdout, "matches 'ignore-version' filter") || strings.Contains(output.stdout, "does not match any 'from' filter") || output.stderr != "" {
+					t.Errorf("unexpected precedence output: stdout=%q stderr=%q", output.stdout, output.stderr)
 				}
+			} else if strings.Contains(tc.name, "local source") {
+				want := fmt.Sprintf("Warning: Module 'vpc' in %s (source: './modules/vpc') is a local module and cannot be version-bumped, skipping\n", file)
+				if output.stdout != "" || output.stderr != want {
+					t.Errorf("streams = stdout %q stderr %q, want stdout empty stderr %q", output.stdout, output.stderr, want)
+				}
+			} else if output.stdout != "" || output.stderr != "" {
+				t.Errorf("unexpected output: stdout=%q stderr=%q", output.stdout, output.stderr)
 			}
 		})
 	}
@@ -131,14 +165,14 @@ func TestUpdateModuleVersionDryRunContract(t *testing.T) {
 	file := writeTestFile(t, t.TempDir(), "main.tf", input)
 	var updated bool
 	var err error
-	output := captureStdout(t, func() {
+	output := captureStdoutAndStderr(t, func() {
 		updated, err = updateModuleVersion(file, "terraform-aws-modules/vpc/aws", "2.0.0", nil, nil, nil, false, true, false, "text")
 	})
 	if err != nil || !updated {
 		t.Fatalf("updated=%v err=%v", updated, err)
 	}
-	if output != "" {
-		t.Errorf("output = %q, want empty", output)
+	if output.stdout != "" || output.stderr != "" {
+		t.Errorf("output = stdout %q stderr %q, want both empty", output.stdout, output.stderr)
 	}
 	if got := readTestFile(t, file); got != input {
 		t.Errorf("dry run changed content")
