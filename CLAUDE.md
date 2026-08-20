@@ -187,17 +187,28 @@ through rather than hardcoding quotes.
 ## Testing
 
 Follow TDD. Tests are commonly table-driven with `t.Run` subtests; prefer `t.TempDir()` for new
-filesystem tests.
-Name them `Test<Function>_<Scenario>`. Maintain at least 80% coverage; all code must pass
-`-race`. Test output must be pristine — if a test triggers an error path, assert on the error
-rather than letting it print.
+filesystem tests. Name them `Test<Function>_<Scenario>`.
 
-Files by concern: `main_test.go` (core), `config_test.go` / `config_schema_test.go` (config),
-`main_integration_test.go` / `integration_config_test.go` (end-to-end),
-`chaos_test.go` / `chaos_advanced_test.go` (error conditions),
-`coverage_test.go` / `main_coverage_test.go` / `edge_cases_test.go` (edge cases),
-`terraform_provider_test.go`, `validation_test.go`, `cli_functions_test.go`,
-`pattern_boundary_test.go`, `pattern_edge_case_test.go`.
+Final test layout by concern:
+
+- `pattern_test.go` — wildcard matching.
+- `file_selection_test.go` — file selection and exclusions.
+- `module_update_test.go` — module updates, filtering, diagnostics, permissions, and errors.
+- `terraform_version_test.go` — Terraform required-version updates.
+- `provider_update_test.go` — provider updates and attribute preservation.
+- `config_test.go` / `config_schema_test.go` — YAML configuration and schema validation.
+- `command_test.go` — CLI parsing, output, and exit behaviour.
+- `integration_test.go` — cross-file and cross-operation continuation.
+- `release_workflow_test.go` — release workflow artefact validation.
+- `test_helpers_test.go` — shared test helpers.
+
+Testing rules:
+
+- Keep one strongest owner per observable contract.
+- Capture and assert expected diagnostics.
+- Test output must contain no leaked application output.
+- Total coverage must remain at least 90%.
+- Follow an implementation or TDD phase with the separate `test-cleanup` pass.
 
 A representative call — note the full 10-parameter signature:
 
