@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"regexp"
+	"slices"
 	"testing"
 )
 
@@ -16,6 +17,9 @@ type versionSchema struct {
 }
 
 type configSchema struct {
+	AnyOf []struct {
+		Required []string `json:"required"`
+	} `json:"anyOf"`
 	Definitions struct {
 		VersionConstraint versionSchema `json:"versionConstraint"`
 	} `json:"definitions"`
@@ -26,7 +30,13 @@ type configSchema struct {
 			} `json:"items"`
 		} `json:"modules"`
 		TerraformVersion json.RawMessage `json:"terraform_version"`
-		Providers        json.RawMessage `json:"providers"`
+		Providers        struct {
+			Type  string `json:"type"`
+			Items struct {
+				Required   []string                   `json:"required"`
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"items"`
+		} `json:"providers"`
 	} `json:"properties"`
 }
 
@@ -58,9 +68,10 @@ func TestConfigSchemaExposesConfigurationOptions(t *testing.T) {
 	if !referencesVersionConstraint(t, schema.Properties.TerraformVersion) {
 		t.Fatal("terraform_version should reference the shared version constraint definition")
 	}
-	if schemaNodeType(t, schema.Properties.Providers) != "array" {
+	if schema.Properties.Providers.Type != "array" {
 		t.Fatal("providers should be an array")
 	}
+	assertDistinctSchemaContracts(t, &schema)
 	for _, field := range []string{"ignore_versions", "ignore_modules"} {
 		if _, ok := schema.Properties.Modules.Items.Properties[field]; !ok {
 			t.Fatalf("module %s schema is missing", field)
@@ -74,6 +85,37 @@ func TestConfigSchemaExposesConfigurationOptions(t *testing.T) {
 	}
 	if !hasOneOfShape(t, schema.Properties.Modules.Items.Properties["ignore_versions"], "string", "array") {
 		t.Fatal("ignore_versions should allow scalar and array shapes")
+	}
+}
+
+func assertDistinctSchemaContracts(t *testing.T, schema *configSchema) {
+	t.Helper()
+	for _, field := range []string{"name", "version"} {
+		if !slices.Contains(schema.Properties.Providers.Items.Required, field) {
+			t.Fatalf("provider schema should require %q", field)
+		}
+	}
+
+	providerVersion, ok := schema.Properties.Providers.Items.Properties["version"]
+	if !ok || !referencesVersionConstraint(t, providerVersion) {
+		t.Fatal("provider version should reference the shared version constraint definition")
+	}
+
+	moduleVersion, ok := schema.Properties.Modules.Items.Properties["version"]
+	if !ok || !referencesVersionConstraint(t, moduleVersion) {
+		t.Fatal("module version should reference the shared version constraint definition")
+	}
+
+	requiredTopLevel := make(map[string]bool, len(schema.AnyOf))
+	for _, clause := range schema.AnyOf {
+		for _, field := range clause.Required {
+			requiredTopLevel[field] = true
+		}
+	}
+	for _, field := range []string{"modules", "providers", "terraform_version"} {
+		if !requiredTopLevel[field] {
+			t.Fatalf("schema anyOf should require an option containing %q", field)
+		}
 	}
 }
 
