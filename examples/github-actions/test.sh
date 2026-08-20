@@ -50,6 +50,22 @@ fail() {
     exit 1
 }
 
+sha256_file() {
+    local digest
+    digest=$(sha256sum "$1")
+    printf '%s\n' "${digest%% *}"
+}
+
+fixture_commit() {
+    local checkout=$1 author_name=$2 author_email=$3 message=$4
+    shift 4
+    "$TEST_GIT" -C "$checkout" \
+        -c user.name="$author_name" \
+        -c user.email="$author_email" \
+        commit "$@" -m "$message" >/dev/null
+}
+
+
 cleanup_discovery_repository() {
     if [[ -n "$DISCOVERY_TMP_ROOT" ]]; then
         rm -rf -- "$DISCOVERY_TMP_ROOT"
@@ -135,17 +151,11 @@ setup_processing_workspace() {
     "$TEST_GIT" init --initial-branch=main "$PROCESS_CONTROL_CHECKOUT" >/dev/null
     "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- \
         ".github/tf-version-bump/test.yml"
-    "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: create processing control fixture" >/dev/null
+    fixture_commit "$PROCESS_CONTROL_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: create processing control fixture"
     "$TEST_GIT" init --initial-branch=main "$PROCESS_TARGET_CHECKOUT" >/dev/null
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- \
         "root/main.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: create processing fixture" >/dev/null
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: create processing fixture"
 
     PROCESS_STATE_BRANCH="state/nonproduction/example-thing"
     PROCESS_PREPARATION_BUNDLE_DIR="$PROCESS_RUNNER_TEMP/preparation-bundle"
@@ -208,10 +218,7 @@ EOF
     rm -rf "$lock_data"
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- \
         "root/main.tf" "root/.terraform.lock.hcl"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: add validation provider" >/dev/null
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add validation provider"
 }
 
 create_validation_candidate_bundle() {
@@ -224,11 +231,9 @@ create_validation_candidate_bundle() {
     "$TEST_GIT" -C "$candidate_checkout" diff --binary --full-index --no-color \
         >"$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch"
     local patch_sha256
-    patch_sha256=$(sha256sum "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch")
-    patch_sha256=${patch_sha256%% *}
+    patch_sha256=$(sha256_file "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch")
     local main_sha256
-    main_sha256=$(sha256sum "$candidate_checkout/root/main.tf")
-    main_sha256=${main_sha256%% *}
+    main_sha256=$(sha256_file "$candidate_checkout/root/main.tf")
     local ref_hash
     ref_hash=$(processing_ref_hash)
     jq -n \
@@ -241,6 +246,8 @@ create_validation_candidate_bundle() {
         --arg ref_hash "$ref_hash" \
         --arg patch_sha256 "$patch_sha256" \
         --arg main_sha256 "$main_sha256" \
+        --arg tf_version_bump_version "$TF_VERSION_BUMP_VERSION" \
+        --arg tf_version_bump_archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" \
         '{schema_version: 1,
           run_id: $run_id,
           run_attempt: $run_attempt,
@@ -252,8 +259,8 @@ create_validation_candidate_bundle() {
           config_path: ".github/tf-version-bump/test.yml",
           tools: {
             tf_version_bump: {
-              version: "v1.0.0-rc.8",
-              archive_sha256: "af30c90f06b2a3c371e86f1bd7b1a7d09dcdc4eb500fef0491a046cc9030adad"
+              version: $tf_version_bump_version,
+              archive_sha256: $tf_version_bump_archive_sha256
             },
             terraform: {version: "1.15.5"}
           },
@@ -273,10 +280,6 @@ create_validation_candidate_bundle() {
 }
 
 run_processing_validate() {
-    run_processing_validate_without_docker
-}
-
-run_processing_validate_without_docker() {
     ensure_processing_container
     docker exec \
         --user "$(id -u):$(id -g)" \
@@ -363,8 +366,7 @@ prepopulate_verified_processing_release_cache() {
             --output "$verified_archive" "$TF_VERSION_BUMP_ARCHIVE_URL"
     fi
     local actual_sha256
-    actual_sha256=$(sha256sum "$verified_archive")
-    actual_sha256=${actual_sha256%% *}
+    actual_sha256=$(sha256_file "$verified_archive")
     [[ "$actual_sha256" == "$TF_VERSION_BUMP_ARCHIVE_SHA256" ]] \
         || fail "independently downloaded rc.8 fixture archive failed checksum verification"
 
@@ -372,8 +374,7 @@ prepopulate_verified_processing_release_cache() {
     local cached_archive="$cache_directory/$TF_VERSION_BUMP_ARCHIVE_SHA256.tar.gz"
     mkdir -p "$cache_directory"
     cp "$verified_archive" "$cached_archive"
-    actual_sha256=$(sha256sum "$cached_archive")
-    actual_sha256=${actual_sha256%% *}
+    actual_sha256=$(sha256_file "$cached_archive")
     [[ "$actual_sha256" == "$TF_VERSION_BUMP_ARCHIVE_SHA256" ]] \
         || fail "trusted processing fixture cache failed checksum verification"
 }
@@ -413,10 +414,7 @@ setup_discovery_repository() {
 
     "$TEST_GIT" init --bare --initial-branch=main "$DISCOVERY_REMOTE" >/dev/null
     "$TEST_GIT" init --initial-branch=main "$DISCOVERY_REPO" >/dev/null
-    "$TEST_GIT" -C "$DISCOVERY_REPO" \
-        -c user.name="Discovery Test" \
-        -c user.email="discovery-test@example.invalid" \
-        commit --allow-empty -m "test: create discovery fixture" >/dev/null
+    fixture_commit "$DISCOVERY_REPO" "Discovery Test" "discovery-test@example.invalid" "test: create discovery fixture" --allow-empty
     DISCOVERY_CONTROL_OID=$("$TEST_GIT" -C "$DISCOVERY_REPO" rev-parse HEAD)
     "$TEST_GIT" -C "$DISCOVERY_REPO" remote add origin "$DISCOVERY_REMOTE"
     "$TEST_GIT" -C "$DISCOVERY_REPO" push --quiet --set-upstream origin main
@@ -429,10 +427,7 @@ add_discovery_branch() {
 
 create_discovery_commit() {
     local message=$1
-    "$TEST_GIT" -C "$DISCOVERY_REPO" \
-        -c user.name="Discovery Test" \
-        -c user.email="discovery-test@example.invalid" \
-        commit --allow-empty -m "$message" >/dev/null
+    fixture_commit "$DISCOVERY_REPO" "Discovery Test" "discovery-test@example.invalid" "$message" --allow-empty
     "$TEST_GIT" -C "$DISCOVERY_REPO" rev-parse HEAD
 }
 
@@ -785,11 +780,13 @@ test_callers_define_weekly_policies_and_tool_pins() {
     ' >/dev/null || fail "production caller policy is not the approved weekly policy"
 
     for workflow in "$NONPRODUCTION_WORKFLOW" "$PRODUCTION_WORKFLOW"; do
-        yq -o=json '.jobs.automation.with' "$workflow" | jq -e '
+        yq -o=json '.jobs.automation.with' "$workflow" | jq -e \
+            --arg tf_version_bump_version "$TF_VERSION_BUMP_VERSION" \
+            --arg tf_version_bump_archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" '
             .terraform_directories == "." and
             .terraform_version == "1.15.5" and
-            .tf_version_bump_version == "v1.0.0-rc.8" and
-            .tf_version_bump_archive_sha256 == "af30c90f06b2a3c371e86f1bd7b1a7d09dcdc4eb500fef0491a046cc9030adad" and
+            .tf_version_bump_version == $tf_version_bump_version and
+            .tf_version_bump_archive_sha256 == $tf_version_bump_archive_sha256 and
             (has("github_app_client_id") | not) and
             (has("unattended_checks_safe") | not) and
             (has("publication_environment") | not)
@@ -830,10 +827,12 @@ test_config_validation_workflow_is_read_only() {
         (. | tostring | contains("terraform init") | not)
     ' >/dev/null || fail "config validation workflow does not preserve its read-only boundary"
 
-    yq -o=json '.jobs["validate-configs"].steps' "$CONFIG_VALIDATION_WORKFLOW" | jq -e '
+    yq -o=json '.jobs["validate-configs"].steps' "$CONFIG_VALIDATION_WORKFLOW" | jq -e \
+        --arg archive_url "$TF_VERSION_BUMP_ARCHIVE_URL" \
+        --arg archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" '
         any(.[]; .name == "Download and verify tf-version-bump" and
-            (.run | contains("https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0-rc.8/tf-version-bump_1.0.0-rc.8_linux_x86_64.tar.gz")) and
-            (.run | contains("af30c90f06b2a3c371e86f1bd7b1a7d09dcdc4eb500fef0491a046cc9030adad")) and
+            (.run | contains($archive_url)) and
+            (.run | contains($archive_sha256)) and
             (.run | contains("sha256sum --check --status")) and
             (.run | contains("tar -xzf")) and
             ((.run | index("sha256sum --check --status")) < (.run | index("tar -xzf"))) and
@@ -1067,10 +1066,7 @@ test_processing_allocates_fresh_trusted_data_directory_per_nested_root() {
     printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
         >"$PROCESS_TARGET_CHECKOUT/root/child/main.tf"
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/child/main.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: add nested processing root" >/dev/null
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add nested processing root"
     PROCESS_TERRAFORM_ROOTS=$'root\nroot/child\n'
 
     local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
@@ -1241,10 +1237,7 @@ test_reconciliation_rejects_non_utf8_candidate_path_collision() {
     printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' \
         >"$PROCESS_TARGET_CHECKOUT/$declared_path"
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "$declared_path"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: add manifest path collision fixture" >/dev/null
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add manifest path collision fixture"
 
     ensure_processing_container
     local fixture_root="$PROCESS_TMP_ROOT/non-utf8-reconciliation"
@@ -1281,8 +1274,8 @@ EOF
     base_oid=$(processing_base_oid)
     control_oid=$(processing_control_oid)
     branch_hash=$(processing_ref_hash)
-    patch_digest=$(sha256sum "$bundle/candidate.patch"); patch_digest=${patch_digest%% *}
-    file_digest=$(sha256sum "$PROCESS_TARGET_CHECKOUT/$declared_path"); file_digest=${file_digest%% *}
+    patch_digest=$(sha256_file "$bundle/candidate.patch")
+    file_digest=$(sha256_file "$PROCESS_TARGET_CHECKOUT/$declared_path")
     jq -n \
         --arg control_oid "$control_oid" \
         --arg base_oid "$base_oid" \
@@ -1297,7 +1290,7 @@ EOF
           classification: "success", roots: [{path: "root"}],
           changed_files: [{path: $changed_path, mode: "100644", sha256: $file_digest}],
           patch_sha256: $patch_digest}' >"$bundle/manifest.json"
-    manifest_digest=$(sha256sum "$bundle/manifest.json"); manifest_digest=${manifest_digest%% *}
+    manifest_digest=$(sha256_file "$bundle/manifest.json")
     jq -n \
         --arg control_oid "$control_oid" \
         --arg base_oid "$base_oid" \
@@ -1346,10 +1339,7 @@ test_processing_rejects_gitignored_terraform_file() {
     setup_processing_workspace
     printf '%s\n' 'root/ignored.tf' >"$PROCESS_TARGET_CHECKOUT/.gitignore"
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- ".gitignore"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: ignore hostile Terraform input" >/dev/null
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: ignore hostile Terraform input"
     printf '%s\n' 'terraform {}' >"$PROCESS_TARGET_CHECKOUT/root/ignored.tf"
 
     assert_processing_failure \
@@ -1529,10 +1519,7 @@ terraform {
 }
 EOF
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/main.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: add disabled backend fixture" >/dev/null
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add disabled backend fixture"
     PROCESS_PREPARATION_DEADLINE_EPOCH=$(($(date +%s) + 1200))
 
     local stdout_file="$PROCESS_TMP_ROOT/init.stdout"
@@ -1566,10 +1553,7 @@ terraform {
 }
 EOF
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/main.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: add provider processing fixture" >/dev/null
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add provider processing fixture"
 }
 
 test_processing_rejects_ignored_new_provider_lock() {
@@ -1579,10 +1563,7 @@ test_processing_rejects_ignored_new_provider_lock() {
     configure_processing_provider_root
     printf '%s\n' 'root/.terraform.lock.hcl' >"$PROCESS_TARGET_CHECKOUT/.gitignore"
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- ".gitignore"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: ignore generated provider lock" >/dev/null
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: ignore generated provider lock"
 
     assert_processing_failure \
         "processing status error: required provider lock file is ignored for Terraform root root" \
@@ -1609,10 +1590,7 @@ test_processing_init_timeout_preserves_failure_bundle_after_shared_budget() {
     printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
         >"$PROCESS_TARGET_CHECKOUT/second/main.tf"
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "second/main.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: add second deadline root" >/dev/null
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add second deadline root"
 
     local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
     mkdir "$fixture_bin"
@@ -1643,7 +1621,8 @@ EOF
     PROCESS_TERRAFORM_ROOTS=$'root\nsecond'
     prepopulate_verified_processing_release_cache
     ensure_processing_container
-    PROCESS_PREPARATION_DEADLINE_EPOCH=$(($(date +%s) + 6))
+    local preparation_deadline_seconds=6
+    PROCESS_PREPARATION_DEADLINE_EPOCH=$(($(date +%s) + preparation_deadline_seconds))
 
     local started_at
     started_at=$(date +%s)
@@ -1651,8 +1630,15 @@ EOF
         "processing status error: terraform init timed out for Terraform root second" \
         "shared-budget second-root init timeout"
     local elapsed=$(( $(date +%s) - started_at ))
-    [[ "$elapsed" -le 8 ]] \
-        || fail "non-returning init exceeded the one absolute preparation deadline: ${elapsed}s"
+    # The ceiling is the deadline plus the script's own kill-after grace (--kill-after=1s) plus a
+    # generous fixed allowance for scheduling/docker-exec overhead on a loaded runner. The property
+    # under test is that one absolute budget is honoured and kill-after is applied -- not a tight
+    # bound on wall-clock overhead.
+    local kill_after_grace_seconds=1
+    local overhead_allowance_seconds=5
+    local elapsed_ceiling=$((preparation_deadline_seconds + kill_after_grace_seconds + overhead_allowance_seconds))
+    [[ "$elapsed" -le "$elapsed_ceiling" ]] \
+        || fail "non-returning init exceeded the one absolute preparation deadline plus its kill-after grace: ${elapsed}s (ceiling ${elapsed_ceiling}s)"
     [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" ]] \
         || fail "init timeout did not preserve an uploadable failure manifest"
     [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch" ]] \
@@ -1716,10 +1702,7 @@ test_processing_aggregate_update_failure_has_no_publishable_patch() {
     setup_processing_workspace
     printf '%s\n' 'terraform {' >"$PROCESS_TARGET_CHECKOUT/root/broken.tf"
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/broken.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: add aggregate update failure" >/dev/null
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add aggregate update failure"
 
     assert_processing_failure \
         "processing status error: tf-version-bump failed for Terraform root root" \
@@ -1774,10 +1757,7 @@ ensure_successful_preparation_bundle() {
     printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
         >"$PROCESS_TARGET_CHECKOUT/provider-free/main.tf"
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "provider-free/main.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: add provider-free preparation root" >/dev/null
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add provider-free preparation root"
     PROCESS_TERRAFORM_ROOTS=$'root\nprovider-free'
 
     local stdout_file="$PROCESS_TMP_ROOT/success.stdout"
@@ -1821,9 +1801,11 @@ test_processing_success_manifest_binds_config_and_tool_pins() {
     # config or one of the exact updater/archive/Terraform pins is missing or ambiguous.
     ensure_successful_preparation_bundle
     jq -e \
+        --arg tf_version_bump_version "$TF_VERSION_BUMP_VERSION" \
+        --arg tf_version_bump_archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" \
         '.config_path == ".github/tf-version-bump/test.yml" and
-         .tools.tf_version_bump.version == "v1.0.0-rc.8" and
-         .tools.tf_version_bump.archive_sha256 == "af30c90f06b2a3c371e86f1bd7b1a7d09dcdc4eb500fef0491a046cc9030adad" and
+         .tools.tf_version_bump.version == $tf_version_bump_version and
+         .tools.tf_version_bump.archive_sha256 == $tf_version_bump_archive_sha256 and
          .tools.terraform.version == "1.15.5" and
          (.tools.terraform | has("image") | not)' \
         "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
@@ -1857,8 +1839,7 @@ test_processing_success_bundle_has_immutable_binary_patch_and_artifact_key() {
     [[ "$permissions" == "444" ]] \
         || fail "candidate patch was not made read-only: $permissions"
     local patch_sha256
-    patch_sha256=$(sha256sum "$patch_file")
-    patch_sha256=${patch_sha256%% *}
+    patch_sha256=$(sha256_file "$patch_file")
     local expected_ref_hash
     expected_ref_hash=$(processing_ref_hash)
     jq -e \
@@ -1899,8 +1880,7 @@ test_processing_success_manifest_records_changed_paths_modes_and_hashes() {
         "provider-free/main.tf" \
         "root/.terraform.lock.hcl" \
         "root/main.tf"; do
-        expected_sha256=$(sha256sum "$PROCESS_TARGET_CHECKOUT/$relative_path")
-        expected_sha256=${expected_sha256%% *}
+        expected_sha256=$(sha256_file "$PROCESS_TARGET_CHECKOUT/$relative_path")
         recorded_sha256=$(jq -er \
             --arg path "$relative_path" \
             '.changed_files[] | select(.path == $path) | .sha256' \
@@ -1945,10 +1925,7 @@ test_processing_no_change_runs_validation_and_skips_publication_mutation() {
     printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' \
         >"$PROCESS_TARGET_CHECKOUT/root/main.tf"
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/main.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        -c user.name="Processing Test" \
-        -c user.email="processing-test@example.invalid" \
-        commit -m "test: create unchanged provider-free root" >/dev/null
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: create unchanged provider-free root"
 
     run_processing_prepare
     jq -e '.classification == "no-change" and .changed_files == [] and
@@ -2095,7 +2072,7 @@ test_processing_validation_runs_directly_without_docker_executable() {
 
     local stdout_file="$PROCESS_TMP_ROOT/direct-validation.stdout"
     local stderr_file="$PROCESS_TMP_ROOT/direct-validation.stderr"
-    if ! run_processing_validate_without_docker >"$stdout_file" 2>"$stderr_file"; then
+    if ! run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
         fail "direct Terraform validation without Docker failed: $(<"$stderr_file")"
     fi
     [[ ! -s "$stdout_file" && ! -s "$stderr_file" ]] \

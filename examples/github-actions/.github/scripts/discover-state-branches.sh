@@ -113,28 +113,29 @@ rm -f -- "$remote_heads_file"
     || fail_discovery matrix "more than 256 branches matched; narrow or partition the prefix policy"
 
 readarray -t branch_records < <(printf '%s\n' "${branch_records[@]}" | sort)
-entries=()
+# Git ref names cannot contain a tab (or any control character), so a tab-separated record per
+# branch is a safe carrier into the single jq pass below that replaces one jq -cn per branch.
+tsv_records=()
 for record in "${branch_records[@]}"; do
     IFS=$'\t' read -r branch oid <<<"$record"
-    ref="refs/heads/$branch"
-    ref_hash=$(printf '%s' "$ref" | sha256sum | awk '{print $1}')
-    entries+=("$(jq -cn \
-        --arg run_id "$run_id" \
-        --arg run_attempt "$run_attempt" \
-        --arg policy_id "$policy_id" \
-        --arg control_oid "$control_oid" \
-        --arg branch "$branch" \
-        --arg base_oid "$oid" \
-        --arg ref_hash "$ref_hash" \
-        '{
+    ref_hash=$(printf '%s' "refs/heads/$branch" | sha256sum)
+    ref_hash=${ref_hash%% *}
+    tsv_records+=("$branch"$'\t'"$oid"$'\t'"$ref_hash")
+done
+
+printf '%s\n' "${tsv_records[@]}" | jq -R -s \
+    --arg run_id "$run_id" \
+    --arg run_attempt "$run_attempt" \
+    --arg policy_id "$policy_id" \
+    --arg control_oid "$control_oid" \
+    '{include: [
+        rtrimstr("\n") | split("\n")[] | split("\t") | {
             run_id: $run_id,
             run_attempt: $run_attempt,
             automation_policy_id: $policy_id,
             control_oid: $control_oid,
-            branch: $branch,
-            base_oid: $base_oid,
-            ref_hash: $ref_hash
-        }')")
-done
-
-printf '%s\n' "${entries[@]}" | jq -s '{include: .}'
+            branch: .[0],
+            base_oid: .[1],
+            ref_hash: .[2]
+        }
+    ]}'

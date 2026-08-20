@@ -136,11 +136,11 @@ remaining_validation_seconds() {
     remaining_seconds "$PROCESS_VALIDATION_DEADLINE_EPOCH" validation
 }
 
-run_before_preparation_deadline() {
-    local log_file=$1
-    shift
+run_before_deadline() {
+    local remaining_function=$1 log_file=$2
+    shift 2
     local remaining
-    if ! remaining=$(remaining_preparation_seconds); then
+    if ! remaining=$("$remaining_function"); then
         return 124
     fi
     if [[ "$remaining" -gt 1 ]]; then
@@ -152,20 +152,12 @@ run_before_preparation_deadline() {
     fi
 }
 
+run_before_preparation_deadline() {
+    run_before_deadline remaining_preparation_seconds "$@"
+}
+
 run_before_validation_deadline() {
-    local log_file=$1
-    shift
-    local remaining
-    if ! remaining=$(remaining_validation_seconds); then
-        return 124
-    fi
-    if [[ "$remaining" -gt 1 ]]; then
-        timeout --signal=TERM --kill-after=1s "$((remaining - 1))s" \
-            "$@" >"$log_file" 2>&1
-    else
-        timeout --signal=KILL "${remaining}s" \
-            "$@" >"$log_file" 2>&1
-    fi
+    run_before_deadline remaining_validation_seconds "$@"
 }
 
 relative_terraform_root() {
