@@ -583,8 +583,8 @@ filters, flags, `wantUpdated`, and complete `wantContent`. Include exactly these
   reports the `ignore-version` reason rather than the `from` reason.
 
 For changed files, compare against a literal, fully formatted HCL result. For skipped files,
-compare against the exact original input. Capture stderr for the two local-source rows and assert
-their exact local-module warnings. Capture stdout for the precedence row and assert that it
+compare against the exact original input. Capture stderr for the local-source row and assert its
+exact local-module warning. Capture stdout for the precedence row and assert that it
 contains `matches 'ignore-version' filter` and does not contain
 `does not match any 'from' filter`. The remaining rows emit no output. Do not use
 `!strings.Contains(oldVersion)` as the success condition.
