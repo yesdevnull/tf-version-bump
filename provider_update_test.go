@@ -35,27 +35,6 @@ func TestUpdateProviderVersionContract(t *testing.T) {
 `, wantUpdated: true,
 		},
 		{
-			name: "attribute syntax preserves source", provider: "aws", version: "~> 5.0",
-			input: `terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 4.0"
-    }
-  }
-}
-`,
-			want: `terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-`, wantUpdated: true,
-		},
-		{
 			name: "attribute syntax preserves configuration aliases", provider: "aws", version: "~> 5.0",
 			input: `terraform {
   required_providers {

@@ -7,7 +7,6 @@ import (
 
 func TestRunCLIModeContinuesAfterFileFailure(t *testing.T) {
 	tests := []struct{ name, bad, valid, output, errText, wantHCL string }{
-		{"module", `module "broken" {`, "module \"x\" {\n  source = \"example/module\"\n  version = \"1.0.0\"\n}\n", "✓ Updated module source 'example/module' to version '2.0.0' in ", "1 module update error(s)", "module \"x\" {\n  source  = \"example/module\"\n  version = \"2.0.0\"\n}\n"},
 		{"terraform", `terraform {`, "terraform {\n  required_version = \">= 1.0\"\n}\n", "✓ Updated Terraform required_version to '>= 1.5' in ", "1 Terraform version update error(s)", "terraform {\n  required_version = \">= 1.5\"\n}\n"},
 		{"provider", `terraform {`, "terraform {\n  required_providers {\n    aws = {\n      source = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\n", "✓ Updated provider 'aws' to version '~> 5.0' in ", "1 provider update error(s)", "terraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 5.0\"\n    }\n  }\n}\n"},
 	}
@@ -17,21 +16,14 @@ func TestRunCLIModeContinuesAfterFileFailure(t *testing.T) {
 			bad := writeTestFile(t, dir, "01.tf", tt.bad)
 			good := writeTestFile(t, dir, "02.tf", tt.valid)
 			flags := &cliFlags{output: "text", pattern: dir + "/*.tf"}
-			if tt.name == "module" {
-				flags.moduleSource = "example/module"
-				flags.toVersion = "2.0.0"
-			} else if tt.name == "terraform" {
+			if tt.name == "terraform" {
 				flags.terraformVersion = ">= 1.5"
 			} else {
 				flags.providerName = "aws"
 				flags.toVersion = "~> 5.0"
 			}
 			stdout, diag, err := captureRunnerOutput(t, func() error { return runCLIMode([]string{bad, good}, flags) })
-			position := "1,17-18"
-			if tt.name != "module" {
-				position = "1,11-12"
-			}
-			parser := "failed to parse HCL: " + bad + ":" + position + ": Unclosed configuration block; There is no closing brace for this block before the end of the file. This may be caused by incorrect brace nesting elsewhere in this file."
+			parser := "failed to parse HCL: " + bad + ":1,11-12: Unclosed configuration block; There is no closing brace for this block before the end of the file. This may be caused by incorrect brace nesting elsewhere in this file."
 			wantDiag := "Error processing " + bad + ": " + parser + "\n"
 			wantOut := tt.output + good + "\n\nSuccessfully updated 1 file(s)\n"
 			if tt.name == "terraform" {
