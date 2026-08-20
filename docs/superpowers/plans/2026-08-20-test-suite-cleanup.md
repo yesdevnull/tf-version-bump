@@ -727,8 +727,8 @@ Create `TestUpdateTerraformVersionContract` with complete input and output strin
 - leave a Terraform block without `required_version` unchanged.
 
 Assert `updated`, `err`, and exact file content for every row. Add
-`TestUpdateTerraformVersionDryRun`: assert `updated == true`, no error, and byte-for-byte unchanged
-content.
+`TestUpdateTerraformVersionDryRunContract`: assert `updated == true`, no error, and byte-for-byte
+unchanged content.
 
 - [ ] **Step 2: Add Terraform real-error contracts**
 
