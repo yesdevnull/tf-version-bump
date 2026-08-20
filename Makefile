@@ -13,8 +13,8 @@ help:
 	@echo "  clean          - Clean build artifacts and coverage files"
 	@echo "  build          - Build the binary"
 	@echo "  install        - Install the binary"
-	@echo "  branch-automation-test - Run the GitHub Actions example harness"
-	@echo "  test-github-actions - Run GitHub Actions example checks"
+	@echo "  branch-automation-test - Alias for test-github-actions"
+	@echo "  test-github-actions - Run GitHub Actions example checks (harness + actionlint)"
 	@echo "  actionlint     - Lint GitHub Actions workflows"
 
 # Run tests
@@ -57,9 +57,8 @@ build:
 install:
 	go install -v .
 
-# Run the GitHub Actions branch automation example harness
-branch-automation-test:
-	TEST_GIT="$(TEST_GIT)" examples/github-actions/test.sh
+# Alias kept for muscle memory: identical to test-github-actions, which also runs actionlint.
+branch-automation-test: test-github-actions
 
 # The primary example harness uses Docker only as local Terraform test infrastructure, then lints the copied workflow tree.
 test-github-actions:

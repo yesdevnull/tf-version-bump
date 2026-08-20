@@ -56,10 +56,7 @@ setup_success_fixture() {
     printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
         >"$FIXTURE_SOURCE/$FIXTURE_TERRAFORM_PATH"
     "$TEST_GIT" -C "$FIXTURE_SOURCE" add -- "$FIXTURE_TERRAFORM_PATH"
-    "$TEST_GIT" -C "$FIXTURE_SOURCE" \
-        -c user.name='Reconcile Test' \
-        -c user.email='reconcile-test@example.invalid' \
-        commit -m 'test: create reconciliation base' >/dev/null
+    fixture_commit "$FIXTURE_SOURCE" 'test: create reconciliation base'
     FIXTURE_BASE_OID=$("$TEST_GIT" -C "$FIXTURE_SOURCE" rev-parse HEAD)
     FIXTURE_CONTROL_OID=$FIXTURE_BASE_OID
     "$TEST_GIT" -C "$FIXTURE_SOURCE" remote add origin "$FIXTURE_REMOTE"
