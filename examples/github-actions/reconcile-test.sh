@@ -520,6 +520,9 @@ EOF
     if RECONCILE_DRY_RUN=false run_publish >"$FIXTURE_ROOT/stale.stdout" 2>"$FIXTURE_ROOT/stale.stderr"; then
         fail "publication overwrote a ref advanced after its exact-lease observation"
     fi
+    grep -F "reconciliation error: update ref push failed its exact lease" \
+        "$FIXTURE_ROOT/stale.stderr" >/dev/null \
+        || fail "publication failed before reaching the exact-lease push: $(<"$FIXTURE_ROOT/stale.stderr")"
     [[ "$("$TEST_GIT" --git-dir "$FIXTURE_REMOTE" rev-parse "$update_ref")" == "$competing_oid" ]] \
         || fail "stale exact-lease publication changed the competing update ref"
     [[ -z "$(find "$FIXTURE_GH_CAPTURE" -mindepth 1 -print -quit)" ]] \
