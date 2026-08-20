@@ -75,6 +75,7 @@ func TestUpdateModuleVersionContract(t *testing.T) {
 		{"matching ignore version preserves version", "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n", registry, "5.0.0", nil, []string{"3.14.0"}, nil, false, false, false, false, "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n"},
 		{"mixed ignored and eligible modules", "module \"ignored\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n\nmodule \"eligible\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"4.0.0\"\n}\n", registry, "5.0.0", nil, []string{"3.14.0"}, nil, false, false, false, true, "module \"ignored\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n\nmodule \"eligible\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"5.0.0\"\n}\n"},
 		{"ignore takes precedence over from", "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n", registry, "5.0.0", []string{"4.0.0"}, []string{"3.14.0"}, nil, false, false, true, false, "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n"},
+		{"module name ignore preserves unchanged content", "module \"legacy-vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n", registry, "5.0.0", nil, nil, []string{"legacy-*"}, false, false, false, false, "module \"legacy-vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -130,8 +131,8 @@ func TestUpdateModuleVersionWarnsWhenVersionMissing(t *testing.T) {
 }
 
 func TestUpdateModuleVersionPreservesHCL(t *testing.T) {
-	input := "# This is a comment\nmodule \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n\n  # Another comment\n  name = \"my-vpc\"\n  cidr = \"10.0.0.0/16\"\n}\n\nmodule \"other\" {\n  source = \"terraform-aws-modules/s3-bucket/aws\"\n  version = \"1.0.0\"\n}\n"
-	want := "# This is a comment\nmodule \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"5.0.0\"\n\n  # Another comment\n  name = \"my-vpc\"\n  cidr = \"10.0.0.0/16\"\n}\n\nmodule \"other\" {\n  source  = \"terraform-aws-modules/s3-bucket/aws\"\n  version = \"1.0.0\"\n}\n"
+	input := "# This is a comment\nmodule \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n\n  # Another comment\n  name = \"my-vpc\"\n  cidr = var.vpc_cidr\n}\n\nmodule \"other\" {\n  source = \"terraform-aws-modules/s3-bucket/aws\"\n  version = \"1.0.0\"\n}\n"
+	want := "# This is a comment\nmodule \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"5.0.0\"\n\n  # Another comment\n  name = \"my-vpc\"\n  cidr = var.vpc_cidr\n}\n\nmodule \"other\" {\n  source  = \"terraform-aws-modules/s3-bucket/aws\"\n  version = \"1.0.0\"\n}\n"
 	file := writeTestFile(t, t.TempDir(), "main.tf", input)
 	updated, err := updateModuleVersion(file, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
 	if err != nil || !updated {
@@ -210,6 +211,13 @@ func TestUpdateModuleVersionErrors(t *testing.T) {
 	t.Run("missing file", func(t *testing.T) {
 		updated, err := updateModuleVersion(filepath.Join(t.TempDir(), "missing.tf"), "x", "1.0.0", nil, nil, nil, false, false, false, "text")
 		if updated || err == nil || !strings.Contains(err.Error(), "failed to stat file:") {
+			t.Errorf("updated=%v err=%v", updated, err)
+		}
+	})
+	t.Run("directory read error", func(t *testing.T) {
+		directory := t.TempDir()
+		updated, err := updateModuleVersion(directory, "x", "1.0.0", nil, nil, nil, false, false, false, "text")
+		if updated || err == nil || !strings.Contains(err.Error(), "failed to read file:") {
 			t.Errorf("updated=%v err=%v", updated, err)
 		}
 	})
