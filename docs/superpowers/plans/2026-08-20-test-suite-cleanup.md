@@ -641,7 +641,7 @@ Add these focused tests:
 ```go
 func TestUpdateModuleVersionPreservesHCL(t *testing.T)
 func TestUpdateModuleVersionPreservesPermissions(t *testing.T)
-func TestUpdateModuleVersionDryRun(t *testing.T)
+func TestUpdateModuleVersionDryRunContract(t *testing.T)
 ```
 
 `PreservesHCL` uses the strongest fixture from the existing
@@ -757,7 +757,7 @@ the mocked-AST `TestUpdateProviderAttributeVersionVariants` cases.
 Add:
 
 ```go
-func TestUpdateProviderVersionDryRun(t *testing.T)
+func TestUpdateProviderVersionDryRunContract(t *testing.T)
 func TestUpdateProviderVersionErrors(t *testing.T)
 ```
 
