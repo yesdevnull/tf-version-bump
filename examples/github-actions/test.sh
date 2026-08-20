@@ -599,7 +599,8 @@ test_ci_uses_supported_go_and_runs_github_actions_poc_checks() {
         .test.strategy == null and
         any(.test.steps[];
             .name == "Set up Go" and
-            .with["go-version"] == "1.26") and
+            .with["go-version-file"] == "go.mod" and
+            .with["go-version"] == null) and
         all(.test.steps[];
             ((.if // "") | contains("matrix.go-version") | not)) and
         any(.test.steps[];
@@ -613,8 +614,9 @@ test_ci_uses_supported_go_and_runs_github_actions_poc_checks() {
             .run == "make test-github-actions") and
         any(.build.steps[];
             .name == "Set up Go" and
-            .with["go-version"] == "1.26")
-    ' >/dev/null || fail "repository CI does not use Go 1.26 for its complete test and build pipeline"
+            .with["go-version-file"] == "go.mod" and
+            .with["go-version"] == null)
+    ' >/dev/null || fail "repository CI does not source its complete Go pipeline from go.mod"
 }
 
 test_modules_require_supported_go_version() {
