@@ -6,34 +6,6 @@ import (
 )
 
 func TestRunCLIModeContinuesAfterFileFailure(t *testing.T) {
-	// Runner contracts below deliberately capture both streams and returned aggregate errors.
-	/*
-		tests := []struct{ name, bad, valid, want string }{
-			{"module", `module "broken" {`, "module \"x\" {\n  source = \"example/module\"\n  version = \"1.0.0\"\n}\n", `version = "2.0.0"`},
-			{"terraform", `terraform {`, "terraform {\n  required_version = \">= 1.0\"\n}\n", `required_version = ">= 1.5"`},
-			{"provider", `terraform {`, "terraform {\n  required_providers {\n    aws = { source = \"hashicorp/aws\", version = \"~> 4.0\" }\n  }\n}\n", `version = "~> 5.0"`},
-		}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				dir := t.TempDir()
-				bad := writeTestFile(t, dir, "01.tf", tt.bad)
-				good := writeTestFile(t, dir, "02.tf", tt.valid)
-				args := []string{"tf-version-bump", "-pattern", dir + "/*.tf"}
-				if tt.name == "module" {
-					args = append(args, "-module", "example/module", "-to", "2.0.0")
-				} else if tt.name == "terraform" {
-					args = append(args, "-terraform-version", ">= 1.5")
-				} else {
-					args = append(args, "-provider", "aws", "-to", "~> 5.0")
-				}
-				r := runMainCommand(t, args)
-				if r.exitCode != 1 || r.diagnostics == "" || !contains(r.diagnostics, bad) || !contains(readTestFile(t, good), tt.want) {
-					t.Fatalf("result %#v content %q", r, readTestFile(t, good))
-				}
-			})
-		}
-		}
-	*/
 	tests := []struct{ name, bad, valid, output, errText, wantHCL string }{
 		{"module", `module "broken" {`, "module \"x\" {\n  source = \"example/module\"\n  version = \"1.0.0\"\n}\n", "✓ Updated module source 'example/module' to version '2.0.0' in ", "1 module update error(s)", "module \"x\" {\n  source  = \"example/module\"\n  version = \"2.0.0\"\n}\n"},
 		{"terraform", `terraform {`, "terraform {\n  required_version = \">= 1.0\"\n}\n", "✓ Updated Terraform required_version to '>= 1.5' in ", "1 Terraform version update error(s)", "terraform {\n  required_version = \">= 1.5\"\n}\n"},
