@@ -149,6 +149,68 @@ func TestRunCLIModeMarkdownOutput(t *testing.T) {
 	}
 }
 
+func TestCommandDryRunOutputContract(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		args          []string
+		wantOperation func(string) string
+		wantSummary   string
+	}{
+		{
+			name:  "module with from",
+			input: "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n",
+			args:  []string{"-module", "example/module", "-to", "2.0.0", "-from", "1.0.0"},
+			wantOperation: func(file string) string {
+				return "→ Would update module source 'example/module' from version(s) [1.0.0] to '2.0.0' in " + file + "\n"
+			},
+			wantSummary: "Dry run: would update 1 file(s)\n",
+		},
+		{
+			name:  "Terraform",
+			input: "terraform {\n  required_version = \">= 1.0\"\n}\n",
+			args:  []string{"-terraform-version", ">= 1.5"},
+			wantOperation: func(file string) string {
+				return "→ Would update Terraform required_version to '>= 1.5' in " + file + "\n"
+			},
+			wantSummary: "Dry run: would update Terraform version in 1 file(s)\n",
+		},
+		{
+			name:  "provider",
+			input: "terraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\n",
+			args:  []string{"-provider", "aws", "-to", "~> 5.0"},
+			wantOperation: func(file string) string {
+				return "→ Would update provider 'aws' to version '~> 5.0' in " + file + "\n"
+			},
+			wantSummary: "Dry run: would update 'aws' provider version in 1 file(s)\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := writeTestFile(t, t.TempDir(), "main.tf", tt.input)
+			args := append([]string{"tf-version-bump", "-pattern", file, "-dry-run"}, tt.args...)
+			result := runMainCommand(t, args)
+			wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n" +
+				"Running in dry-run mode - no files will be modified\n" +
+				tt.wantOperation(file) + "\n" + tt.wantSummary
+
+			if result.stdout != wantStdout {
+				t.Errorf("stdout = %q, want %q", result.stdout, wantStdout)
+			}
+			if result.diagnostics != "" {
+				t.Errorf("diagnostics = %q, want empty", result.diagnostics)
+			}
+			if result.exitCode != -1 {
+				t.Errorf("exit code = %d, want normal return", result.exitCode)
+			}
+			if got := readTestFile(t, file); got != tt.input {
+				t.Errorf("dry run content = %q, want %q", got, tt.input)
+			}
+		})
+	}
+}
+
 func TestCommandReportsAggregateFileFailure(t *testing.T) {
 	for _, mode := range []string{"CLI", "config"} {
 		t.Run(mode, func(t *testing.T) {
