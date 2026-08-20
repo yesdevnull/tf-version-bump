@@ -32,6 +32,7 @@ ref_hash() {
 
 setup_success_fixture() {
     FIXTURE_STATE_BRANCH=${FIXTURE_STATE_BRANCH-state/nonproduction/example}
+    FIXTURE_TERRAFORM_PATH=${FIXTURE_TERRAFORM_PATH-root/main.tf}
     FIXTURE_ROOT=$(mktemp -d "$TEST_ROOT/success.XXXXXX")
     FIXTURE_REMOTE="$FIXTURE_ROOT/origin.git"
     FIXTURE_SOURCE="$FIXTURE_ROOT/source"
@@ -44,8 +45,8 @@ setup_success_fixture() {
     "$TEST_GIT" init --initial-branch=main "$FIXTURE_SOURCE" >/dev/null
     mkdir -p "$FIXTURE_SOURCE/root"
     printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
-        >"$FIXTURE_SOURCE/root/main.tf"
-    "$TEST_GIT" -C "$FIXTURE_SOURCE" add -- root/main.tf
+        >"$FIXTURE_SOURCE/$FIXTURE_TERRAFORM_PATH"
+    "$TEST_GIT" -C "$FIXTURE_SOURCE" add -- "$FIXTURE_TERRAFORM_PATH"
     "$TEST_GIT" -C "$FIXTURE_SOURCE" \
         -c user.name='Reconcile Test' \
         -c user.email='reconcile-test@example.invalid' \
@@ -59,21 +60,22 @@ setup_success_fixture() {
     "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$FIXTURE_CHECKOUT"
     local candidate="$FIXTURE_ROOT/candidate"
     "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$candidate"
-    sed -i.bak 's/>= 1\.0/>= 1.15.0/' "$candidate/root/main.tf"
-    rm "$candidate/root/main.tf.bak"
+    sed -i.bak 's/>= 1\.0/>= 1.15.0/' "$candidate/$FIXTURE_TERRAFORM_PATH"
+    rm "$candidate/$FIXTURE_TERRAFORM_PATH.bak"
 
     mkdir -p "$FIXTURE_BUNDLE/logs" "$FIXTURE_OUTCOME/logs"
     "$TEST_GIT" -C "$candidate" diff --binary --full-index --no-color \
         >"$FIXTURE_BUNDLE/candidate.patch"
     local patch_digest file_digest branch_hash
     patch_digest=$(sha256_file "$FIXTURE_BUNDLE/candidate.patch")
-    file_digest=$(sha256_file "$candidate/root/main.tf")
+    file_digest=$(sha256_file "$candidate/$FIXTURE_TERRAFORM_PATH")
     branch_hash=$(ref_hash)
     jq -n \
         --arg control_oid "$FIXTURE_CONTROL_OID" \
         --arg base_oid "$FIXTURE_BASE_OID" \
         --arg ref_hash "$branch_hash" \
         --arg state_branch "$FIXTURE_STATE_BRANCH" \
+        --arg changed_path "$FIXTURE_TERRAFORM_PATH" \
         --arg patch_digest "$patch_digest" \
         --arg file_digest "$file_digest" \
         '{schema_version: 1, run_id: "100", run_attempt: "1",
@@ -81,7 +83,7 @@ setup_success_fixture() {
           state_branch: $state_branch, base_oid: $base_oid,
           ref_hash: $ref_hash, classification: "success",
           roots: [{path: "root"}],
-          changed_files: [{path: "root/main.tf", mode: "100644", sha256: $file_digest}],
+          changed_files: [{path: $changed_path, mode: "100644", sha256: $file_digest}],
           patch_sha256: $patch_digest}' >"$FIXTURE_BUNDLE/manifest.json"
     local manifest_digest
     manifest_digest=$(sha256_file "$FIXTURE_BUNDLE/manifest.json")
@@ -215,6 +217,22 @@ test_verifies_successful_candidate_without_credentials() {
         || fail "verified success result did not bind the candidate artefacts"
     cmp "$FIXTURE_BUNDLE/candidate.patch" "$FIXTURE_VERIFIED/candidate.patch" \
         || fail "verified candidate patch differs from the prepared patch"
+}
+
+test_verifies_candidate_with_valid_tab_in_path() {
+    # A tab is valid in a Git path and must remain byte-for-byte identical between the
+    # candidate manifest and the replayed patch.
+    FIXTURE_TERRAFORM_PATH=$'root/module\tname.tf'
+    setup_success_fixture
+    if ! run_verify >"$FIXTURE_ROOT/verify.stdout" 2>"$FIXTURE_ROOT/verify.stderr"; then
+        fail "valid special-character path verification failed: $(<"$FIXTURE_ROOT/verify.stderr")"
+    fi
+    [[ ! -s "$FIXTURE_ROOT/verify.stdout" && ! -s "$FIXTURE_ROOT/verify.stderr" ]] \
+        || fail "special-character path verification emitted unexpected output"
+    grep -F 'required_version = ">= 1.15.0"' \
+        "$FIXTURE_CHECKOUT/$FIXTURE_TERRAFORM_PATH" >/dev/null \
+        || fail "verification did not apply the special-character candidate patch"
+    unset FIXTURE_TERRAFORM_PATH
 }
 
 assert_verification_failure() {
@@ -542,6 +560,7 @@ test_issue_lookup_searches_the_ref_hash_in_bodies() {
 
 if [[ $# -eq 0 ]]; then
     test_verifies_successful_candidate_without_credentials
+    test_verifies_candidate_with_valid_tab_in_path
     test_rejects_mismatched_or_corrupt_candidates
     test_verifies_only_bounded_branch_failures_without_a_patch
     test_dry_run_constructs_unsigned_owned_commit_without_external_mutation

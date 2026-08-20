@@ -103,7 +103,7 @@ verify_declared_candidate() {
         || reconcile_error "candidate patch could not be applied"
 
     local actual_paths declared_paths
-    actual_paths=$(git -C "$checkout" diff --cached --name-only | jq -Rsc 'split("\n") | map(select(length > 0)) | sort')
+    actual_paths=$(git -C "$checkout" diff --cached --name-only -z | jq -Rsc 'split("\u0000") | map(select(length > 0)) | sort')
     declared_paths=$(jq -c '[.changed_files[].path] | sort' "$manifest")
     [[ "$actual_paths" == "$declared_paths" ]] \
         || reconcile_error "candidate patch paths do not match the manifest"
