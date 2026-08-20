@@ -1,54 +1,11 @@
 package main
 
 import (
-	"bytes"
-	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-func captureRunnerOutput(t *testing.T, run func() error) (stdout, diagnostic string, runnerErr error) {
-	t.Helper()
-
-	stdoutReader, stdoutWriter, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("failed to create stdout pipe: %v", err)
-	}
-	defer func() {
-		if err := stdoutReader.Close(); err != nil {
-			t.Errorf("failed to close stdout reader: %v", err)
-		}
-	}()
-
-	originalStdout := os.Stdout
-	os.Stdout = stdoutWriter
-	defer func() { os.Stdout = originalStdout }()
-
-	originalLogOutput := log.Writer()
-	originalLogFlags := log.Flags()
-	var logOutput bytes.Buffer
-	log.SetOutput(&logOutput)
-	log.SetFlags(0)
-	defer func() {
-		log.SetOutput(originalLogOutput)
-		log.SetFlags(originalLogFlags)
-	}()
-
-	runnerErr = run()
-
-	if err := stdoutWriter.Close(); err != nil {
-		t.Fatalf("failed to close stdout writer: %v", err)
-	}
-	output, err := io.ReadAll(stdoutReader)
-	if err != nil {
-		t.Fatalf("failed to read stdout: %v", err)
-	}
-
-	return string(output), logOutput.String(), runnerErr
-}
 
 func TestRunCLIModeReportsModuleFileFailure(t *testing.T) {
 	tmpDir := t.TempDir()

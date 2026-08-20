@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"errors"
-	"flag"
 	"io"
 	"log"
 	"os"
@@ -15,109 +14,6 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
-
-type exitCall struct {
-	code int
-}
-
-func stubExit(t *testing.T) (restore func(), code *int) {
-	t.Helper()
-	hookMu.Lock()
-	original := exitFunc
-	exitCode := -1
-	exitFunc = func(c int) {
-		exitCode = c
-		panic(exitCall{code: c})
-	}
-	return func() {
-		exitFunc = original
-		hookMu.Unlock()
-	}, &exitCode
-}
-
-func withFlagArgs(t *testing.T, args []string, fn func()) {
-	t.Helper()
-	origArgs := os.Args
-	origFlagSet := flag.CommandLine
-	flag.CommandLine = flag.NewFlagSet(args[0], flag.ContinueOnError)
-	flag.CommandLine.SetOutput(io.Discard)
-	os.Args = args
-	defer func() {
-		flag.CommandLine = origFlagSet
-		os.Args = origArgs
-	}()
-	fn()
-}
-
-type commandResult struct {
-	stdout      string
-	diagnostics string
-	exitCode    int
-}
-
-func runMainCommand(t *testing.T, args []string) commandResult {
-	t.Helper()
-
-	restoreExit, code := stubExit(t)
-	defer restoreExit()
-
-	var diagnostics bytes.Buffer
-	originalLogWriter := log.Writer()
-	originalLogFlags := log.Flags()
-	originalLogPrefix := log.Prefix()
-	log.SetOutput(&diagnostics)
-	log.SetFlags(0)
-	log.SetPrefix("")
-	defer func() {
-		log.SetOutput(originalLogWriter)
-		log.SetFlags(originalLogFlags)
-		log.SetPrefix(originalLogPrefix)
-	}()
-
-	stdoutReader, stdoutWriter, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("failed to create stdout pipe: %v", err)
-	}
-	defer func() {
-		if err := stdoutReader.Close(); err != nil {
-			t.Errorf("failed to close stdout reader: %v", err)
-		}
-	}()
-	defer func() { _ = stdoutWriter.Close() }()
-
-	originalStdout := os.Stdout
-	os.Stdout = stdoutWriter
-	defer func() { os.Stdout = originalStdout }()
-
-	var stdout bytes.Buffer
-	stdoutDone := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(&stdout, stdoutReader)
-		close(stdoutDone)
-	}()
-
-	withFlagArgs(t, args, func() {
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				if _, ok := recovered.(exitCall); !ok {
-					panic(recovered)
-				}
-			}
-		}()
-		main()
-	})
-
-	if err := stdoutWriter.Close(); err != nil {
-		t.Fatalf("failed to close stdout writer: %v", err)
-	}
-	<-stdoutDone
-
-	return commandResult{
-		stdout:      stdout.String(),
-		diagnostics: diagnostics.String(),
-		exitCode:    *code,
-	}
-}
 
 func TestParseFlagsInvalidOutput(t *testing.T) {
 	restoreExit, code := stubExit(t)
