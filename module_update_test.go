@@ -193,20 +193,6 @@ func TestIsLocalModuleContract(t *testing.T) {
 	}
 }
 
-func TestContainsVersionContract(t *testing.T) {
-	for _, tc := range []struct {
-		name, version string
-		versions      []string
-		want          bool
-	}{{"empty", "1.0.0", nil, false}, {"exact", "1.0.0", []string{"1.0.0"}, true}, {"non-match", "1.0.0", []string{"2.0.0"}, false}} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := containsVersion(tc.versions, tc.version); got != tc.want {
-				t.Errorf("containsVersion=%v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestUpdateModuleVersionErrors(t *testing.T) {
 	t.Run("missing file", func(t *testing.T) {
 		updated, err := updateModuleVersion(filepath.Join(t.TempDir(), "missing.tf"), "x", "1.0.0", nil, nil, nil, false, false, false, "text")

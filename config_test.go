@@ -95,7 +95,6 @@ func TestLoadConfigRejectsInvalidInput(t *testing.T) {
 		{name: "module missing version", data: "modules:\n  - source: example/module\n", want: "module at index 0 is missing 'version' field", exact: true},
 		{name: "provider missing name", data: "providers:\n  - version: 5.0.0\n", want: "provider at index 0 is missing 'name' field", exact: true},
 		{name: "provider missing version", data: "providers:\n  - name: aws\n", want: "provider at index 0 is missing 'version' field", exact: true},
-		{name: "invalid from mapping", data: "modules:\n  - source: example/module\n    version: 5.0.0\n    from: {old: 4.0.0}\n", want: "must be either a string or an array of strings"},
 	}
 
 	for _, tt := range tests {

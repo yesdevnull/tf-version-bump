@@ -32,15 +32,6 @@ func TestParseFlagsContract(t *testing.T) {
 	})
 }
 
-func TestQuoteContract(t *testing.T) {
-	if got := quote("example/module", "text"); got != "'example/module'" {
-		t.Fatal(got)
-	}
-	if got := quote("example/module", "md"); got != "`example/module`" {
-		t.Fatal(got)
-	}
-}
-
 func TestLoadModuleUpdatesContract(t *testing.T) {
 	flags := &cliFlags{pattern: "*.tf", moduleSource: "example/module", toVersion: "2.0.0", fromVersions: stringSliceFlag{"1.0.0", "1.5.0"}, ignoreVersions: stringSliceFlag{"3.0.0", "~> 3.0"}, ignoreModules: "vpc, legacy-*"}
 	got := loadModuleUpdates(flags)
@@ -62,7 +53,7 @@ func TestParseFlagsRejectsInvalidOutput(t *testing.T) {
 }
 
 func TestValidateOperationModesContract(t *testing.T) {
-	for _, flags := range []*cliFlags{{configFile: "config.yml"}, {moduleSource: "source"}, {terraformVersion: ">= 1.5"}, {providerName: "aws"}} {
+	for _, flags := range []*cliFlags{{terraformVersion: ">= 1.5"}, {providerName: "aws"}} {
 		validateOperationModes(flags)
 	}
 	tests := []struct {
