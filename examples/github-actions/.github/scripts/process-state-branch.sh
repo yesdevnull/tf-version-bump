@@ -84,7 +84,17 @@ cleanup_validation_temporaries() {
 # shellcheck disable=SC2329 # Invoked by the prepare-mode EXIT trap.
 cleanup_preparation_temporaries() {
     if [[ -n "$PREPARATION_BUNDLE_STAGE" ]]; then
-        rm -rf -- "$PREPARATION_BUNDLE_STAGE"
+        # The staging name remains set until final destination modes are applied, so either path
+        # is incomplete and must not survive an interrupted finalisation.
+        local bundle_path
+        for bundle_path in \
+            "$PREPARATION_BUNDLE_STAGE" \
+            "${PROCESS_PREPARATION_BUNDLE_DIR-}"; do
+            if [[ -n "$bundle_path" && ( -e "$bundle_path" || -L "$bundle_path" ) ]]; then
+                chmod -R u+w "$bundle_path" 2>/dev/null || true
+                rm -rf -- "$bundle_path"
+            fi
+        done
         PREPARATION_BUNDLE_STAGE=""
     fi
     if [[ -n "$PREPARATION_DATA_ROOT" ]]; then
