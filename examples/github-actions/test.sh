@@ -272,6 +272,9 @@ run_processing_validate() {
 run_processing_validate_without_docker() {
     ensure_processing_container
     docker exec \
+        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env "GIT_CONFIG_VALUE_0=$PROCESS_TARGET_CHECKOUT" \
         --env "PROCESS_TARGET_CHECKOUT=$PROCESS_TARGET_CHECKOUT" \
         --env "PROCESS_PREPARATION_BUNDLE_DIR=$PROCESS_PREPARATION_BUNDLE_DIR" \
         --env "PROCESS_VALIDATION_OUTCOME_DIR=$PROCESS_VALIDATION_OUTCOME_DIR" \
@@ -308,6 +311,11 @@ processing_ref_hash() {
 run_processing_prepare() {
     ensure_processing_container
     docker exec \
+        --env GIT_CONFIG_COUNT=2 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env "GIT_CONFIG_VALUE_0=$PROCESS_CONTROL_CHECKOUT" \
+        --env GIT_CONFIG_KEY_1=safe.directory \
+        --env "GIT_CONFIG_VALUE_1=$PROCESS_TARGET_CHECKOUT" \
         --env "PROCESS_CONTROL_CHECKOUT=$PROCESS_CONTROL_CHECKOUT" \
         --env "PROCESS_TARGET_CHECKOUT=$PROCESS_TARGET_CHECKOUT" \
         --env "PROCESS_CONFIG_PATH=${PROCESS_CONFIG_PATH-.github/tf-version-bump/test.yml}" \
