@@ -899,6 +899,12 @@ Add `TestCommandNoMatchingModuleIsSuccess` through `runMainCommand`; use one sel
 different module source and assert exact zero-update stdout, empty diagnostics, unchanged content,
 and `exitCode == -1` because normal success returns without invoking the exit hook.
 
+Add `TestCommandDryRunOutputContract` as one three-row real-command table for module, Terraform,
+and provider modes. The module row includes a matching `-from` value. Every row asserts the exact
+selection banner, dry-run action line, operation-specific dry-run summary, empty diagnostics,
+normal-return status, and byte-for-byte non-mutation. This table is the sole owner of public
+dry-run output; lower-level updater tests continue to own only update detection and non-mutation.
+
 - [ ] **Step 4: Add only cross-boundary integration scenarios**
 
 Create these tests in `integration_test.go`:

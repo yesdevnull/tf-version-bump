@@ -96,8 +96,9 @@ func TestUpdateModuleVersionContract(t *testing.T) {
 			}
 			switch {
 			case tc.verbose:
-				if !strings.Contains(output.stdout, "matches 'ignore-version' filter") || strings.Contains(output.stdout, "does not match any 'from' filter") || output.stderr != "" {
-					t.Errorf("unexpected precedence output: stdout=%q stderr=%q", output.stdout, output.stderr)
+				want := fmt.Sprintf("  ⊗ Skipped module 'vpc' in %s (current version '3.14.0' matches 'ignore-version' filter [3.14.0])\n", file)
+				if output.stdout != want || output.stderr != "" {
+					t.Errorf("streams = stdout %q stderr %q, want stdout %q and empty stderr", output.stdout, output.stderr, want)
 				}
 			case strings.Contains(tc.name, "local source"):
 				want := fmt.Sprintf("Warning: Module 'vpc' in %s (source: './modules/vpc') is a local module and cannot be version-bumped, skipping\n", file)
