@@ -212,7 +212,7 @@ Direct dependencies — see `go.mod` for versions:
 ```
 github.com/hashicorp/hcl/v2      # Official HCL parser
 github.com/zclconf/go-cty        # HCL type system
-gopkg.in/yaml.v3                 # YAML parsing
+go.yaml.in/yaml/v3               # YAML parsing
 github.com/bmatcuk/doublestar/v4 # Recursive '**' globbing
 ```
 
