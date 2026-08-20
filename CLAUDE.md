@@ -14,7 +14,7 @@ normalised when a changed file is formatted.
 This repository is an experiment for generative AI coding tools. It may contain bugs or incomplete
 features. Keep changes under version control and test them.
 
-**Stack**: Go 1.25+ (CI tests 1.25 and 1.26), `hashicorp/hcl/v2`, `zclconf/go-cty`, `yaml.v3`,
+**Stack**: Go 1.26+ (CI pins 1.26), `hashicorp/hcl/v2`, `zclconf/go-cty`, `yaml.v3`,
 `bmatcuk/doublestar/v4`. Dependency versions live in `go.mod` — don't restate them here or in
 AGENTS.md; they drift.
 
@@ -215,7 +215,7 @@ Copy files from `examples/` to a temporary directory before manual write-mode te
 
 Runs on push/PR to `main`, skipping `**/*.md`.
 
-- **Test** — matrix Go 1.25 and 1.26, `-race` + coverage; uploads to Codecov on 1.25 only
+- **Test** — Go 1.26, `-race` + coverage; uploads to Codecov
 - **Build** — needs Test; cross-compiles 6 targets (linux/darwin/windows × amd64/arm64)
 - **Lint** — golangci-lint, only on Go/dependency file changes
 - **CodeQL** and **Release** (GoReleaser + SLSA, tag-triggered) run separately

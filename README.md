@@ -22,7 +22,7 @@ not expect byte-for-byte preservation of whitespace. Original file permissions a
 
 ### Go install
 
-Go 1.25 or later is required:
+Go 1.26 or later is required:
 
 ```bash
 go install github.com/yesdevnull/tf-version-bump@latest
