@@ -76,17 +76,24 @@ ensure_processing_container() {
         return
     fi
 
-    PROCESS_CONTAINER_ID=$(docker run --detach --rm \
+    # No --rm: a failed `apk add` must leave the container inspectable (State.Running and
+    # `docker logs`) so the readiness loop can report why, instead of polling a vanished
+    # container for two minutes. cleanup_processing_container force-removes it either way.
+    PROCESS_CONTAINER_ID=$(docker run --detach \
         --platform linux/amd64 \
         --entrypoint /bin/sh \
         --volume "$SCRIPT_DIR:$SCRIPT_DIR:ro" \
         --volume "$TEST_TMP_ROOT:$TEST_TMP_ROOT" \
         "$TERRAFORM_IMAGE" \
-        -c 'apk add --no-cache bash curl git jq coreutils >/dev/null 2>&1 && touch /tmp/harness-ready && exec tail -f /dev/null')
+        -c 'apk add --no-cache bash curl git jq coreutils && touch /tmp/harness-ready && exec tail -f /dev/null')
 
     local attempts=0
     until docker exec "$PROCESS_CONTAINER_ID" /bin/sh -c \
-        'test -f /tmp/harness-ready'; do
+        'test -f /tmp/harness-ready' 2>/dev/null; do
+        if [[ "$(docker inspect --format='{{.State.Running}}' "$PROCESS_CONTAINER_ID" 2>/dev/null)" \
+            != true ]]; then
+            fail "pinned Terraform preparation container exited before becoming ready: $(docker logs "$PROCESS_CONTAINER_ID" 2>&1)"
+        fi
         attempts=$((attempts + 1))
         if [[ "$attempts" -ge 120 ]]; then
             fail "pinned Terraform preparation container did not become ready"
@@ -290,7 +297,7 @@ run_processing_validate_without_docker() {
         --env "PROCESS_TERRAFORM_VERSION=${PROCESS_TERRAFORM_VERSION-$TERRAFORM_VERSION}" \
         --env "RUNNER_TEMP=${RUNNER_TEMP-$PROCESS_RUNNER_TEMP}" \
         --env "TF_CLI_CONFIG_FILE=${TF_CLI_CONFIG_FILE-}" \
-        --env "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+        --env "PATH=${PROCESS_PATH_PREFIX:+$PROCESS_PATH_PREFIX:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
         "$PROCESS_CONTAINER_ID" \
         /bin/bash "$PROCESS_SCRIPT" validate
 }
@@ -455,6 +462,7 @@ run_discovery() {
             DISCOVERY_DEFAULT_BRANCH=${DISCOVERY_DEFAULT_BRANCH-main} \
             RUNNER_TEMP=${RUNNER_TEMP-$DISCOVERY_TMP_ROOT/client-credentials} \
             CONTROL_CHECKOUT=${CONTROL_CHECKOUT-$DISCOVERY_REPO} \
+            PATH="$PATH:$DISCOVERY_TMP_ROOT/git-bin" \
             "$DISCOVER_SCRIPT"
     )
 }
@@ -492,8 +500,12 @@ test_discovery_resolves_origin_from_control_checkout() {
 }
 
 test_discovery_uses_runner_git_not_a_workstation_shim() {
-    # Production break caught: the copyable harness prepends a developer-workstation Git shim
-    # instead of exercising the ordinary runner Git used by the shipped discovery helper.
+    # Production break caught: a workstation-style PATH entry (e.g. an asdf/direnv shim directory
+    # appended after the runner's own bin dirs) silently becomes the Git the shipped discovery
+    # script runs, instead of ordinary PATH order picking the runner's real Git first. run_discovery
+    # wires this poison shim onto the low-priority end of PATH so a regression that reorders PATH
+    # construction (or that shells out via a path search reaching the shim) would hit `exit 99` and
+    # fail this test; unwired, the fixture would never be reachable and the test would be vacuous.
     setup_discovery_repository
     add_discovery_branch "state/nonproduction/example"
     mkdir -m 700 "$DISCOVERY_TMP_ROOT/git-bin"
@@ -1163,6 +1175,20 @@ test_processing_rejects_unexpected_changed_path() {
     assert_processing_failure \
         "processing status error: unexpected changed or untracked path" \
         "unexpected untracked path"
+}
+
+test_processing_rejects_newline_in_changed_path() {
+    # Production break caught: a changed/untracked path containing an embedded newline was accepted
+    # as a valid direct Terraform file. Left unrejected here, it would sail through prepare as a
+    # "success" bundle and only fail much later in verify as an unexplained, unfiled red job,
+    # instead of a bounded status error (and marked failure issue) at prepare.
+    setup_processing_workspace
+    local newline_named_file="$PROCESS_TARGET_CHECKOUT/root/bad"$'\n'"name.tf"
+    printf '%s\n' 'terraform {}' >"$newline_named_file"
+
+    assert_processing_failure \
+        "processing status error: changed path must not contain a newline" \
+        "newline-bearing changed path"
 }
 
 test_processing_rejects_non_utf8_changed_path() {
@@ -1884,6 +1910,34 @@ test_processing_success_manifest_records_changed_paths_modes_and_hashes() {
     done
 }
 
+test_processing_success_manifest_records_correct_mode_for_glob_metacharacter_path() {
+    # Production break caught: a changed filename containing pathspec glob metacharacters (e.g.
+    # "a[5].tf") made a per-path `git ls-files --stage` mode lookup match a differently permissioned
+    # sibling file instead of itself, corrupting the recorded mode -- which verification later
+    # trusts as its executable-smuggling check.
+    setup_processing_workspace
+    printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
+        >"$PROCESS_TARGET_CHECKOUT/root/a[5].tf"
+    printf '%s\n' 'resource "null_resource" "sibling" {}' \
+        >"$PROCESS_TARGET_CHECKOUT/root/a5.tf"
+    chmod 755 "$PROCESS_TARGET_CHECKOUT/root/a5.tf"
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/a[5].tf" "root/a5.tf"
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
+        -c user.name="Processing Test" \
+        -c user.email="processing-test@example.invalid" \
+        commit -m "test: add glob-metacharacter sibling fixture" >/dev/null
+
+    local stdout_file="$PROCESS_TMP_ROOT/glob-metacharacter.stdout"
+    local stderr_file="$PROCESS_TMP_ROOT/glob-metacharacter.stderr"
+    if ! run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
+        fail "glob-metacharacter preparation failed: $(<"$stderr_file")"
+    fi
+    jq -e --arg path "root/a[5].tf" \
+        '.changed_files[] | select(.path == $path) | .mode == "100644"' \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
+        || fail "manifest recorded the wrong mode for a glob-metacharacter changed path"
+}
+
 test_processing_no_change_runs_validation_and_skips_publication_mutation() {
     # Production break caught: an unchanged provider-free root emits an empty candidate patch,
     # skips validation, or reaches commit/ref/GitHub publication instead of completing neutrally.
@@ -2083,11 +2137,67 @@ test_processing_validation_rejects_installed_version_mismatch_before_candidate_a
         || fail "candidate was applied before Terraform version verification"
 }
 
+test_processing_validation_produces_bounded_outcome_when_deadline_expires_before_first_log() {
+    # Production break caught: a validation deadline that expires between passing its top-level
+    # check and the first `terraform init` attempt left the validation data root with zero *.log
+    # files. The unguarded `cp *.log` glob then crashed under `set -e` instead of the documented
+    # bounded branch-validation outcome that verify/publish turn into a marked failure issue.
+    #
+    # The race is deterministically forced (rather than raced against the wall clock) with a fake
+    # `date` that answers "not yet expired" for the two deadline checks that must succeed before
+    # the root loop (the top-level dispatch check and verify_terraform_version's own check), then
+    # "expired" from the third call onward -- exactly the root-1 init deadline check.
+    setup_processing_workspace
+    create_validation_candidate_bundle
+
+    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
+    mkdir "$fixture_bin"
+    local clock_calls="$PROCESS_TMP_ROOT/fake-date-calls"
+    cat >"$fixture_bin/date" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+count=0
+[[ ! -f "$clock_calls" ]] || count=\$(<"$clock_calls")
+count=\$((count + 1))
+printf '%s\n' "\$count" >"$clock_calls"
+if [[ "\$count" -le 2 ]]; then
+    printf '%s\n' 1000000000
+else
+    printf '%s\n' 1000000100
+fi
+EOF
+    chmod 755 "$fixture_bin/date"
+
+    PROCESS_PATH_PREFIX=$fixture_bin
+    PROCESS_VALIDATION_DEADLINE_EPOCH=1000000050
+
+    local stdout_file="$PROCESS_TMP_ROOT/expired-deadline.stdout"
+    local stderr_file="$PROCESS_TMP_ROOT/expired-deadline.stderr"
+    if run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
+        fail "validation with a deadline expiring before the first log succeeded"
+    fi
+    [[ ! -s "$stdout_file" ]] \
+        || fail "deadline-expiry validation emitted unexpected stdout: $(<"$stdout_file")"
+
+    local outcome="$PROCESS_VALIDATION_OUTCOME_DIR/manifest.json"
+    [[ -f "$outcome" ]] \
+        || fail "deadline-expiry validation did not produce a bounded outcome manifest: $(<"$stderr_file")"
+    jq -e '.classification == "branch-validation" and .failure.stage == "terraform init" and
+           .failure.root == "root" and .command_status == 124' \
+        "$outcome" >/dev/null \
+        || fail "deadline-expiry outcome did not attribute a bounded timeout to terraform init"
+    [[ -d "$PROCESS_VALIDATION_OUTCOME_DIR/logs" ]] \
+        || fail "deadline-expiry outcome dropped the logs directory"
+    [[ -z "$(find "$PROCESS_VALIDATION_OUTCOME_DIR/logs" -mindepth 1 -print -quit)" ]] \
+        || fail "deadline-expiry outcome unexpectedly retained a log file that was never written"
+}
+
 test_processing_validation() {
     test_processing_validation_runs_directly_without_docker_executable
     test_processing_validation_runs_provider_root
     test_processing_validation_allows_provider_free_root_without_lock
     test_processing_validation_rejects_installed_version_mismatch_before_candidate_apply
+    test_processing_validation_produces_bounded_outcome_when_deadline_expires_before_first_log
 }
 
 test_processing_preparation() {
@@ -2108,6 +2218,7 @@ test_processing_preparation() {
     test_processing_success_manifest_omits_provider_dependency_state
     test_processing_success_bundle_has_immutable_binary_patch_and_artifact_key
     test_processing_success_manifest_records_changed_paths_modes_and_hashes
+    test_processing_success_manifest_records_correct_mode_for_glob_metacharacter_path
 }
 
 test_discovery_selects_literal_prefixes() {
@@ -2397,6 +2508,7 @@ test_processing_path_and_workspace_safety() {
     test_processing_allocates_fresh_trusted_data_directory_per_nested_root
     test_processing_removes_incomplete_bundle_when_final_mode_change_fails
     test_processing_rejects_unexpected_changed_path
+    test_processing_rejects_newline_in_changed_path
     test_processing_rejects_non_utf8_changed_path
     test_reconciliation_rejects_non_utf8_candidate_path_collision
     test_processing_rejects_gitignored_terraform_file

@@ -41,6 +41,15 @@ validate_branch_prefix() {
         || fail_discovery input "$description is not a valid literal branch prefix"
 }
 
+: "${DISCOVERY_DEFAULT_BRANCH:?DISCOVERY_DEFAULT_BRANCH must be set}"
+: "${DISCOVERY_CALLER_REF:?DISCOVERY_CALLER_REF must be set}"
+: "${CONTROL_CHECKOUT:?CONTROL_CHECKOUT must be set}"
+: "${DISCOVERY_RUN_ID:?DISCOVERY_RUN_ID must be set}"
+: "${DISCOVERY_RUN_ATTEMPT:?DISCOVERY_RUN_ATTEMPT must be set}"
+: "${DISCOVERY_POLICY_ID?DISCOVERY_POLICY_ID must be set}"
+: "${DISCOVERY_CONTROL_OID:?DISCOVERY_CONTROL_OID must be set}"
+: "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+
 expected_caller_ref="refs/heads/$DISCOVERY_DEFAULT_BRANCH"
 [[ "$DISCOVERY_CALLER_REF" == "$expected_caller_ref" ]] \
     || fail_discovery caller "caller ref must be $expected_caller_ref"
