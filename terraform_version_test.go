@@ -133,6 +133,13 @@ func TestUpdateTerraformVersionErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("directory read error", func(t *testing.T) {
+		updated, err := updateTerraformVersion(t.TempDir(), ">= 1.5", false)
+		if updated || err == nil || !strings.Contains(err.Error(), "failed to read file:") {
+			t.Fatalf("updated=%v err=%v, want failed to read file", updated, err)
+		}
+	})
+
 	t.Run("malformed HCL", func(t *testing.T) {
 		filename := writeTestFile(t, t.TempDir(), "invalid.tf", "terraform {\n")
 		_, err := updateTerraformVersion(filename, ">= 1.5", false)
