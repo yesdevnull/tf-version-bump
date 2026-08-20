@@ -476,9 +476,7 @@ validate_git_status_stream() {
     local target_checkout=$1
     shift
     local -a terraform_roots=("$@")
-    local status_entry
-    local status_code
-    local relative_path
+    local status_entry status_code relative_path raw_digest normalised_digest
 
     while IFS= read -r -d '' status_entry; do
         if [[ ${#status_entry} -lt 4 || "${status_entry:2:1}" != " " ]]; then
@@ -492,6 +490,10 @@ validate_git_status_stream() {
         if [[ "$status_code" == *R* || "$status_code" == *C* ]]; then
             processing_status_error "renamed or copied paths are forbidden"
         fi
+        raw_digest=$(printf '%s' "$relative_path" | sha256sum)
+        normalised_digest=$(printf '%s' "$relative_path" | jq -Rjsc . | sha256sum)
+        [[ "${raw_digest%% *}" == "${normalised_digest%% *}" ]] \
+            || processing_status_error "changed path is not valid UTF-8"
         validate_changed_path "$target_checkout" "$relative_path" "${terraform_roots[@]}"
     done
 }
