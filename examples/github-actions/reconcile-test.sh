@@ -501,15 +501,20 @@ test_protected_publication_updates_only_an_owned_or_absent_ref() {
     "$TEST_GIT" -C "$competing_checkout" push --quiet "$FIXTURE_REMOTE" "HEAD:refs/heads/competing"
     rm -rf "$FIXTURE_CHECKOUT"
     "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$FIXTURE_CHECKOUT"
-    local real_git
-    real_git=$(command -v "$TEST_GIT")
+    # Fixture setup uses TEST_GIT so agent-created commits remain signed. The proxy exercises the
+    # shipped workflow, which uses the runner's ordinary Git and intentionally creates unsigned
+    # automation commits, so resolve that executable before placing the proxy at the front of PATH.
+    local runner_git
+    runner_git=$(command -v git)
     cat >"$FIXTURE_BIN/git" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-"$real_git" "\$@"
-if [[ "\$*" == *"show -s --format=%B "* ]]; then
+command_status=0
+"$runner_git" "\$@" || command_status=\$?
+if [[ "\$command_status" -eq 0 && "\$*" == *"show -s --format=%B "* ]]; then
     "$TEST_GIT" --git-dir "$FIXTURE_REMOTE" update-ref "$update_ref" "$competing_oid"
 fi
+exit "\$command_status"
 EOF
     chmod 755 "$FIXTURE_BIN/git"
     if RECONCILE_DRY_RUN=false run_publish >"$FIXTURE_ROOT/stale.stdout" 2>"$FIXTURE_ROOT/stale.stderr"; then
