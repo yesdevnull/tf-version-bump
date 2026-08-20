@@ -22,10 +22,10 @@ func TestStringSliceFlagContract(t *testing.T) {
 }
 
 func TestParseFlagsContract(t *testing.T) {
-	args := []string{"tf-version-bump", "-pattern", "**/*.tf", "-module", "example/module", "-to", "2.0.0", "-from", "1.0.0", "-from", "1.5.0", "-ignore-version", "3.0.0", "-ignore-modules", "vpc, legacy-*", "-config", "", "-force-add", "-dry-run", "-verbose", "-output", "md"}
+	args := []string{"tf-version-bump", "-pattern", "**/*.tf", "-module", "example/module", "-to", "2.0.0", "-from", "1.0.0", "-from", "1.5.0", "-ignore-version", "3.0.0", "-ignore-modules", "vpc, legacy-*", "-config", "config.yml", "-force-add", "-dry-run", "-verbose", "-version", "-output", "md", "-terraform-version", ">= 1.5", "-provider", "aws"}
 	withFlagArgs(t, args, func() {
 		got := parseFlags()
-		want := &cliFlags{pattern: "**/*.tf", moduleSource: "example/module", toVersion: "2.0.0", fromVersions: stringSliceFlag{"1.0.0", "1.5.0"}, ignoreVersions: stringSliceFlag{"3.0.0"}, ignoreModules: "vpc, legacy-*", forceAdd: true, dryRun: true, verbose: true, output: "md"}
+		want := &cliFlags{pattern: "**/*.tf", moduleSource: "example/module", toVersion: "2.0.0", fromVersions: stringSliceFlag{"1.0.0", "1.5.0"}, ignoreVersions: stringSliceFlag{"3.0.0"}, ignoreModules: "vpc, legacy-*", configFile: "config.yml", forceAdd: true, dryRun: true, verbose: true, showVersion: true, output: "md", terraformVersion: ">= 1.5", providerName: "aws"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("flags = %#v, want %#v", got, want)
 		}
@@ -70,9 +70,9 @@ func TestValidateOperationModesContract(t *testing.T) {
 		flags *cliFlags
 		want  string
 	}{
-		{"config mixed", &cliFlags{configFile: "x", moduleSource: "m"}, "Error: Cannot use -config with other operation flags"},
+		{"config mixed", &cliFlags{configFile: "x", moduleSource: "m"}, "Error: Cannot use -config with other operation flags (-module, -to, -terraform-version, -provider, -from, -ignore-version, -ignore-modules)\n"},
 		{"no operation", &cliFlags{}, "Usage:\n"},
-		{"multiple operations", &cliFlags{moduleSource: "m", terraformVersion: "x"}, "Error: Cannot use -module, -terraform-version, and -provider flags together."},
+		{"multiple operations", &cliFlags{moduleSource: "m", terraformVersion: "x"}, "Error: Cannot use -module, -terraform-version, and -provider flags together. Choose one operation mode or use a config file.\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -92,7 +92,7 @@ func TestValidateOperationModesContract(t *testing.T) {
 			if tt.name == "no operation" && !strings.HasPrefix(out, tt.want) {
 				t.Fatalf("output %q", out)
 			}
-			if tt.name != "no operation" && !strings.HasPrefix(diagnostic, tt.want) {
+			if tt.name != "no operation" && diagnostic != tt.want {
 				t.Fatalf("diagnostic %q", diagnostic)
 			}
 			if tt.name != "no operation" && diagnostic == "" {
@@ -163,15 +163,23 @@ func TestCommandReportsAggregateFileFailure(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			bad := writeTestFile(t, dir, "01.tf", "!!!\n")
-			good := writeTestFile(t, dir, "02.tf", "module \"x\" {\n  source = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+			good := writeTestFile(t, dir, "02.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
 			args := []string{"tf-version-bump", "-pattern", dir + "/*.tf", "-module", "example/module", "-to", "2.0.0"}
 			if mode == "config" {
 				cfg := writeTestFile(t, dir, "updates.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n")
 				args = []string{"tf-version-bump", "-pattern", dir + "/*.tf", "-config", cfg}
 			}
 			r := runMainCommand(t, args)
-			if r.exitCode != 1 || !strings.Contains(r.diagnostics, bad) || !strings.Contains(r.diagnostics, "1 module update error(s)\n") || !strings.Contains(r.stdout, good) || !strings.Contains(readTestFile(t, good), `version = "2.0.0"`) {
-				t.Fatalf("result %#v", r)
+			wantStdout := "Found 2 file(s) matching pattern '" + dir + "/*.tf'\n✓ Updated module source 'example/module' to version '2.0.0' in " + good + "\n\n"
+			if mode == "CLI" {
+				wantStdout += "Successfully updated 1 file(s)\n"
+			} else {
+				wantStdout += "==================================================\nConfig File Update Summary\n==================================================\nModules: 1 file(s) updated\n"
+			}
+			wantDiag := "Error processing " + bad + ": failed to parse HCL: " + bad + ":1,1-2: Argument or block definition required; An argument or block definition is required here.\n1 module update error(s)\n"
+			wantHCL := "module \"example\" {\n  source  = \"example/module\"\n  version = \"2.0.0\"\n}\n"
+			if r.stdout != wantStdout || r.diagnostics != wantDiag || r.exitCode != 1 || readTestFile(t, good) != wantHCL {
+				t.Fatalf("result %#v content=%q", r, readTestFile(t, good))
 			}
 		})
 	}

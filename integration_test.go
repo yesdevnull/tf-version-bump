@@ -6,27 +6,70 @@ import (
 )
 
 func TestRunCLIModeContinuesAfterFileFailure(t *testing.T) {
-	tests := []struct{ name, bad, valid, want string }{
-		{"module", `module "broken" {`, "module \"x\" {\n  source = \"example/module\"\n  version = \"1.0.0\"\n}\n", `version = "2.0.0"`},
-		{"terraform", `terraform {`, "terraform {\n  required_version = \">= 1.0\"\n}\n", `required_version = ">= 1.5"`},
-		{"provider", `terraform {`, "terraform {\n  required_providers {\n    aws = { source = \"hashicorp/aws\", version = \"~> 4.0\" }\n  }\n}\n", `version = "~> 5.0"`},
+	// Runner contracts below deliberately capture both streams and returned aggregate errors.
+	/*
+		tests := []struct{ name, bad, valid, want string }{
+			{"module", `module "broken" {`, "module \"x\" {\n  source = \"example/module\"\n  version = \"1.0.0\"\n}\n", `version = "2.0.0"`},
+			{"terraform", `terraform {`, "terraform {\n  required_version = \">= 1.0\"\n}\n", `required_version = ">= 1.5"`},
+			{"provider", `terraform {`, "terraform {\n  required_providers {\n    aws = { source = \"hashicorp/aws\", version = \"~> 4.0\" }\n  }\n}\n", `version = "~> 5.0"`},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				dir := t.TempDir()
+				bad := writeTestFile(t, dir, "01.tf", tt.bad)
+				good := writeTestFile(t, dir, "02.tf", tt.valid)
+				args := []string{"tf-version-bump", "-pattern", dir + "/*.tf"}
+				if tt.name == "module" {
+					args = append(args, "-module", "example/module", "-to", "2.0.0")
+				} else if tt.name == "terraform" {
+					args = append(args, "-terraform-version", ">= 1.5")
+				} else {
+					args = append(args, "-provider", "aws", "-to", "~> 5.0")
+				}
+				r := runMainCommand(t, args)
+				if r.exitCode != 1 || r.diagnostics == "" || !contains(r.diagnostics, bad) || !contains(readTestFile(t, good), tt.want) {
+					t.Fatalf("result %#v content %q", r, readTestFile(t, good))
+				}
+			})
+		}
+		}
+	*/
+	tests := []struct{ name, bad, valid, output, errText, wantHCL string }{
+		{"module", `module "broken" {`, "module \"x\" {\n  source = \"example/module\"\n  version = \"1.0.0\"\n}\n", "✓ Updated module source 'example/module' to version '2.0.0' in ", "1 module update error(s)", "module \"x\" {\n  source  = \"example/module\"\n  version = \"2.0.0\"\n}\n"},
+		{"terraform", `terraform {`, "terraform {\n  required_version = \">= 1.0\"\n}\n", "✓ Updated Terraform required_version to '>= 1.5' in ", "1 Terraform version update error(s)", "terraform {\n  required_version = \">= 1.5\"\n}\n"},
+		{"provider", `terraform {`, "terraform {\n  required_providers {\n    aws = {\n      source = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\n", "✓ Updated provider 'aws' to version '~> 5.0' in ", "1 provider update error(s)", "terraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 5.0\"\n    }\n  }\n}\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			bad := writeTestFile(t, dir, "01.tf", tt.bad)
 			good := writeTestFile(t, dir, "02.tf", tt.valid)
-			args := []string{"tf-version-bump", "-pattern", dir + "/*.tf"}
+			flags := &cliFlags{output: "text", pattern: dir + "/*.tf"}
 			if tt.name == "module" {
-				args = append(args, "-module", "example/module", "-to", "2.0.0")
+				flags.moduleSource = "example/module"
+				flags.toVersion = "2.0.0"
 			} else if tt.name == "terraform" {
-				args = append(args, "-terraform-version", ">= 1.5")
+				flags.terraformVersion = ">= 1.5"
 			} else {
-				args = append(args, "-provider", "aws", "-to", "~> 5.0")
+				flags.providerName = "aws"
+				flags.toVersion = "~> 5.0"
 			}
-			r := runMainCommand(t, args)
-			if r.exitCode != 1 || r.diagnostics == "" || !contains(r.diagnostics, bad) || !contains(readTestFile(t, good), tt.want) {
-				t.Fatalf("result %#v content %q", r, readTestFile(t, good))
+			stdout, diag, err := captureRunnerOutput(t, func() error { return runCLIMode([]string{bad, good}, flags) })
+			position := "1,17-18"
+			if tt.name != "module" {
+				position = "1,11-12"
+			}
+			parser := "failed to parse HCL: " + bad + ":" + position + ": Unclosed configuration block; There is no closing brace for this block before the end of the file. This may be caused by incorrect brace nesting elsewhere in this file."
+			wantDiag := "Error processing " + bad + ": " + parser + "\n"
+			wantOut := tt.output + good + "\n\nSuccessfully updated 1 file(s)\n"
+			if tt.name == "terraform" {
+				wantOut = tt.output + good + "\n\nSuccessfully updated Terraform version in 1 file(s)\n"
+			}
+			if tt.name == "provider" {
+				wantOut = tt.output + good + "\n\nSuccessfully updated 'aws' provider version in 1 file(s)\n"
+			}
+			if stdout != wantOut || diag != wantDiag || err == nil || err.Error() != tt.errText || readTestFile(t, good) != tt.wantHCL {
+				t.Fatalf("stdoutOK=%v diagOK=%v errOK=%v hclOK=%v stdout=%q diag=%q err=%v content=%q", stdout == wantOut, diag == wantDiag, err != nil && err.Error() == tt.errText, readTestFile(t, good) == tt.wantHCL, stdout, diag, err, readTestFile(t, good))
 			}
 		})
 	}
@@ -36,7 +79,12 @@ func TestRunConfigFileModeAppliesCombinedUpdates(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "main.tf", `terraform {
   required_version = ">= 1.0"
-  required_providers { aws = { source = "hashicorp/aws", version = "~> 4.0" } }
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
 }
 module "x" {
   source = "example/module"
@@ -56,11 +104,22 @@ modules:
 	if err != nil || diag != "" || stdout != wantPrefix {
 		t.Fatalf("stdout=%q diag=%q err=%v", stdout, diag, err)
 	}
-	got := readTestFile(t, file)
-	for _, want := range []string{`required_version = ">= 1.5"`, `version = "~> 5.0"`, `version = "2.0.0"`} {
-		if !contains(got, want) {
-			t.Fatalf("missing %q in %s", want, got)
-		}
+	wantHCL := `terraform {
+  required_version = ">= 1.5"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+module "x" {
+  source  = "example/module"
+  version = "2.0.0"
+}
+`
+	if readTestFile(t, file) != wantHCL {
+		t.Fatalf("final HCL=%q want=%q", readTestFile(t, file), wantHCL)
 	}
 }
 
@@ -139,14 +198,4 @@ module "ec2" {
 	if readTestFile(t, good) != wantHCL {
 		t.Fatalf("final HCL=%q want=%q", readTestFile(t, good), wantHCL)
 	}
-}
-
-func contains(s, sub string) bool { return len(sub) == 0 || (len(s) >= len(sub) && index(s, sub) >= 0) }
-func index(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }
