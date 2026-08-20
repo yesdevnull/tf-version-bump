@@ -2,6 +2,7 @@
 
 set -euo pipefail
 set +x
+export LC_ALL=C
 
 usage() {
     cat <<'EOF'
@@ -37,8 +38,20 @@ or init failure contains manifest.json and logs but never candidate.patch.
 
 validate verifies a successful preparation bundle, applies its immutable patch only to a fresh
 exact-base disposable checkout, then validates every manifest-declared root with the exact
-Terraform CLI installed by the workflow. It requires the target, preparation bundle, validation
-outcome, deadline, and RUNNER_TEMP paths plus the matching preparation and Terraform identities.
+Terraform CLI installed by the workflow, and requires:
+  PROCESS_TARGET_CHECKOUT   absolute, clean, exact-base disposable Git-checkout root
+  PROCESS_PREPARATION_BUNDLE_DIR  directory holding the preparation manifest and patch
+  PROCESS_VALIDATION_OUTCOME_DIR  previously absent destination below RUNNER_TEMP
+  RUNNER_TEMP               absolute trusted temporary directory
+  PROCESS_RUN_ID            workflow run ID, matched against the preparation manifest
+  PROCESS_RUN_ATTEMPT       workflow run attempt, matched against the preparation manifest
+  PROCESS_AUTOMATION_POLICY_ID  stable automation policy ID, matched against the manifest
+  PROCESS_CONTROL_OID       immutable control revision, matched against the manifest
+  PROCESS_STATE_BRANCH      complete state-branch name, matched against the manifest
+  PROCESS_BASE_OID          immutable state-branch revision, matched against the manifest
+  PROCESS_REF_HASH          SHA-256 of the complete state ref, matched against the manifest
+  PROCESS_TERRAFORM_VERSION exact installed Terraform version, matched against the manifest
+  PROCESS_VALIDATION_DEADLINE_EPOCH  absolute deadline recorded before workflow setup
 EOF
 }
 
@@ -262,7 +275,13 @@ preparation_identity_json() {
 }
 
 finalise_preparation_bundle() {
-    chmod 444 "$PREPARATION_BUNDLE_STAGE"/manifest.json "$PREPARATION_BUNDLE_STAGE"/logs/*
+    chmod 444 "$PREPARATION_BUNDLE_STAGE/manifest.json"
+    local log_file
+    for log_file in "$PREPARATION_BUNDLE_STAGE"/logs/*; do
+        if [[ -f "$log_file" ]]; then
+            chmod 444 -- "$log_file"
+        fi
+    done
     [[ ! -e "$PREPARATION_BUNDLE_STAGE/candidate.patch" ]] \
         || chmod 444 "$PREPARATION_BUNDLE_STAGE/candidate.patch"
     chmod 555 "$PREPARATION_BUNDLE_STAGE/logs"
@@ -316,41 +335,47 @@ write_preparation_candidate_bundle() {
         processing_status_error "could not inspect candidate index changes"
     fi
     copy_preparation_logs
-    local roots_json='[]'
+
+    local -a relative_roots=()
     local terraform_root
-    local relative_root
     for terraform_root in "${PREPARATION_TERRAFORM_ROOTS[@]}"; do
-        relative_root=$(relative_terraform_root "$terraform_root")
-        roots_json=$(jq -c \
-            --arg path "$relative_root" \
-            '. + [{path: $path}]' \
-            <<<"$roots_json")
+        relative_roots+=("$(relative_terraform_root "$terraform_root")")
+    done
+    local roots_json
+    roots_json=$(jq -cn '$ARGS.positional | map({path: .})' --args -- "${relative_roots[@]}")
+
+    # Mode and path are read together from one raw diff so a glob metacharacter in a changed
+    # file's name (e.g. "a[5].tf") can never make a separate pathspec lookup read a sibling's
+    # mode. --no-renames keeps this a flat one-path-per-record stream.
+    local -a relative_paths=() git_modes=()
+    local raw_entry relative_path new_mode
+    while IFS= read -r -d '' raw_entry && IFS= read -r -d '' relative_path; do
+        read -r _ new_mode _ _ _ <<<"$raw_entry"
+        relative_paths+=("$relative_path")
+        git_modes+=("$new_mode")
+    done < <(
+        GIT_INDEX_FILE="$PREPARATION_CANDIDATE_INDEX" \
+            git -C "$PREPARATION_TARGET_CHECKOUT" diff --cached --raw -z --no-renames
+    )
+    local -a file_sha256s=()
+    if [[ ${#relative_paths[@]} -gt 0 ]]; then
+        local sha_line
+        while IFS= read -r sha_line; do
+            file_sha256s+=("${sha_line%% *}")
+        done < <(cd "$PREPARATION_TARGET_CHECKOUT" && sha256sum -- "${relative_paths[@]}")
+    fi
+    local -a interleaved=()
+    local index
+    for index in "${!relative_paths[@]}"; do
+        interleaved+=("${relative_paths[$index]}" "${git_modes[$index]}" "${file_sha256s[$index]}")
     done
     local changed_files_json='[]'
-    local relative_path
-    local index_entry
-    local git_mode
-    local file_sha256
-    while IFS= read -r -d '' relative_path; do
-        if ! IFS= read -r -d '' index_entry < <(
-            GIT_INDEX_FILE="$PREPARATION_CANDIDATE_INDEX" \
-                git -C "$PREPARATION_TARGET_CHECKOUT" ls-files --stage -z -- "$relative_path"
-        ); then
-            processing_status_error "candidate index is missing a changed path"
-        fi
-        git_mode=${index_entry%% *}
-        file_sha256=$(sha256sum "$PREPARATION_TARGET_CHECKOUT/$relative_path")
-        file_sha256=${file_sha256%% *}
-        changed_files_json=$(jq -c \
-            --arg path "$relative_path" \
-            --arg mode "$git_mode" \
-            --arg sha256 "$file_sha256" \
-            '. + [{path: $path, mode: $mode, sha256: $sha256}]' \
-            <<<"$changed_files_json")
-    done < <(
-        LC_ALL=C GIT_INDEX_FILE="$PREPARATION_CANDIDATE_INDEX" \
-            git -C "$PREPARATION_TARGET_CHECKOUT" diff --cached --name-only -z
-    )
+    if [[ ${#interleaved[@]} -gt 0 ]]; then
+        changed_files_json=$(jq -cn \
+            '$ARGS.positional | [range(0; length; 3) as $i |
+                {path: .[$i], mode: .[$i + 1], sha256: .[$i + 2]}]' \
+            --args -- "${interleaved[@]}")
+    fi
     preparation_identity_json | jq \
         --arg config_path "$PROCESS_CONFIG_PATH" \
         --arg tf_version_bump_version "$PROCESS_TF_VERSION_BUMP_VERSION" \
@@ -441,6 +466,9 @@ validate_changed_path() {
     local target_checkout=$1 relative_path=$2
     shift 2
     local -a terraform_roots=("$@")
+    if [[ "$relative_path" == *$'\n'* ]]; then
+        processing_status_error "changed path must not contain a newline"
+    fi
     local changed_path="$target_checkout/$relative_path"
     if [[ -L "$changed_path" || ! -f "$changed_path" ]]; then
         processing_status_error "changed path must be a regular non-symlink file"
@@ -642,6 +670,19 @@ prepare_workspace() {
 }
 
 validation_contract() {
+    : "${PROCESS_TARGET_CHECKOUT:?PROCESS_TARGET_CHECKOUT must be set}"
+    : "${PROCESS_RUN_ID:?PROCESS_RUN_ID must be set}"
+    : "${PROCESS_RUN_ATTEMPT:?PROCESS_RUN_ATTEMPT must be set}"
+    : "${PROCESS_AUTOMATION_POLICY_ID:?PROCESS_AUTOMATION_POLICY_ID must be set}"
+    : "${PROCESS_CONTROL_OID:?PROCESS_CONTROL_OID must be set}"
+    : "${PROCESS_STATE_BRANCH:?PROCESS_STATE_BRANCH must be set}"
+    : "${PROCESS_BASE_OID:?PROCESS_BASE_OID must be set}"
+    : "${PROCESS_REF_HASH:?PROCESS_REF_HASH must be set}"
+    : "${PROCESS_TERRAFORM_VERSION:?PROCESS_TERRAFORM_VERSION must be set}"
+    : "${PROCESS_PREPARATION_BUNDLE_DIR:?PROCESS_PREPARATION_BUNDLE_DIR must be set}"
+    : "${PROCESS_VALIDATION_OUTCOME_DIR:?PROCESS_VALIDATION_OUTCOME_DIR must be set}"
+    : "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+
     [[ "$PROCESS_TARGET_CHECKOUT" == /* && -d "$PROCESS_TARGET_CHECKOUT" ]] \
         || processing_path_error "validation checkout must be an absolute directory"
     VALIDATION_TARGET_CHECKOUT=$(realpath "$PROCESS_TARGET_CHECKOUT")
@@ -680,34 +721,36 @@ validation_contract() {
             "$VALIDATION_MANIFEST" >/dev/null \
             || processing_status_error "no-change candidate manifest is invalid"
     fi
-    [[ ! -e "$PROCESS_VALIDATION_OUTCOME_DIR" && ! -L "$PROCESS_VALIDATION_OUTCOME_DIR" ]] \
-        || processing_setup_error "validation outcome destination must be absent"
+    if [[ "$PROCESS_VALIDATION_OUTCOME_DIR" != /* ]]; then
+        processing_setup_error "validation outcome directory must be absolute"
+    fi
+    if [[ -e "$PROCESS_VALIDATION_OUTCOME_DIR" || -L "$PROCESS_VALIDATION_OUTCOME_DIR" ]]; then
+        processing_setup_error "validation outcome destination must be absent"
+    fi
+    local outcome_parent=${PROCESS_VALIDATION_OUTCOME_DIR%/*}
+    if [[ ! -d "$outcome_parent" ]]; then
+        processing_setup_error "validation outcome parent must exist"
+    fi
+    outcome_parent=$(realpath "$outcome_parent")
     local runner_temp
     runner_temp=$(realpath "$RUNNER_TEMP")
+    if ! path_is_within "$outcome_parent" "$runner_temp"; then
+        processing_setup_error "validation outcome must be below RUNNER_TEMP"
+    fi
     umask 077
     VALIDATION_DATA_ROOT=$(mktemp -d "$runner_temp/tf-version-bump-validation-data.XXXXXX")
-}
-
-verify_validation_terraform_version() {
-    : "${PROCESS_TERRAFORM_VERSION:?PROCESS_TERRAFORM_VERSION must be set}"
-    [[ "$PROCESS_TERRAFORM_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-        || processing_setup_error "Terraform version must be an exact semantic version"
-    local version_log="$VALIDATION_DATA_ROOT/terraform-version.json"
-    if ! run_before_validation_deadline "$version_log" terraform version -json; then
-        processing_setup_error "could not read Terraform version"
-    fi
-    local reported_version
-    reported_version=$(jq -er '.terraform_version' "$version_log") \
-        || processing_setup_error "Terraform returned invalid version JSON"
-    [[ "$reported_version" == "$PROCESS_TERRAFORM_VERSION" ]] \
-        || processing_setup_error "Terraform reported an unexpected version"
 }
 
 write_validation_outcome() {
     local classification=$1 command_status=$2 failure_stage=${3-} failure_root=${4-}
     mkdir -m 700 "$PROCESS_VALIDATION_OUTCOME_DIR"
     mkdir -m 700 "$PROCESS_VALIDATION_OUTCOME_DIR/logs"
-    cp -- "$VALIDATION_DATA_ROOT"/*.log "$PROCESS_VALIDATION_OUTCOME_DIR/logs/"
+    local log_file
+    for log_file in "$VALIDATION_DATA_ROOT"/*.log; do
+        if [[ -f "$log_file" ]]; then
+            cp -- "$log_file" "$PROCESS_VALIDATION_OUTCOME_DIR/logs/${log_file##*/}"
+        fi
+    done
     jq \
         --arg candidate_manifest_sha256 "$VALIDATION_MANIFEST_SHA256" \
         --arg classification "$classification" \
@@ -879,7 +922,7 @@ prepare_candidate_roots() {
         fi
         data_directory=${PREPARATION_TF_DATA_DIRECTORIES[$((root_index - 1))]}
         init_status=0
-        TF_DATA_DIR="$data_directory" \
+        TF_DATA_DIR="$data_directory" TF_IN_AUTOMATION=1 CHECKPOINT_DISABLE=1 \
             run_before_preparation_deadline "$PREPARATION_DATA_ROOT/init-$root_index.log" \
             terraform -chdir="$terraform_root" init -upgrade -backend=false -input=false -no-color \
             || init_status=$?
@@ -935,13 +978,14 @@ prepare_candidate_roots() {
 }
 
 verify_terraform_version() {
+    local data_root=$1 run_before_deadline_function=$2
     : "${PROCESS_TERRAFORM_VERSION:?PROCESS_TERRAFORM_VERSION must be set}"
     if [[ ! "$PROCESS_TERRAFORM_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         processing_setup_error "Terraform version must be an exact semantic version"
     fi
 
-    local version_log="$PREPARATION_DATA_ROOT/terraform-version.json"
-    if ! run_before_preparation_deadline "$version_log" terraform version -json; then
+    local version_log="$data_root/terraform-version.json"
+    if ! "$run_before_deadline_function" "$version_log" terraform version -json; then
         processing_setup_error "could not read Terraform version"
     fi
     local reported_version
@@ -969,7 +1013,7 @@ if [[ "${1:-}" == "prepare" && $# -eq 1 ]]; then
     prepare_workspace
     prepare_bundle_contract
     PREPARATION_TF_VERSION_BUMP_BINARY=$(install_tf_version_bump)
-    verify_terraform_version
+    verify_terraform_version "$PREPARATION_DATA_ROOT" run_before_preparation_deadline
     prepare_candidate_roots
     write_preparation_candidate_bundle
     exit 0
@@ -984,7 +1028,7 @@ if [[ "${1:-}" == "validate" && $# -eq 1 ]]; then
         processing_setup_error "validation deadline expired before candidate setup"
     fi
     validation_contract
-    verify_validation_terraform_version
+    verify_terraform_version "$VALIDATION_DATA_ROOT" run_before_validation_deadline
     if [[ "$VALIDATION_PREPARATION_CLASSIFICATION" == "success" ]]; then
         apply_validation_candidate
     else

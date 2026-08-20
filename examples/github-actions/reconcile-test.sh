@@ -24,6 +24,15 @@ sha256_file() {
     printf '%s\n' "${digest%% *}"
 }
 
+fixture_commit() {
+    local checkout=$1 message=$2
+    shift 2
+    "$TEST_GIT" -C "$checkout" \
+        -c user.name='Reconcile Test' \
+        -c user.email='reconcile-test@example.invalid' \
+        commit "$@" -m "$message" >/dev/null
+}
+
 ref_hash() {
     local digest
     digest=$(printf '%s' "refs/heads/${FIXTURE_STATE_BRANCH-state/nonproduction/example}" | sha256sum)
@@ -349,6 +358,34 @@ test_verifies_only_bounded_branch_failures_without_a_patch() {
     ' >/dev/null || fail "workflow does not pass the trusted direct run URL to verification"
 }
 
+test_publish_failure_requires_dry_run_to_be_set() {
+    # Production break caught: a manual failure-publish replay without RECONCILE_DRY_RUN set
+    # defaulted to the mutating direction instead of failing closed, unlike the success path.
+    setup_success_fixture
+    jq '.classification = "branch-update" |
+        .failure = {stage: "tf-version-bump", root: "root", command: "tf-version-bump", status: 1}' \
+        "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/failure.json"
+    mv "$FIXTURE_ROOT/failure.json" "$FIXTURE_BUNDLE/manifest.json"
+    rm -rf "$FIXTURE_OUTCOME" "$FIXTURE_BUNDLE/candidate.patch"
+    RECONCILE_VALIDATION_OUTCOME_DIR=""
+    run_verify
+    unset RECONCILE_VALIDATION_OUTCOME_DIR
+    setup_gh_capture
+
+    if RECONCILE_RUN_ID=100 RECONCILE_RUN_ATTEMPT=1 RECONCILE_AUTOMATION_POLICY_ID=nonproduction \
+        RECONCILE_CONTROL_OID="$FIXTURE_CONTROL_OID" RECONCILE_STATE_BRANCH="$FIXTURE_STATE_BRANCH" \
+        RECONCILE_BASE_OID="$FIXTURE_BASE_OID" RECONCILE_REF_HASH="$(ref_hash)" \
+        RECONCILE_VERIFIED_RESULT_DIR="$FIXTURE_VERIFIED" \
+        "$RECONCILE_SCRIPT" publish >"$FIXTURE_ROOT/unset-dry-run.stdout" \
+        2>"$FIXTURE_ROOT/unset-dry-run.stderr"; then
+        fail "failure publish without RECONCILE_DRY_RUN set succeeded"
+    fi
+    grep -F 'RECONCILE_DRY_RUN must be set' "$FIXTURE_ROOT/unset-dry-run.stderr" >/dev/null \
+        || fail "failure publish without RECONCILE_DRY_RUN set did not fail closed: $(<"$FIXTURE_ROOT/unset-dry-run.stderr")"
+    [[ -z "$(find "$FIXTURE_GH_CAPTURE" -mindepth 1 -print -quit)" ]] \
+        || fail "failure publish without RECONCILE_DRY_RUN set invoked GitHub lifecycle commands"
+}
+
 test_dry_run_constructs_unsigned_owned_commit_without_external_mutation() {
     # Production break caught: an inherited signing policy signs or blocks an unsigned automation commit.
     prepare_publication_fixture
@@ -396,17 +433,17 @@ test_protected_publication_updates_only_an_owned_or_absent_ref() {
     setup_gh_capture
     local competing_checkout="$FIXTURE_ROOT/competing"
     "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$competing_checkout"
-    "$TEST_GIT" -C "$competing_checkout" \
-        -c user.name='Reconcile Test' -c user.email='reconcile-test@example.invalid' \
-        commit --allow-empty -m "test: advance observed automation ref" >/dev/null
+    fixture_commit "$competing_checkout" "test: advance observed automation ref" --allow-empty
     local competing_oid; competing_oid=$("$TEST_GIT" -C "$competing_checkout" rev-parse HEAD)
     "$TEST_GIT" -C "$competing_checkout" push --quiet "$FIXTURE_REMOTE" "HEAD:refs/heads/competing"
     rm -rf "$FIXTURE_CHECKOUT"
     "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$FIXTURE_CHECKOUT"
+    local real_git
+    real_git=$(command -v "$TEST_GIT")
     cat >"$FIXTURE_BIN/git" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-/usr/bin/git "\$@"
+"$real_git" "\$@"
 if [[ "\$*" == *"show -s --format=%B "* ]]; then
     "$TEST_GIT" --git-dir "$FIXTURE_REMOTE" update-ref "$update_ref" "$competing_oid"
 fi
@@ -563,6 +600,7 @@ if [[ $# -eq 0 ]]; then
     test_verifies_candidate_with_valid_tab_in_path
     test_rejects_mismatched_or_corrupt_candidates
     test_verifies_only_bounded_branch_failures_without_a_patch
+    test_publish_failure_requires_dry_run_to_be_set
     test_dry_run_constructs_unsigned_owned_commit_without_external_mutation
     test_protected_publication_updates_only_an_owned_or_absent_ref
     test_reconciles_marked_pull_request_or_failure_issue_payload

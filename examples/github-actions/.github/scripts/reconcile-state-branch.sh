@@ -19,6 +19,16 @@ reconcile_error() {
     exit 1
 }
 
+RECONCILE_TEMPORARY_PATH=""
+
+# shellcheck disable=SC2329 # Invoked by the verify/publish EXIT trap.
+cleanup_reconcile_temporaries() {
+    if [[ -n "$RECONCILE_TEMPORARY_PATH" ]]; then
+        rm -rf -- "$RECONCILE_TEMPORARY_PATH"
+        RECONCILE_TEMPORARY_PATH=""
+    fi
+}
+
 sha256_file() {
     local digest
     digest=$(sha256sum "$1")
@@ -72,7 +82,12 @@ manifest_matches_identity() {
 path_is_declared_direct_file() {
     local manifest=$1 relative_path=$2
     [[ -n "$relative_path" && "$relative_path" != /* ]] || return 1
-    [[ "/$relative_path/" != *"/../"* && "$relative_path" != *$'\n'* ]] || return 1
+    # A literal newline in relative_path can never reach here intact: it is read one line at a
+    # time by the newline-splitting `read` loop in verify_declared_candidate, which would already
+    # have split it into separate (non-matching) lines. The real defence against a smuggled
+    # newline-bearing path is the byte-exact sorted actual/declared path-set comparison in
+    # verify_declared_candidate.
+    [[ "/$relative_path/" != *"/../"* ]] || return 1
 
     local filename=${relative_path##*/}
     local parent=${relative_path%/*}
@@ -102,29 +117,58 @@ verify_declared_candidate() {
     git -C "$checkout" apply --index --binary "$patch" >/dev/null \
         || reconcile_error "candidate patch could not be applied"
 
-    local actual_paths declared_paths raw_paths_digest normalised_paths_digest
-    raw_paths_digest=$(git -C "$checkout" diff --cached --name-only -z | sha256sum)
-    normalised_paths_digest=$(git -C "$checkout" diff --cached --name-only -z | jq -Rjsc . | sha256sum)
+    # Mode and path are read together from one raw diff so no per-path `git ls-files` pathspec
+    # lookup can have its glob metacharacters (e.g. "a[5].tf") matched against a sibling file.
+    local -a actual_paths=() actual_modes=()
+    local raw_entry mode
+    while IFS= read -r -d '' raw_entry && IFS= read -r -d '' relative_path; do
+        read -r _ mode _ _ _ <<<"$raw_entry"
+        actual_paths+=("$relative_path")
+        actual_modes+=("$mode")
+    done < <(git -C "$checkout" diff --cached --raw -z --no-renames)
+
+    local raw_paths_digest normalised_paths_digest
+    raw_paths_digest=$(printf '%s\0' "${actual_paths[@]}" | sha256sum)
+    normalised_paths_digest=$(printf '%s\0' "${actual_paths[@]}" | jq -Rjsc . | sha256sum)
     [[ "${raw_paths_digest%% *}" == "${normalised_paths_digest%% *}" ]] \
         || reconcile_error "candidate patch path is not valid UTF-8"
-    actual_paths=$(git -C "$checkout" diff --cached --name-only -z | jq -Rsc 'split("\u0000") | map(select(length > 0)) | sort')
-    declared_paths=$(jq -c '[.changed_files[].path] | sort' "$manifest")
-    [[ "$actual_paths" == "$declared_paths" ]] \
+
+    local actual_paths_json declared_paths_json
+    actual_paths_json=$(jq -cn '$ARGS.positional | sort' --args -- "${actual_paths[@]}")
+    declared_paths_json=$(jq -c '[.changed_files[].path] | sort' "$manifest")
+    [[ "$actual_paths_json" == "$declared_paths_json" ]] \
         || reconcile_error "candidate patch paths do not match the manifest"
 
-    local expected_digest expected_mode actual_mode
-    while IFS= read -r relative_path; do
-        expected_digest=$(jq -er --arg path "$relative_path" \
-            '.changed_files[] | select(.path == $path) | .sha256' "$manifest")
-        [[ "$(sha256_file "$checkout/$relative_path")" == "$expected_digest" ]] \
+    local -a file_sha256s=()
+    if [[ ${#actual_paths[@]} -gt 0 ]]; then
+        local sha_line
+        while IFS= read -r sha_line; do
+            file_sha256s+=("${sha_line%% *}")
+        done < <(cd "$checkout" && sha256sum -- "${actual_paths[@]}")
+    fi
+
+    # Build the declared path -> mode/digest lookup with one jq pass over the manifest instead of
+    # two jq queries per declared path; NUL-delimited fields keep this safe for a path containing
+    # any byte (including a legitimate tab or newline) other than NUL, which Git paths can't hold.
+    local -A expected_mode_by_path=() expected_sha256_by_path=()
+    local declared_path declared_mode declared_sha256
+    while IFS= read -r -d '' declared_path \
+        && IFS= read -r -d '' declared_mode \
+        && IFS= read -r -d '' declared_sha256; do
+        expected_mode_by_path["$declared_path"]=$declared_mode
+        expected_sha256_by_path["$declared_path"]=$declared_sha256
+    done < <(jq -j '([0] | implode) as $nul | .changed_files[] | (.path, $nul, .mode, $nul, .sha256, $nul)' "$manifest")
+
+    local index expected_mode expected_digest
+    for index in "${!actual_paths[@]}"; do
+        relative_path=${actual_paths[$index]}
+        expected_digest=${expected_sha256_by_path[$relative_path]}
+        [[ "${file_sha256s[$index]}" == "$expected_digest" ]] \
             || reconcile_error "candidate file digest does not match the manifest"
-        expected_mode=$(jq -er --arg path "$relative_path" \
-            '.changed_files[] | select(.path == $path) | .mode' "$manifest")
-        actual_mode=$(git -C "$checkout" ls-files --stage -- "$relative_path")
-        actual_mode=${actual_mode%% *}
-        [[ "$actual_mode" == "$expected_mode" ]] \
+        expected_mode=${expected_mode_by_path[$relative_path]}
+        [[ "${actual_modes[$index]}" == "$expected_mode" ]] \
             || reconcile_error "candidate file mode does not match the manifest"
-    done < <(jq -er '.changed_files[].path' "$manifest")
+    done
 }
 
 bounded_failure_json() {
@@ -146,6 +190,7 @@ write_verified_result() {
         || reconcile_error "verified result parent must exist"
     local stage
     stage=$(mktemp -d "$parent/.verified-result.XXXXXX")
+    RECONCILE_TEMPORARY_PATH=$stage
     chmod 700 "$stage"
 
     jq -n \
@@ -178,6 +223,7 @@ write_verified_result() {
     fi
     chmod 444 "$stage"/*
     mv -- "$stage" "$destination"
+    RECONCILE_TEMPORARY_PATH=""
     chmod 555 "$destination"
 }
 
@@ -391,7 +437,9 @@ reconcile_success_lifecycle() {
     branch_html=$(html_code "$RECONCILE_STATE_BRANCH")
     base_html=$(html_code "$RECONCILE_BASE_OID")
     policy_html=$(html_code "$RECONCILE_AUTOMATION_POLICY_ID")
-    payload_dir=$(mktemp -d "${TMPDIR:-/tmp}/tf-version-bump-github.XXXXXX")
+    : "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+    payload_dir=$(mktemp -d "$RUNNER_TEMP/tf-version-bump-github.XXXXXX")
+    RECONCILE_TEMPORARY_PATH=$payload_dir
     body_file="$payload_dir/body"
     printf '%s\n\nAutomated Terraform dependency update for %s.\n\nBase: %s\nPolicy: %s\n' \
         "$marker" "$branch_html" "$base_html" "$policy_html" >"$body_file"
@@ -408,6 +456,7 @@ reconcile_success_lifecycle() {
     [[ -z "$issue_number" || "$issue_closed" == "true" ]] \
         || gh issue close "$issue_number" --repo "$RECONCILE_REPOSITORY" >/dev/null
     rm -rf -- "$payload_dir"
+    RECONCILE_TEMPORARY_PATH=""
 }
 
 reconcile_failure_lifecycle() {
@@ -430,7 +479,9 @@ reconcile_failure_lifecycle() {
     status_html=$(html_code "$status")
     run_url_html=$(html_code "$run_url")
     run_url_href=$(html_escape "$run_url")
-    payload_dir=$(mktemp -d "${TMPDIR:-/tmp}/tf-version-bump-github.XXXXXX")
+    : "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+    payload_dir=$(mktemp -d "$RUNNER_TEMP/tf-version-bump-github.XXXXXX")
+    RECONCILE_TEMPORARY_PATH=$payload_dir
     body_file="$payload_dir/body"
     printf '%s\n\nAutomated Terraform update failed for %s.\n\nClassification: %s\nStage: %s\nRoot: %s\nStatus: %s\nBase: %s\nRun: %s attempt %s\nWorkflow run: <a href="%s">%s</a>\n' \
         "$marker" "$branch_html" "$classification_html" \
@@ -446,6 +497,7 @@ reconcile_failure_lifecycle() {
             --title "Terraform dependency update failed" --body-file "$body_file" >/dev/null
     fi
     rm -rf -- "$payload_dir"
+    RECONCILE_TEMPORARY_PATH=""
 }
 
 publish_result() {
@@ -474,10 +526,10 @@ publish_result() {
     [[ "$classification" == "branch-update" || "$classification" == "branch-init" \
         || "$classification" == "branch-validation" ]] \
         || reconcile_error "verified result classification is not supported"
-    local failure_dry_run=${RECONCILE_DRY_RUN-false}
-    [[ "$failure_dry_run" == "true" || "$failure_dry_run" == "false" ]] \
+    : "${RECONCILE_DRY_RUN:?RECONCILE_DRY_RUN must be set}"
+    [[ "$RECONCILE_DRY_RUN" == "true" || "$RECONCILE_DRY_RUN" == "false" ]] \
         || reconcile_error "dry-run must be true or false"
-    [[ "$failure_dry_run" == "true" ]] && return
+    [[ "$RECONCILE_DRY_RUN" == "true" ]] && return
     : "${RECONCILE_REPOSITORY:?RECONCILE_REPOSITORY must be set}"
     : "${GH_TOKEN:?GH_TOKEN must be set}"
     reconcile_failure_lifecycle "$classification" "$verified_manifest"
@@ -488,10 +540,12 @@ if [[ "${1:-}" == "--help" ]]; then
     exit 0
 fi
 if [[ "${1:-}" == "verify" && $# -eq 1 ]]; then
+    trap cleanup_reconcile_temporaries EXIT
     verify_result
     exit 0
 fi
 if [[ "${1:-}" == "publish" && $# -eq 1 ]]; then
+    trap cleanup_reconcile_temporaries EXIT
     publish_result
     exit 0
 fi
