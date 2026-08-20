@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# Requires bash >= 4.0 (associative arrays), matching the readarray/mapfile floor its sibling
+# scripts already require. This is the single file the standalone-install contract ships alone,
+# so this floor -- not an ambient macOS system bash 3.2 -- is what a copyable install must supply.
 set -euo pipefail
 set +x
 export LC_ALL=C
@@ -144,7 +147,9 @@ verify_declared_candidate() {
         local sha_line
         while IFS= read -r sha_line; do
             file_sha256s+=("${sha_line%% *}")
-        done < <(cd "$checkout" && sha256sum -- "${actual_paths[@]}")
+        done < <(cd "$checkout" && sha256sum -- "${actual_paths[@]}" 2>/dev/null)
+        [[ ${#file_sha256s[@]} -eq ${#actual_paths[@]} ]] \
+            || reconcile_error "candidate file digest does not match the manifest"
     fi
 
     # Build the declared path -> mode/digest lookup with one jq pass over the manifest instead of

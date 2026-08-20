@@ -49,6 +49,8 @@ validate_branch_prefix() {
 : "${DISCOVERY_POLICY_ID?DISCOVERY_POLICY_ID must be set}"
 : "${DISCOVERY_CONTROL_OID:?DISCOVERY_CONTROL_OID must be set}"
 : "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+: "${DISCOVERY_ALLOWED_PREFIXES?DISCOVERY_ALLOWED_PREFIXES must be set}"
+: "${DISCOVERY_MANUAL_PREFIX?DISCOVERY_MANUAL_PREFIX must be set}"
 
 expected_caller_ref="refs/heads/$DISCOVERY_DEFAULT_BRANCH"
 [[ "$DISCOVERY_CALLER_REF" == "$expected_caller_ref" ]] \
