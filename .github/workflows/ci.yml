@@ -50,6 +50,20 @@ jobs:
       if: matrix.go-version == '1.25'
       run: examples/update-branches_test.sh
 
+    - name: Install GitHub Actions POC test prerequisites
+      if: matrix.go-version == '1.25'
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes bash curl git jq
+
+    - name: Check Docker test infrastructure availability
+      if: matrix.go-version == '1.25'
+      run: docker version
+
+    - name: Run GitHub Actions POC checks
+      if: matrix.go-version == '1.25'
+      run: make test-github-actions
+
     - name: Upload coverage to Codecov
       if: matrix.go-version == '1.25'
       uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0

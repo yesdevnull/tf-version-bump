@@ -1,4 +1,6 @@
-.PHONY: help test test-verbose test-coverage coverage-html coverage-func clean build install
+.PHONY: help test test-verbose test-coverage coverage-html coverage-func clean build install branch-automation-test test-github-actions actionlint
+
+TEST_GIT ?= git
 
 # Default target
 help:
@@ -11,6 +13,9 @@ help:
 	@echo "  clean          - Clean build artifacts and coverage files"
 	@echo "  build          - Build the binary"
 	@echo "  install        - Install the binary"
+	@echo "  branch-automation-test - Run the GitHub Actions example harness"
+	@echo "  test-github-actions - Run GitHub Actions example checks"
+	@echo "  actionlint     - Lint GitHub Actions workflows"
 
 # Run tests
 test:
@@ -51,3 +56,21 @@ build:
 # Install the binary
 install:
 	go install -v .
+
+# Run the GitHub Actions branch automation example harness
+branch-automation-test:
+	TEST_GIT="$(TEST_GIT)" examples/github-actions/test.sh
+
+# The primary example harness uses Docker only as local Terraform test infrastructure, then lints the copied workflow tree.
+test-github-actions:
+	TEST_GIT="$(TEST_GIT)" examples/github-actions/test.sh
+	@temporary_directory=$$(mktemp -d); \
+	trap 'rm -rf "$$temporary_directory"' EXIT; \
+	cp -R examples/github-actions/.github "$$temporary_directory/.github"; \
+	"$(TEST_GIT)" -C "$$temporary_directory" init --quiet; \
+	cd "$$temporary_directory"; \
+	"$(CURDIR)/scripts/run-actionlint.sh" .github/workflows/*.yml
+
+# Lint GitHub Actions workflows with the pinned launcher
+actionlint:
+	scripts/run-actionlint.sh

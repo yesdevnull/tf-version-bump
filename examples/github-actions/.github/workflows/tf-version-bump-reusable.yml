@@ -1,0 +1,372 @@
+name: Terraform version bump
+
+on:
+  workflow_call:
+    inputs:
+      automation_policy_id:
+        type: string
+        required: true
+      allowed_branch_prefixes:
+        type: string
+        required: true
+      branch_prefix:
+        type: string
+        default: ""
+      config_path:
+        type: string
+        required: true
+      terraform_directories:
+        type: string
+        default: "."
+      terraform_version:
+        type: string
+        required: true
+      tf_version_bump_version:
+        type: string
+        required: true
+      tf_version_bump_archive_sha256:
+        type: string
+        required: true
+      dry_run:
+        type: boolean
+        default: false
+      max_parallel:
+        type: number
+        default: 4
+      commit_author_name:
+        type: string
+        default: ""
+      commit_author_email:
+        type: string
+        default: ""
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+          ref: ${{ github.sha }}
+          path: control
+      - name: Discover state branches
+        id: discover
+        env:
+          CONTROL_CHECKOUT: ${{ github.workspace }}/control
+          DISCOVERY_ALLOWED_PREFIXES: ${{ inputs.allowed_branch_prefixes }}
+          DISCOVERY_MANUAL_PREFIX: ${{ inputs.branch_prefix }}
+          DISCOVERY_POLICY_ID: ${{ inputs.automation_policy_id }}
+          DISCOVERY_RUN_ID: ${{ github.run_id }}
+          DISCOVERY_RUN_ATTEMPT: ${{ github.run_attempt }}
+          DISCOVERY_CONTROL_OID: ${{ github.sha }}
+          DISCOVERY_CALLER_REF: ${{ github.ref }}
+          DISCOVERY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          matrix=$("$CONTROL_CHECKOUT/.github/scripts/discover-state-branches.sh" | jq -c .)
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+
+  prepare:
+    needs: discover
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ inputs.max_parallel }}
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Record preparation deadline
+        run: echo "PROCESS_PREPARATION_DEADLINE_EPOCH=$(($(date +%s) + 1200))" >> "$GITHUB_ENV"
+      - name: Check current run attempt
+        env:
+          EXPECTED_RUN_ATTEMPT: ${{ matrix.run_attempt }}
+          CURRENT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [[ "$EXPECTED_RUN_ATTEMPT" != "$CURRENT_RUN_ATTEMPT" ]]; then
+            echo "Partial job reruns are unsupported; use Re-run all jobs." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 10
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.control_oid }}
+          path: control
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 10
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.base_oid }}
+          path: target
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        timeout-minutes: 10
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+          terraform_wrapper: false
+      - name: Prepare candidate
+        id: prepare
+        continue-on-error: true
+        env:
+          CONTROL_CHECKOUT: ${{ github.workspace }}/control
+          PROCESS_CONTROL_CHECKOUT: ${{ github.workspace }}/control
+          PROCESS_TARGET_CHECKOUT: ${{ github.workspace }}/target
+          PROCESS_CONFIG_PATH: ${{ inputs.config_path }}
+          PROCESS_TERRAFORM_ROOTS: ${{ inputs.terraform_directories }}
+          PROCESS_RUN_ID: ${{ matrix.run_id }}
+          PROCESS_RUN_ATTEMPT: ${{ matrix.run_attempt }}
+          PROCESS_AUTOMATION_POLICY_ID: ${{ matrix.automation_policy_id }}
+          PROCESS_CONTROL_OID: ${{ matrix.control_oid }}
+          PROCESS_STATE_BRANCH: ${{ matrix.branch }}
+          PROCESS_BASE_OID: ${{ matrix.base_oid }}
+          PROCESS_REF_HASH: ${{ matrix.ref_hash }}
+          PROCESS_TF_VERSION_BUMP_VERSION: ${{ inputs.tf_version_bump_version }}
+          PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256: ${{ inputs.tf_version_bump_archive_sha256 }}
+          PROCESS_TERRAFORM_VERSION: ${{ inputs.terraform_version }}
+          PROCESS_PREPARATION_BUNDLE_DIR: ${{ runner.temp }}/preparation-bundle
+        run: '"$CONTROL_CHECKOUT/.github/scripts/process-state-branch.sh" prepare'
+      - name: Upload preparation bundle
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        timeout-minutes: 10
+        with:
+          name: preparation-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}
+          path: ${{ runner.temp }}/preparation-bundle
+          if-no-files-found: error
+          retention-days: 7
+      - name: Confirm preparation classification
+        if: ${{ always() }}
+        env:
+          PREPARATION_MANIFEST: ${{ runner.temp }}/preparation-bundle/manifest.json
+        run: |
+          [[ -f "$PREPARATION_MANIFEST" ]] || exit 1
+          classification=$(jq -er '.classification' "$PREPARATION_MANIFEST")
+          [[ "$classification" == "success" || "$classification" == "no-change" || "$classification" == "branch-update" || "$classification" == "branch-init" ]]
+
+  validate:
+    needs: [discover, prepare]
+    if: ${{ always() && needs.discover.result == 'success' }}
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ inputs.max_parallel }}
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Record validation deadline
+        run: echo "PROCESS_VALIDATION_DEADLINE_EPOCH=$(($(date +%s) + 1200))" >> "$GITHUB_ENV"
+      - name: Check current run attempt
+        env:
+          EXPECTED_RUN_ATTEMPT: ${{ matrix.run_attempt }}
+          CURRENT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [[ "$EXPECTED_RUN_ATTEMPT" != "$CURRENT_RUN_ATTEMPT" ]]; then
+            echo "Partial job reruns are unsupported; use Re-run all jobs." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 10
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.control_oid }}
+          path: control
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 10
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.base_oid }}
+          path: target
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        timeout-minutes: 10
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+          terraform_wrapper: false
+      - name: Download preparation bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        timeout-minutes: 10
+        with:
+          name: preparation-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}
+          path: ${{ runner.temp }}/preparation-bundle
+      - name: Create validation artefact
+        run: |
+          mkdir -p "$RUNNER_TEMP/validation-artifact"
+          printf '%s\n' "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/validation-artifact/run-attempt"
+      - name: Validate candidate
+        id: validate
+        continue-on-error: true
+        env:
+          CONTROL_CHECKOUT: ${{ github.workspace }}/control
+          PROCESS_TARGET_CHECKOUT: ${{ github.workspace }}/target
+          PROCESS_PREPARATION_BUNDLE_DIR: ${{ runner.temp }}/preparation-bundle
+          PROCESS_VALIDATION_OUTCOME_DIR: ${{ runner.temp }}/validation-artifact/outcome
+          PROCESS_RUN_ID: ${{ matrix.run_id }}
+          PROCESS_RUN_ATTEMPT: ${{ matrix.run_attempt }}
+          PROCESS_AUTOMATION_POLICY_ID: ${{ matrix.automation_policy_id }}
+          PROCESS_CONTROL_OID: ${{ matrix.control_oid }}
+          PROCESS_STATE_BRANCH: ${{ matrix.branch }}
+          PROCESS_BASE_OID: ${{ matrix.base_oid }}
+          PROCESS_REF_HASH: ${{ matrix.ref_hash }}
+          PROCESS_TERRAFORM_VERSION: ${{ inputs.terraform_version }}
+        run: |
+          classification=$(jq -er '.classification' "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json")
+          if [[ "$classification" == "success" || "$classification" == "no-change" ]]; then
+            "$CONTROL_CHECKOUT/.github/scripts/process-state-branch.sh" validate
+          fi
+      - name: Upload validation outcome
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        timeout-minutes: 10
+        with:
+          name: validation-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}
+          path: ${{ runner.temp }}/validation-artifact
+          if-no-files-found: error
+          retention-days: 7
+      - name: Confirm validation classification
+        if: ${{ always() }}
+        env:
+          PREPARATION_MANIFEST: ${{ runner.temp }}/preparation-bundle/manifest.json
+          VALIDATION_MANIFEST: ${{ runner.temp }}/validation-artifact/outcome/manifest.json
+        run: |
+          preparation=$(jq -er '.classification' "$PREPARATION_MANIFEST")
+          if [[ "$preparation" == "success" || "$preparation" == "no-change" ]]; then
+            [[ -f "$VALIDATION_MANIFEST" ]] || exit 1
+            validation=$(jq -er '.classification' "$VALIDATION_MANIFEST")
+            [[ "$validation" == "$preparation" || "$validation" == "branch-validation" ]]
+          else
+            [[ "$preparation" == "branch-update" || "$preparation" == "branch-init" ]]
+            [[ ! -e "$VALIDATION_MANIFEST" ]]
+          fi
+
+  verify:
+    needs: [discover, prepare, validate]
+    if: ${{ always() && needs.discover.result == 'success' }}
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ inputs.max_parallel }}
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check current run attempt
+        env:
+          EXPECTED_RUN_ATTEMPT: ${{ matrix.run_attempt }}
+          CURRENT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [[ "$EXPECTED_RUN_ATTEMPT" != "$CURRENT_RUN_ATTEMPT" ]]; then
+            echo "Partial job reruns are unsupported; use Re-run all jobs." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.control_oid }}
+          path: control
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.base_oid }}
+          path: target
+      - name: Download preparation bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: preparation-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}
+          path: ${{ runner.temp }}/preparation-bundle
+      - name: Download validation outcome
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: validation-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}
+          path: ${{ runner.temp }}/validation-artifact
+      - name: Verify candidate result
+        env:
+          CONTROL_CHECKOUT: ${{ github.workspace }}/control
+          RECONCILE_RUN_ID: ${{ matrix.run_id }}
+          RECONCILE_RUN_ATTEMPT: ${{ matrix.run_attempt }}
+          RECONCILE_AUTOMATION_POLICY_ID: ${{ matrix.automation_policy_id }}
+          RECONCILE_CONTROL_OID: ${{ matrix.control_oid }}
+          RECONCILE_STATE_BRANCH: ${{ matrix.branch }}
+          RECONCILE_BASE_OID: ${{ matrix.base_oid }}
+          RECONCILE_REF_HASH: ${{ matrix.ref_hash }}
+          RECONCILE_PREPARATION_BUNDLE_DIR: ${{ runner.temp }}/preparation-bundle
+          RECONCILE_VALIDATION_OUTCOME_DIR: ${{ runner.temp }}/validation-artifact/outcome
+          RECONCILE_TARGET_CHECKOUT: ${{ github.workspace }}/target
+          RECONCILE_VERIFIED_RESULT_DIR: ${{ runner.temp }}/verified-result
+          RECONCILE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: '"$CONTROL_CHECKOUT/.github/scripts/reconcile-state-branch.sh" verify'
+      - name: Upload verified result
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verified-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}
+          path: ${{ runner.temp }}/verified-result
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [discover, verify]
+    if: ${{ always() && needs.discover.result == 'success' }}
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ inputs.max_parallel }}
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    concurrency:
+      group: tf-version-bump-publish-${{ github.repository_id }}-${{ matrix.ref_hash }}
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Check current run attempt
+        env:
+          EXPECTED_RUN_ATTEMPT: ${{ matrix.run_attempt }}
+          CURRENT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [[ "$EXPECTED_RUN_ATTEMPT" != "$CURRENT_RUN_ATTEMPT" ]]; then
+            echo "Partial job reruns are unsupported; use Re-run all jobs." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.control_oid }}
+          path: control
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+          ref: ${{ matrix.base_oid }}
+          path: target
+      - name: Download verified result
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: verified-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}
+          path: ${{ runner.temp }}/verified-result
+      - name: Publish verified result
+        env:
+          CONTROL_CHECKOUT: ${{ github.workspace }}/control
+          RECONCILE_RUN_ID: ${{ matrix.run_id }}
+          RECONCILE_RUN_ATTEMPT: ${{ matrix.run_attempt }}
+          RECONCILE_AUTOMATION_POLICY_ID: ${{ matrix.automation_policy_id }}
+          RECONCILE_CONTROL_OID: ${{ matrix.control_oid }}
+          RECONCILE_STATE_BRANCH: ${{ matrix.branch }}
+          RECONCILE_BASE_OID: ${{ matrix.base_oid }}
+          RECONCILE_REF_HASH: ${{ matrix.ref_hash }}
+          RECONCILE_VERIFIED_RESULT_DIR: ${{ runner.temp }}/verified-result
+          RECONCILE_TARGET_CHECKOUT: ${{ github.workspace }}/target
+          RECONCILE_GIT_REMOTE: ${{ github.server_url }}/${{ github.repository }}.git
+          RECONCILE_REPOSITORY: ${{ github.repository }}
+          RECONCILE_DRY_RUN: ${{ inputs.dry_run }}
+          RECONCILE_COMMIT_AUTHOR_NAME: ${{ inputs.commit_author_name || 'github-actions[bot]' }}
+          RECONCILE_COMMIT_AUTHOR_EMAIL: ${{ inputs.commit_author_email || '41898282+github-actions[bot]@users.noreply.github.com' }}
+          GH_TOKEN: ${{ github.token }}
+        run: '"$CONTROL_CHECKOUT/.github/scripts/reconcile-state-branch.sh" publish'
