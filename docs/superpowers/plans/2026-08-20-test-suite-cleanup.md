@@ -507,11 +507,15 @@ failures. Add `TestLoadConfigReadError`, use a missing file, require
 
 - [ ] **Step 4: Keep only distinct schema consumer contracts**
 
-Retain the two real-schema tests in `config_schema_test.go`, but remove schema assertions already
-fully owned by `loadConfig`. The final tests must prove only:
+Retain the two real-schema tests in `config_schema_test.go`. Remove only assertions genuinely
+owned by `loadConfig`; retain schema-only editor/validator contracts. The final tests must prove:
 
 - the schema exposes `terraform_version`, `providers`, module `from`, `ignore_versions`, and
-  `ignore_modules` with their documented scalar/array shapes; and
+  `ignore_modules` with their documented scalar/array shapes;
+- the top-level `anyOf` requires an option containing each of `modules`, `providers`, and
+  `terraform_version`;
+- provider items require `name` and `version`, and provider/module versions reference the shared
+  version-constraint definition; and
 - the version-pattern schema accepts Terraform constraints and rejects an empty version.
 
 Both tests must unmarshal `schema/config-schema.json` and inspect the real schema tree. Do not build
