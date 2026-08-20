@@ -1165,6 +1165,155 @@ test_processing_rejects_unexpected_changed_path() {
         "unexpected untracked path"
 }
 
+test_processing_rejects_non_utf8_changed_path() {
+    # Candidate paths are stored in JSON, so preparation must reject bytes that cannot round-trip
+    # through UTF-8 before publishing an ambiguous manifest.
+    setup_processing_workspace
+    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
+    mkdir "$fixture_bin"
+    cat >"$fixture_bin/terraform" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "version" && "${2:-}" == "-json" ]]; then
+    printf '%s\n' '{"terraform_version":"1.15.5"}'
+    exit 0
+fi
+invalid_path="${PROCESS_TARGET_CHECKOUT:?}/root/module"
+invalid_path+=$'\377'
+invalid_path+='.tf'
+printf '%s\n' 'terraform {}' >"$invalid_path"
+printf '%s\n' 'Terraform has been successfully initialized!'
+EOF
+    chmod 755 "$fixture_bin/terraform"
+    PROCESS_PATH_PREFIX=$fixture_bin
+    prepopulate_verified_processing_release_cache
+    ensure_processing_container
+
+    local host_target=$PROCESS_TARGET_CHECKOUT
+    local container_target="/tmp/tf-version-bump-non-utf8-preparation-$RANDOM"
+    local base_oid control_oid
+    base_oid=$(processing_base_oid)
+    control_oid=$(processing_control_oid)
+    docker exec "$PROCESS_CONTAINER_ID" cp -a "$host_target" "$container_target"
+    docker exec "$PROCESS_CONTAINER_ID" chown -R \
+        "$(id -u):$(id -g)" "$container_target"
+
+    PROCESS_TARGET_CHECKOUT="$container_target" \
+        PROCESS_BASE_OID="$base_oid" \
+        PROCESS_CONTROL_OID="$control_oid" \
+        assert_processing_failure \
+        "processing status error: changed path is not valid UTF-8" \
+        "non-UTF-8 changed path"
+}
+
+test_reconciliation_rejects_non_utf8_candidate_path_collision() {
+    # JSON replaces invalid UTF-8 bytes, so a raw patch path must not alias a distinct manifest
+    # path containing the literal replacement character.
+    setup_processing_workspace
+    local declared_path=$'root/module\357\277\275.tf'
+    printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' \
+        >"$PROCESS_TARGET_CHECKOUT/$declared_path"
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "$declared_path"
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
+        -c user.name="Processing Test" \
+        -c user.email="processing-test@example.invalid" \
+        commit -m "test: add manifest path collision fixture" >/dev/null
+
+    ensure_processing_container
+    local fixture_root="$PROCESS_TMP_ROOT/non-utf8-reconciliation"
+    local bundle="$fixture_root/preparation"
+    local outcome="$fixture_root/validation"
+    local verified="$fixture_root/verified"
+    local container_checkout="/tmp/tf-version-bump-non-utf8-checkout-$RANDOM"
+    local container_candidate="/tmp/tf-version-bump-non-utf8-candidate-$RANDOM"
+    mkdir -p "$bundle" "$outcome"
+    docker exec "$PROCESS_CONTAINER_ID" cp -a "$PROCESS_TARGET_CHECKOUT" "$container_checkout"
+    docker exec "$PROCESS_CONTAINER_ID" cp -a "$PROCESS_TARGET_CHECKOUT" "$container_candidate"
+    docker exec "$PROCESS_CONTAINER_ID" chown -R \
+        "$(id -u):$(id -g)" "$container_checkout" "$container_candidate"
+
+    local fixture_script="$fixture_root/create-invalid-candidate.sh"
+    cat >"$fixture_script" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+invalid_path="$CANDIDATE/root/module"
+invalid_path+=$'\377'
+invalid_path+='.tf'
+printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' >"$invalid_path"
+git -C "$CANDIDATE" add -N -- "${invalid_path#"$CANDIDATE/"}"
+git -C "$CANDIDATE" diff --binary --full-index --no-color >"$BUNDLE/candidate.patch"
+EOF
+    chmod 755 "$fixture_script"
+    docker exec \
+        --user "$(id -u):$(id -g)" \
+        --env "CANDIDATE=$container_candidate" \
+        --env "BUNDLE=$bundle" \
+        "$PROCESS_CONTAINER_ID" /bin/bash "$fixture_script"
+
+    local base_oid control_oid branch_hash patch_digest file_digest manifest_digest
+    base_oid=$(processing_base_oid)
+    control_oid=$(processing_control_oid)
+    branch_hash=$(processing_ref_hash)
+    patch_digest=$(sha256sum "$bundle/candidate.patch"); patch_digest=${patch_digest%% *}
+    file_digest=$(sha256sum "$PROCESS_TARGET_CHECKOUT/$declared_path"); file_digest=${file_digest%% *}
+    jq -n \
+        --arg control_oid "$control_oid" \
+        --arg base_oid "$base_oid" \
+        --arg ref_hash "$branch_hash" \
+        --arg state_branch "$PROCESS_STATE_BRANCH" \
+        --arg changed_path "$declared_path" \
+        --arg patch_digest "$patch_digest" \
+        --arg file_digest "$file_digest" \
+        '{schema_version: 1, run_id: "123456", run_attempt: "2",
+          automation_policy_id: "nonproduction", control_oid: $control_oid,
+          state_branch: $state_branch, base_oid: $base_oid, ref_hash: $ref_hash,
+          classification: "success", roots: [{path: "root"}],
+          changed_files: [{path: $changed_path, mode: "100644", sha256: $file_digest}],
+          patch_sha256: $patch_digest}' >"$bundle/manifest.json"
+    manifest_digest=$(sha256sum "$bundle/manifest.json"); manifest_digest=${manifest_digest%% *}
+    jq -n \
+        --arg control_oid "$control_oid" \
+        --arg base_oid "$base_oid" \
+        --arg ref_hash "$branch_hash" \
+        --arg state_branch "$PROCESS_STATE_BRANCH" \
+        --arg manifest_digest "$manifest_digest" \
+        '{schema_version: 1, run_id: "123456", run_attempt: "2",
+          automation_policy_id: "nonproduction", control_oid: $control_oid,
+          state_branch: $state_branch, base_oid: $base_oid, ref_hash: $ref_hash,
+          classification: "success", candidate_manifest_sha256: $manifest_digest}' \
+        >"$outcome/manifest.json"
+
+    local stdout_file="$fixture_root/verify.stdout"
+    local stderr_file="$fixture_root/verify.stderr"
+    if docker exec \
+        --user "$(id -u):$(id -g)" \
+        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env "GIT_CONFIG_VALUE_0=$container_checkout" \
+        --env RECONCILE_RUN_ID=123456 \
+        --env RECONCILE_RUN_ATTEMPT=2 \
+        --env RECONCILE_AUTOMATION_POLICY_ID=nonproduction \
+        --env "RECONCILE_CONTROL_OID=$control_oid" \
+        --env "RECONCILE_STATE_BRANCH=$PROCESS_STATE_BRANCH" \
+        --env "RECONCILE_BASE_OID=$base_oid" \
+        --env "RECONCILE_REF_HASH=$branch_hash" \
+        --env "RECONCILE_PREPARATION_BUNDLE_DIR=$bundle" \
+        --env "RECONCILE_VALIDATION_OUTCOME_DIR=$outcome" \
+        --env "RECONCILE_TARGET_CHECKOUT=$container_checkout" \
+        --env "RECONCILE_VERIFIED_RESULT_DIR=$verified" \
+        "$PROCESS_CONTAINER_ID" /bin/bash "$RECONCILE_SCRIPT" verify \
+        >"$stdout_file" 2>"$stderr_file"; then
+        fail "verification accepted a non-UTF-8 candidate path collision"
+    fi
+    [[ ! -s "$stdout_file" ]] \
+        || fail "non-UTF-8 candidate rejection emitted unexpected stdout"
+    grep -F 'candidate patch path is not valid UTF-8' "$stderr_file" >/dev/null \
+        || fail "non-UTF-8 candidate rejection emitted the wrong diagnostic"
+    [[ ! -e "$verified" ]] \
+        || fail "non-UTF-8 candidate rejection produced a verified result"
+}
+
 test_processing_rejects_gitignored_terraform_file() {
     # Production break caught: ordinary porcelain status omits an ignored direct `.tf` file, so
     # target-selected Terraform input bypasses the changed-path allow-list entirely.
@@ -2248,6 +2397,8 @@ test_processing_path_and_workspace_safety() {
     test_processing_allocates_fresh_trusted_data_directory_per_nested_root
     test_processing_removes_incomplete_bundle_when_final_mode_change_fails
     test_processing_rejects_unexpected_changed_path
+    test_processing_rejects_non_utf8_changed_path
+    test_reconciliation_rejects_non_utf8_candidate_path_collision
     test_processing_rejects_gitignored_terraform_file
     test_processing_rejects_deleted_terraform_file
     test_processing_rejects_renamed_terraform_file

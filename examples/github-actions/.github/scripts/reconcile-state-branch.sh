@@ -102,7 +102,11 @@ verify_declared_candidate() {
     git -C "$checkout" apply --index --binary "$patch" >/dev/null \
         || reconcile_error "candidate patch could not be applied"
 
-    local actual_paths declared_paths
+    local actual_paths declared_paths raw_paths_digest normalised_paths_digest
+    raw_paths_digest=$(git -C "$checkout" diff --cached --name-only -z | sha256sum)
+    normalised_paths_digest=$(git -C "$checkout" diff --cached --name-only -z | jq -Rjsc . | sha256sum)
+    [[ "${raw_paths_digest%% *}" == "${normalised_paths_digest%% *}" ]] \
+        || reconcile_error "candidate patch path is not valid UTF-8"
     actual_paths=$(git -C "$checkout" diff --cached --name-only -z | jq -Rsc 'split("\u0000") | map(select(length > 0)) | sort')
     declared_paths=$(jq -c '[.changed_files[].path] | sort' "$manifest")
     [[ "$actual_paths" == "$declared_paths" ]] \
