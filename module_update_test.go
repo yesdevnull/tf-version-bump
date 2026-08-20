@@ -94,16 +94,17 @@ func TestUpdateModuleVersionContract(t *testing.T) {
 			if got := readTestFile(t, file); got != tc.wantContent {
 				t.Errorf("content = %q, want %q", got, tc.wantContent)
 			}
-			if tc.verbose {
+			switch {
+			case tc.verbose:
 				if !strings.Contains(output.stdout, "matches 'ignore-version' filter") || strings.Contains(output.stdout, "does not match any 'from' filter") || output.stderr != "" {
 					t.Errorf("unexpected precedence output: stdout=%q stderr=%q", output.stdout, output.stderr)
 				}
-			} else if strings.Contains(tc.name, "local source") {
+			case strings.Contains(tc.name, "local source"):
 				want := fmt.Sprintf("Warning: Module 'vpc' in %s (source: './modules/vpc') is a local module and cannot be version-bumped, skipping\n", file)
 				if output.stdout != "" || output.stderr != want {
 					t.Errorf("streams = stdout %q stderr %q, want stdout empty stderr %q", output.stdout, output.stderr, want)
 				}
-			} else if output.stdout != "" || output.stderr != "" {
+			case output.stdout != "" || output.stderr != "":
 				t.Errorf("unexpected output: stdout=%q stderr=%q", output.stdout, output.stderr)
 			}
 		})

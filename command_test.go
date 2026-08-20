@@ -45,7 +45,7 @@ func TestParseFlagsRejectsInvalidOutput(t *testing.T) {
 	restore, _ := stubExit(t)
 	t.Cleanup(restore)
 	got := captureLog(t, func() {
-		withFlagArgs(t, []string{"tf-version-bump", "-output", "invalid"}, func() { requireExitCall(t, 1, func() { parseFlags() }) })
+		withFlagArgs(t, []string{"tf-version-bump", "-output", "invalid"}, func() { requireExitCall(t, func() { parseFlags() }) })
 	})
 	if got != "Error: Invalid output format 'invalid'. Must be 'text' or 'md'\n" {
 		t.Fatalf("diagnostic: %q", got)
@@ -72,10 +72,10 @@ func TestValidateOperationModesContract(t *testing.T) {
 			var out, diagnostic string
 			if tt.name == "no operation" {
 				out = captureStdout(t, func() {
-					withFlagArgs(t, []string{"tf-version-bump"}, func() { requireExitCall(t, 1, func() { validateOperationModes(tt.flags) }) })
+					withFlagArgs(t, []string{"tf-version-bump"}, func() { requireExitCall(t, func() { validateOperationModes(tt.flags) }) })
 				})
 			} else {
-				diagnostic = captureLog(t, func() { requireExitCall(t, 1, func() { validateOperationModes(tt.flags) }) })
+				diagnostic = captureLog(t, func() { requireExitCall(t, func() { validateOperationModes(tt.flags) }) })
 			}
 			if *code != 1 {
 				t.Fatal(*code)
@@ -97,7 +97,7 @@ func TestLoadModuleUpdatesRequiresFlags(t *testing.T) {
 	restore, _ := stubExit(t)
 	t.Cleanup(restore)
 	out := captureStdout(t, func() {
-		withFlagArgs(t, []string{"tf-version-bump"}, func() { requireExitCall(t, 1, func() { loadModuleUpdates(&cliFlags{}) }) })
+		withFlagArgs(t, []string{"tf-version-bump"}, func() { requireExitCall(t, func() { loadModuleUpdates(&cliFlags{}) }) })
 	})
 	if !strings.HasPrefix(out, "Usage:\n") {
 		t.Fatalf("output %q", out)
@@ -107,7 +107,7 @@ func TestLoadModuleUpdatesRequiresFlags(t *testing.T) {
 func TestRunCLIModeRequiresProviderVersion(t *testing.T) {
 	restore, _ := stubExit(t)
 	t.Cleanup(restore)
-	diag := captureLog(t, func() { requireExitCall(t, 1, func() { _ = runCLIMode(nil, &cliFlags{providerName: "aws"}) }) })
+	diag := captureLog(t, func() { requireExitCall(t, func() { _ = runCLIMode(nil, &cliFlags{providerName: "aws"}) }) })
 	if diag != "Error: -to flag is required when using -provider\n" {
 		t.Fatalf("diagnostics: %q", diag)
 	}
