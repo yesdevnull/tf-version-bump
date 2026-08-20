@@ -6,7 +6,7 @@ This is a quick reference guide for AI agents working with tf-version-bump. For 
 
 A CLI tool written in Go that updates Terraform module versions, Terraform required_version, and provider versions across multiple files using glob patterns.
 
-**Key tech**: Go 1.25+, HashiCorp HCL library, YAML configs
+**Key tech**: Go 1.26+, HashiCorp HCL library, YAML configs
 
 ## Quick Setup
 
@@ -177,7 +177,7 @@ make test-coverage                            # Coverage with report
 ## CI/CD
 
 GitHub Actions runs on every push/PR:
-- **Test**: Go 1.25 & 1.26, race detection, coverage upload
+- **Test**: Go 1.26, race detection, coverage upload
 - **Build**: 6 platforms (Linux/macOS/Windows × amd64/arm64)
 - **Lint**: golangci-lint with 11 enabled linters
 

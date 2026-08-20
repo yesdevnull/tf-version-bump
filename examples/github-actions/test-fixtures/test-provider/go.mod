@@ -1,6 +1,6 @@
 module github.com/yesdevnull/tf-version-bump/examples/github-actions/test-fixtures/test-provider
 
-go 1.25.8
+go 1.26
 
 require github.com/hashicorp/terraform-plugin-sdk/v2 v2.40.1
 

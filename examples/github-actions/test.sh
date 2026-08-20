@@ -591,24 +591,44 @@ EOF
     done
 }
 
-test_ci_runs_github_actions_poc_checks() {
-    # Production break caught: repository CI stops exercising the copyable workflow checks on an
-    # Ubuntu runner with the command-line prerequisites and Docker-backed test fixture they require.
-    yq -o=json '.jobs.test' "$REPOSITORY_ROOT/.github/workflows/ci.yml" | jq -e '
-        .["runs-on"] == "ubuntu-latest" and
-        any(.steps[];
+test_ci_uses_supported_go_and_runs_github_actions_poc_checks() {
+    # Production break caught: repository CI drifts from the supported Go toolchain or stops
+    # exercising the copyable workflow checks with their required Linux test infrastructure.
+    yq -o=json '.jobs' "$REPOSITORY_ROOT/.github/workflows/ci.yml" | jq -e '
+        .test["runs-on"] == "ubuntu-latest" and
+        .test.strategy == null and
+        any(.test.steps[];
+            .name == "Set up Go" and
+            .with["go-version"] == "1.26") and
+        all(.test.steps[];
+            ((.if // "") | contains("matrix.go-version") | not)) and
+        any(.test.steps[];
             .name == "Install GitHub Actions POC test prerequisites" and
-            .if == "matrix.go-version == '\''1.25'\''" and
             .run == "sudo apt-get update\nsudo apt-get install --yes bash curl git jq\n") and
-        any(.steps[];
+        any(.test.steps[];
             .name == "Check Docker test infrastructure availability" and
-            .if == "matrix.go-version == '\''1.25'\''" and
             .run == "docker version") and
-        any(.steps[];
+        any(.test.steps[];
             .name == "Run GitHub Actions POC checks" and
-            .if == "matrix.go-version == '\''1.25'\''" and
-            .run == "make test-github-actions")
-    ' >/dev/null || fail "repository CI does not run the GitHub Actions POC checks"
+            .run == "make test-github-actions") and
+        any(.build.steps[];
+            .name == "Set up Go" and
+            .with["go-version"] == "1.26")
+    ' >/dev/null || fail "repository CI does not use Go 1.26 for its complete test and build pipeline"
+}
+
+test_modules_require_supported_go_version() {
+    # Production break caught: the main or provider-fixture module still advertises support for an
+    # older Go toolchain than the one used to build and test the repository.
+    local module_root
+    for module_root in \
+        "$REPOSITORY_ROOT" \
+        "$SCRIPT_DIR/test-fixtures/test-provider"; do
+        local go_version
+        go_version=$(GOWORK=off go -C "$module_root" list -m -f '{{.GoVersion}}')
+        [[ "$go_version" == "1.26" ]] \
+            || fail "module does not require Go 1.26: $module_root ($go_version)"
+    done
 }
 
 test_copyable_workflow_layout() {
@@ -2244,7 +2264,8 @@ trap cleanup_test_repositories EXIT
 if [[ $# -eq 0 ]]; then
     test_actionlint_launcher_reports_pinned_version
     test_example_configs_pass_cli_dry_run
-    test_ci_runs_github_actions_poc_checks
+    test_ci_uses_supported_go_and_runs_github_actions_poc_checks
+    test_modules_require_supported_go_version
     test_copyable_workflow_layout
     test_reusable_workflow_declares_lean_interface
     test_reusable_workflow_wires_current_attempt_pipeline
