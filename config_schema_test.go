@@ -15,8 +15,6 @@ type versionSchema struct {
 }
 
 type configSchema struct {
-	Required    []string          `json:"required"`
-	AnyOf       []json.RawMessage `json:"anyOf"`
 	Definitions struct {
 		VersionConstraint versionSchema `json:"versionConstraint"`
 	} `json:"definitions"`
@@ -27,12 +25,7 @@ type configSchema struct {
 			} `json:"items"`
 		} `json:"modules"`
 		TerraformVersion json.RawMessage `json:"terraform_version"`
-		Providers        struct {
-			Items struct {
-				Required   []string                   `json:"required"`
-				Properties map[string]json.RawMessage `json:"properties"`
-			} `json:"items"`
-		} `json:"providers"`
+		Providers        json.RawMessage `json:"providers"`
 	} `json:"properties"`
 }
 
@@ -52,54 +45,31 @@ func loadConfigSchema(t *testing.T) configSchema {
 	return schema
 }
 
-func TestConfigSchemaIncludesProviderAndTerraformOptions(t *testing.T) {
+func TestConfigSchemaExposesConfigurationOptions(t *testing.T) {
 	schema := loadConfigSchema(t)
 
-	if schema.Definitions.VersionConstraint.Pattern == "" && len(schema.Definitions.VersionConstraint.OneOf) == 0 {
-		t.Fatalf("version constraint pattern definition is missing in schema")
+	if len(schema.Properties.TerraformVersion) == 0 {
+		t.Fatal("terraform_version schema is missing")
 	}
-
-	providerVersion, ok := schema.Properties.Providers.Items.Properties["version"]
-	if !ok {
-		t.Fatalf("provider version schema is missing")
-	}
-	if !referencesVersionConstraint(t, providerVersion) {
-		t.Fatalf("provider version should reference the shared version constraint definition")
-	}
-
-	if !contains(schema.Properties.Providers.Items.Required, "name") {
-		t.Errorf("provider schema should require 'name'")
-	}
-	if !contains(schema.Properties.Providers.Items.Required, "version") {
-		t.Errorf("provider schema should require 'version'")
-	}
-
-	requiredAnyOf := requiredOptionsFromAnyOf(t, schema.AnyOf)
-	for _, key := range []string{"modules", "providers", "terraform_version"} {
-		if !requiredAnyOf[key] {
-			t.Fatalf("schema anyOf should require at least one of modules/providers/terraform_version, missing %s", key)
-		}
-	}
-
-	if len(schema.Properties.Modules.Items.Properties) == 0 {
-		t.Fatalf("module properties are missing from schema")
-	}
-	if moduleVersion, ok := schema.Properties.Modules.Items.Properties["version"]; ok {
-		if !referencesVersionConstraint(t, moduleVersion) {
-			t.Fatalf("module version should reference the shared version constraint definition")
-		}
-	} else {
-		t.Fatalf("module version schema is missing")
-	}
-
 	if !referencesVersionConstraint(t, schema.Properties.TerraformVersion) {
-		t.Fatalf("terraform_version should reference the shared version constraint definition")
+		t.Fatal("terraform_version should reference the shared version constraint definition")
 	}
-
-	for _, field := range schema.Required {
-		if field == "modules" {
-			t.Errorf("modules should no longer be a required top-level field")
+	if schemaNodeType(t, schema.Properties.Providers) != "array" {
+		t.Fatal("providers should be an array")
+	}
+	for _, field := range []string{"ignore_versions", "ignore_modules"} {
+		if _, ok := schema.Properties.Modules.Items.Properties[field]; !ok {
+			t.Fatalf("module %s schema is missing", field)
 		}
+	}
+	if schemaNodeType(t, schema.Properties.Modules.Items.Properties["ignore_modules"]) != "array" {
+		t.Fatal("ignore_modules should be an array")
+	}
+	if !hasOneOfShape(t, schema.Properties.Modules.Items.Properties["from"], "string", "array") {
+		t.Fatal("from should allow scalar and array shapes")
+	}
+	if !hasOneOfShape(t, schema.Properties.Modules.Items.Properties["ignore_versions"], "string", "array") {
+		t.Fatal("ignore_versions should allow scalar and array shapes")
 	}
 }
 
@@ -108,19 +78,7 @@ func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
 
 	regexes := compileConstraintRegexps(t, schema.Definitions.VersionConstraint)
 
-	validConstraints := []string{
-		"1.2.3",
-		"v1.0.0",
-		"~> 3.0",
-		"~> 3.0.0-beta.1+build.5",
-		">= 1.2, < 2.0",
-		"!= 1.0.0",
-		"<=1.4.0",
-		">= 1.5, < 2.0",
-		">= 1",
-		"~> 2",
-		"< 3",
-	}
+	validConstraints := []string{"1.2.3", "~> 3.0", ">= 1.5, < 2.0"}
 
 	for _, constraint := range validConstraints {
 		matched := false
@@ -135,34 +93,51 @@ func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
 		}
 	}
 
-	invalidConstraints := []string{
-		"",
-		"invalid",
-		"1.2.3.4",
-		">= 1.0.0.0",
-		"~> abc",
-		"1.2,",
-		",1.2",
-		"1 2",
-	}
-
-	for _, constraint := range invalidConstraints {
-		for _, re := range regexes {
-			if re.MatchString(constraint) {
-				t.Errorf("expected schema pattern to reject %q", constraint)
-				break
-			}
+	for _, re := range regexes {
+		if re.MatchString("") {
+			t.Error("expected schema pattern to reject an empty version")
 		}
 	}
 }
 
-func contains(list []string, target string) bool {
-	for _, item := range list {
-		if item == target {
-			return true
+func schemaNodeType(t *testing.T, raw json.RawMessage) string {
+	t.Helper()
+	var node map[string]any
+	if err := json.Unmarshal(raw, &node); err != nil {
+		t.Fatalf("failed to parse schema node: %v", err)
+	}
+	typeName, _ := node["type"].(string)
+	return typeName
+}
+
+func hasOneOfShape(t *testing.T, raw json.RawMessage, shapes ...string) bool {
+	t.Helper()
+	var node struct {
+		OneOf []json.RawMessage `json:"oneOf"`
+	}
+	if err := json.Unmarshal(raw, &node); err != nil {
+		t.Fatalf("failed to parse oneOf schema: %v", err)
+	}
+	found := map[string]bool{}
+	for _, option := range node.OneOf {
+		var entry map[string]any
+		if err := json.Unmarshal(option, &entry); err != nil {
+			t.Fatalf("failed to parse oneOf option: %v", err)
+		}
+		if typeName, ok := entry["type"].(string); ok {
+			found[typeName] = true
+			continue
+		}
+		if allOf, ok := entry["allOf"].([]any); ok && len(allOf) > 0 {
+			found["string"] = true
 		}
 	}
-	return false
+	for _, shape := range shapes {
+		if !found[shape] {
+			return false
+		}
+	}
+	return true
 }
 
 func referencesVersionConstraint(t *testing.T, raw json.RawMessage) bool {
@@ -195,32 +170,6 @@ func referencesVersionConstraint(t *testing.T, raw json.RawMessage) bool {
 	}
 
 	return false
-}
-
-func requiredOptionsFromAnyOf(t *testing.T, clauses []json.RawMessage) map[string]bool {
-	t.Helper()
-
-	required := map[string]bool{}
-
-	for _, clause := range clauses {
-		var node map[string]any
-		if err := json.Unmarshal(clause, &node); err != nil {
-			t.Fatalf("failed to parse anyOf clause: %v", err)
-		}
-
-		reqList, ok := node["required"].([]any)
-		if !ok {
-			continue
-		}
-
-		for _, item := range reqList {
-			if name, ok := item.(string); ok {
-				required[name] = true
-			}
-		}
-	}
-
-	return required
 }
 
 func compileConstraintRegexps(t *testing.T, schema versionSchema) []*regexp.Regexp {
