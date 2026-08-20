@@ -1088,6 +1088,40 @@ EOF
         || fail "prepare reused a trusted TF_DATA_DIR across roots or invocations"
 }
 
+test_processing_removes_incomplete_bundle_when_final_mode_change_fails() {
+    # Production break caught: final publication moves the staged bundle before its root mode is
+    # made read-only, then a chmod failure leaves that incomplete destination available to upload.
+    setup_processing_workspace
+
+    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
+    mkdir "$fixture_bin"
+    cat >"$fixture_bin/chmod" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$#" -eq 2 && "$1" == "555" \
+    && "$2" == "${PROCESS_PREPARATION_BUNDLE_DIR:?}" ]]; then
+    echo "simulated final bundle chmod failure" >&2
+    exit 1
+fi
+exec /bin/chmod "$@"
+EOF
+    chmod 755 "$fixture_bin/chmod"
+    PROCESS_PATH_PREFIX=$fixture_bin
+
+    local stdout_file="$PROCESS_TMP_ROOT/final-mode.stdout"
+    local stderr_file="$PROCESS_TMP_ROOT/final-mode.stderr"
+    if run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
+        fail "final bundle chmod failure unexpectedly succeeded"
+    fi
+    [[ ! -s "$stdout_file" ]] \
+        || fail "final bundle chmod failure emitted unexpected stdout"
+    grep -F "simulated final bundle chmod failure" "$stderr_file" >/dev/null \
+        || fail "final bundle chmod failure did not reach finalisation"
+    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR" ]] \
+        || fail "final bundle chmod failure left an incomplete published bundle"
+}
+
 test_processing_rejects_unexpected_changed_path() {
     # Production break caught: an untracked file outside the direct Terraform/lock allow-list is
     # accepted into the future candidate patch and commit.
@@ -2180,6 +2214,7 @@ test_processing_path_and_workspace_safety() {
     test_processing_rejects_repository_terraform_directory
     test_processing_rejects_runner_temp_inside_either_checkout
     test_processing_allocates_fresh_trusted_data_directory_per_nested_root
+    test_processing_removes_incomplete_bundle_when_final_mode_change_fails
     test_processing_rejects_unexpected_changed_path
     test_processing_rejects_gitignored_terraform_file
     test_processing_rejects_deleted_terraform_file
