@@ -318,7 +318,7 @@ tests := []struct {
 	{name: "missing middle", input: "aws-prod-s3-au", pattern: "aws-*-vpc-*", want: false},
 	{name: "overlap too short", input: "abc", pattern: "abc*abc", want: false},
 	{name: "overlap minimum", input: "abcabc", pattern: "abc*abc", want: true},
-	{name: "zero-width middle", input: "module-test", pattern: "module-*-test", want: true},
+	{name: "zero-width middle", input: "module-test", pattern: "module*-test", want: true},
 	{name: "repeated part", input: "a-b-a-b", pattern: "a-*-a-*", want: true},
 	{name: "Unicode", input: "módulo-vpc-produção", pattern: "módulo-*-produção", want: true},
 }
