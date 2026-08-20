@@ -417,6 +417,7 @@ new test owners.
 
 - Replace: `config_test.go`
 - Modify: `config_schema_test.go`
+- Delete after the separate TDD defect fix: `from_versions_regression_test.go`
 - Reference only: configuration cases in `chaos_test.go`, `chaos_advanced_test.go`,
   `edge_cases_test.go`, `coverage_test.go`, and `integration_config_test.go`
 
@@ -426,6 +427,13 @@ new test owners.
   `sanitizeModuleUpdates`, `Config`, and the real schema file.
 - Produces: the sole final unit-test owner of YAML decoding and validation. Cross-operation config
   execution remains for Task 6.
+
+**Implementation discovery:** YAML v3 coerces non-string scalar sequence items when decoding
+directly into `[]string`, so `[4.0.0, 4]` exposed a production defect. Before resuming this cleanup
+task, fix that defect in the separate TDD commit required by the global constraints, using
+`from_versions_regression_test.go` as the focused RED test. Once this task's canonical
+`TestFromVersionsUnmarshalYAML` owns the same contract, delete the temporary regression file in the
+cleanup commit.
 
 - [ ] **Step 1: Replace the `FromVersions` permutations with one node-kind table**
 
@@ -536,11 +544,12 @@ go test -count=1 -race -coverprofile=/tmp/tf-version-bump-task3.cover -covermode
 go tool cover -func=/tmp/tf-version-bump-task3.cover
 /Users/dan/.codex/bin/codex-git -C /Users/dan/Code/tf-version-bump diff --check
 /Users/dan/.codex/bin/codex-git -C /Users/dan/Code/tf-version-bump status --short
-/Users/dan/.codex/bin/codex-git -C /Users/dan/Code/tf-version-bump add config_test.go config_schema_test.go
+/Users/dan/.codex/bin/codex-git -C /Users/dan/Code/tf-version-bump add config_test.go config_schema_test.go from_versions_regression_test.go
 /Users/dan/.codex/bin/codex-git -C /Users/dan/Code/tf-version-bump commit -m "test: reduce configuration tests to distinct contracts"
 ```
 
-Expected: all checks pass, coverage remains at least 90.0%, and the commit is signed.
+Expected: all checks pass, coverage remains at least 90.0%, the temporary regression file is
+deleted after its contract moves to `config_test.go`, and the commit is signed.
 
 ### Task 4: Consolidate module-update contracts
 
