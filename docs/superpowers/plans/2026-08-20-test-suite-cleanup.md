@@ -852,17 +852,18 @@ comma-separated ignore patterns and both repeated version flag slices.
 
 - [ ] **Step 2: Replace permissive fatal-path tests with exact exit tests**
 
-Add `TestParseFlagsRejectsInvalidOutput`, `TestValidateOperationModes`,
+Add `TestParseFlagsRejectsInvalidOutput`, `TestValidateOperationModesContract`,
 `TestLoadModuleUpdatesRequiresFlags`, and `TestRunCLIModeRequiresProviderVersion`.
 
 For every fatal row:
 
-1. call `stubExit` and defer its restoration;
+1. call `stubExit` and immediately register `t.Cleanup(restoreExit)` inside that fatal-row
+   subtest;
 2. capture the relevant log or stdout stream;
 3. invoke only the expected production call through `requireExitCall(t, 1, fn)`; and
 4. assert the exact diagnostic or stable usage prefix.
 
-`TestValidateOperationModes` must call the real function for four valid modes and three invalid
+`TestValidateOperationModesContract` must call the real function for four valid modes and three invalid
 cases: config mixed with module flags, no operation, and multiple operations. The no-operation row
 asserts the printed `Usage:` prefix and exact exit code. This replaces the test that merely built
 flags without invoking production code.
@@ -883,11 +884,13 @@ tf-version-bump 1.2.3
   built:  2026-08-20
 ```
 
-Add `TestRunConfigFileModeReturnsLoadError`, requiring no exit panic,
+Add `TestRunConfigFileModeReturnsLoadErrorContract`, requiring no exit panic,
 `errors.Is(err, os.ErrNotExist)`, and the `Error loading config file:` wrapper.
 
 Add `TestRunCLIModeMarkdownOutput` with one real module update and `output: "md"`; capture stdout
-and assert the exact update and summary lines use backticks around the module source and version.
+and assert the exact update line uses backticks around the module source and version, followed by
+the exact summary `\nSuccessfully updated 1 file(s)\n`. Require the complete output, including its
+trailing newline.
 Add `TestCommandNoMatchingModuleIsSuccess` through `runMainCommand`; use one selected file with a
 different module source and assert exact zero-update stdout, empty diagnostics, unchanged content,
 and `exitCode == -1` because normal success returns without invoking the exit hook.
@@ -910,10 +913,10 @@ runner error count/type, and compares the valid file with complete expected cont
 against one valid file. Assert exact final HCL, empty diagnostics, nil error, and exact three-line
 config summary counts.
 
-`AggregatesMixedFailures` retains the strong existing
-`TestRunConfigModeAggregatesMixedFileFailures` scenario: malformed files precede a valid file, all
-three later operations continue, the valid file receives every update, diagnostics are captured,
-the final summary is present, and the returned aggregate error is exact.
+`AggregatesMixedFailures` reuses the fixture from the existing
+`TestRunConfigModeAggregatesMixedFileFailures` scenario: malformed files precede a valid file and
+all three later operations continue. Strengthen the new owner to assert the exact final HCL,
+stdout, diagnostic sequence, and returned `10 update error(s)` aggregate.
 
 Do not migrate the individual config-mode module/Terraform/provider error tests; the mixed test
 owns cross-operation aggregation, while the unit and CLI-mode tables own the individual paths.
@@ -924,7 +927,7 @@ Run:
 
 ```bash
 gofmt -w command_test.go integration_test.go
-go test -run '^(TestStringSliceFlagContract|TestParseFlags.*|TestQuoteContract|TestLoadModuleUpdates.*|TestValidateOperationModes|TestRunCLIMode.*|TestCommand.*|TestRunConfigFileMode.*)$' -count=1
+go test -run '^(TestStringSliceFlagContract|TestParseFlagsContract|TestQuoteContract|TestLoadModuleUpdatesContract|TestParseFlagsRejectsInvalidOutput|TestValidateOperationModesContract|TestLoadModuleUpdatesRequiresFlags|TestRunCLIModeRequiresProviderVersion|TestCommandReportsAggregateFileFailure|TestCommandVersion|TestRunConfigFileModeReturnsLoadErrorContract|TestRunCLIModeMarkdownOutput|TestCommandNoMatchingModuleIsSuccess|TestRunCLIModeContinuesAfterFileFailure|TestRunConfigFileModeAppliesCombinedUpdates|TestRunConfigFileModeAggregatesMixedFailures)$' -count=1
 ```
 
 Expected: PASS with all expected process output captured.
