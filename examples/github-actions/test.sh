@@ -272,6 +272,7 @@ run_processing_validate() {
 run_processing_validate_without_docker() {
     ensure_processing_container
     docker exec \
+        --user "$(id -u):$(id -g)" \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env "GIT_CONFIG_VALUE_0=$PROCESS_TARGET_CHECKOUT" \
@@ -311,6 +312,7 @@ processing_ref_hash() {
 run_processing_prepare() {
     ensure_processing_container
     docker exec \
+        --user "$(id -u):$(id -g)" \
         --env GIT_CONFIG_COUNT=2 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env "GIT_CONFIG_VALUE_0=$PROCESS_CONTROL_CHECKOUT" \
