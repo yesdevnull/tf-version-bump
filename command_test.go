@@ -198,9 +198,10 @@ func TestCommandConfigDryRunOutputContract(t *testing.T) {
 	input := "terraform {\n  required_version = \">= 1.0\"\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\nmodule \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
 	file := writeTestFile(t, dir, "main.tf", input)
 	config := writeTestFile(t, dir, "updates.yml", "terraform_version: \">= 1.5\"\nproviders:\n  - name: aws\n    version: \"~> 5.0\"\nmodules:\n  - source: example/module\n    version: 2.0.0\n")
+	report := dir + "/report.json"
 
 	result := runMainCommand(t, []string{
-		"tf-version-bump", "-pattern", file, "-config", config, "-dry-run", "-output", "md",
+		"tf-version-bump", "-pattern", file, "-config", config, "-dry-run", "-output", "md", "-report-file", report,
 	})
 	wantStdout := "Found 1 file(s) matching pattern `" + file + "`\n" +
 		"Running in dry-run mode - no files will be modified\n" +
@@ -225,6 +226,10 @@ func TestCommandConfigDryRunOutputContract(t *testing.T) {
 	}
 	if got := readTestFile(t, file); got != input {
 		t.Errorf("config dry run content = %q, want %q", got, input)
+	}
+	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 0,\n  \"provider_blocks_updated\": 0\n}\n"
+	if got := readTestFile(t, report); got != wantReport {
+		t.Errorf("dry-run report = %q, want %q", got, wantReport)
 	}
 }
 
@@ -286,6 +291,51 @@ modules:
 	want := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 2,\n  \"provider_blocks_updated\": 2\n}\n"
 	if got := readTestFile(t, report); got != want {
 		t.Fatalf("report = %q, want %q", got, want)
+	}
+}
+
+func TestCommandReportPreservesSameTargetHumanOutput(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", `terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+module "current" {
+  source  = "example/module"
+  version = "2.0.0"
+}
+`)
+	config := writeTestFile(t, dir, "updates.yml", `providers:
+  - name: aws
+    version: "~> 5.0"
+modules:
+  - source: example/module
+    version: 2.0.0
+`)
+	report := dir + "/report.json"
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-config", config, "-report-file", report,
+	})
+
+	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n" +
+		"✓ Updated provider 'aws' to version '~> 5.0' in " + file + "\n" +
+		"✓ Updated module source 'example/module' to version '2.0.0' in " + file + "\n\n" +
+		"==================================================\n" +
+		"Config File Update Summary\n" +
+		"==================================================\n" +
+		"Providers: 1 update(s) applied\n" +
+		"Modules: 1 update(s) applied\n"
+	if result.exitCode != -1 || result.diagnostics != "" || result.stdout != wantStdout {
+		t.Fatalf("result = %#v, want stdout %q", result, wantStdout)
+	}
+	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 0,\n  \"provider_blocks_updated\": 0\n}\n"
+	if got := readTestFile(t, report); got != wantReport {
+		t.Fatalf("report = %q, want %q", got, wantReport)
 	}
 }
 

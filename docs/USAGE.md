@@ -65,9 +65,10 @@ The report has this stable shape:
 ```
 
 Counts represent individual blocks whose version value changed. Blocks already at the requested
-version are excluded. The report is written only after the update operation completes without
-errors. Terraform `required_version` changes and changed-file counts are outside this report;
-automation can derive file counts from its version-control diff.
+version are excluded. Dry runs write zero counts because they do not change files. The report is
+written only after the update operation completes without errors. Terraform `required_version`
+changes and changed-file counts are outside this report; automation can derive file counts from
+its version-control diff.
 
 ## Module updates
 

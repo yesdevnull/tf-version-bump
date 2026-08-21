@@ -189,7 +189,7 @@ through rather than hardcoding quotes.
 `-report-file` is the machine-readable automation contract. It writes schema version 1 JSON with
 exact counts of module and provider blocks whose version values changed. Keep human summaries and
 the report separate: existing summaries count source/file operations, while the report counts
-individual changed blocks.
+individual changed blocks. Dry-run reports contain zero counts because no file values changed.
 
 ## Testing
 
