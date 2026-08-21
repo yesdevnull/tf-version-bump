@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 )
@@ -58,7 +59,7 @@ func TestFindMatchingFilesHiddenPathPolicy(t *testing.T) {
 	}
 }
 
-func TestFindMatchingFilesExcludesSymlinksAndDirectories(t *testing.T) {
+func TestFindMatchingFilesIncludesFileSymlinksAndExcludesDirectories(t *testing.T) {
 	tmpDir := t.TempDir()
 	realDir := filepath.Join(tmpDir, "modules")
 	if err := os.MkdirAll(realDir, 0o755); err != nil {
@@ -66,13 +67,9 @@ func TestFindMatchingFilesExcludesSymlinksAndDirectories(t *testing.T) {
 	}
 	realFile := writeTestFile(t, realDir, "main.tf", "# test")
 	directoryLink := filepath.Join(tmpDir, "modules-link")
-	if err := os.Symlink(realDir, directoryLink); err != nil {
-		t.Fatal(err)
-	}
+	createSymlinkOrSkip(t, realDir, directoryLink)
 	fileLink := filepath.Join(tmpDir, "main-link.tf")
-	if err := os.Symlink(realFile, fileLink); err != nil {
-		t.Fatal(err)
-	}
+	createSymlinkOrSkip(t, realFile, fileLink)
 	flags := &cliFlags{pattern: filepath.Join(tmpDir, "**"), output: "text"}
 	var got []string
 	stdout, diagnostics, err := captureRunnerOutput(t, func() error { got = findMatchingFiles(flags); return nil })
@@ -82,6 +79,16 @@ func TestFindMatchingFilesExcludesSymlinksAndDirectories(t *testing.T) {
 	want := []string{fileLink, realFile}
 	if !slices.Equal(got, want) {
 		t.Errorf("files = %v, want %v", got, want)
+	}
+}
+
+func createSymlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlinks unavailable in this Windows environment: %v", err)
+		}
+		t.Fatal(err)
 	}
 }
 
