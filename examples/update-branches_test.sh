@@ -52,6 +52,7 @@ create_repository() {
     git -C "$repository" config user.email "tests@example.invalid"
     if [[ -z "${TFVB_GIT_WRAPPER:-}" ]]; then
         git -C "$repository" config gpg.format ssh
+        git -C "$repository" config gpg.ssh.program ssh-keygen
         git -C "$repository" config user.signingkey "$TEST_SIGNING_KEY"
         git -C "$repository" config commit.gpgsign false
     fi
