@@ -1,11 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 func TestExampleConfigsMatchDocumentedContract(t *testing.T) {
@@ -46,22 +49,121 @@ func assertDocumentedVersionConstraint(t *testing.T, filename, field, value stri
 }
 
 func TestDocumentationLocalLinksResolve(t *testing.T) {
+	brokenLinks, err := documentationLinkErrors(markdownTestFiles(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, brokenLink := range brokenLinks {
+		t.Error(brokenLink)
+	}
+}
+
+func documentationLinkErrors(documents []string) ([]string, error) {
+	var brokenLinks []string
+	anchorCache := make(map[string]map[string]struct{})
 	linkPattern := regexp.MustCompile(`\[[^]]+\]\(([^)]+)\)`)
-	for _, document := range markdownTestFiles(t) {
+	for _, document := range documents {
 		contents, err := os.ReadFile(document)
 		if err != nil {
-			t.Fatalf("read %s: %v", document, err)
+			return nil, fmt.Errorf("read %s: %w", document, err)
 		}
 		for _, match := range linkPattern.FindAllStringSubmatch(string(contents), -1) {
-			target := strings.SplitN(match[1], "#", 2)[0]
-			if target == "" || strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") || strings.HasPrefix(target, "mailto:") {
-				continue
+			brokenLink, err := documentationLinkError(document, match[1], anchorCache)
+			if err != nil {
+				return nil, err
 			}
-			resolved := filepath.Clean(filepath.Join(filepath.Dir(document), target))
-			if _, err := os.Stat(resolved); err != nil {
-				t.Errorf("%s links to %q: %v", document, target, err)
+			if brokenLink != "" {
+				brokenLinks = append(brokenLinks, brokenLink)
 			}
 		}
+	}
+	return brokenLinks, nil
+}
+
+func documentationLinkError(document, link string, anchorCache map[string]map[string]struct{}) (string, error) {
+	target, fragment, hasFragment := strings.Cut(link, "#")
+	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") || strings.HasPrefix(target, "mailto:") {
+		return "", nil
+	}
+	resolved := document
+	if target != "" {
+		resolved = filepath.Clean(filepath.Join(filepath.Dir(document), target))
+		if _, err := os.Stat(resolved); err != nil {
+			return fmt.Sprintf("%s links to %q: %v", document, target, err), nil
+		}
+	}
+	if !hasFragment || fragment == "" || !strings.EqualFold(filepath.Ext(resolved), ".md") {
+		return "", nil
+	}
+	anchors, ok := anchorCache[resolved]
+	if !ok {
+		targetContents, err := os.ReadFile(resolved)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", resolved, err)
+		}
+		anchors = markdownHeadingAnchors(string(targetContents))
+		anchorCache[resolved] = anchors
+	}
+	if _, ok := anchors[fragment]; !ok {
+		return fmt.Sprintf("%s links to missing heading %q in %s", document, "#"+fragment, resolved), nil
+	}
+	return "", nil
+}
+
+func markdownHeadingAnchors(contents string) map[string]struct{} {
+	anchors := make(map[string]struct{})
+	headingPattern := regexp.MustCompile(`(?m)^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$`)
+	for _, match := range headingPattern.FindAllStringSubmatch(contents, -1) {
+		base := markdownHeadingAnchor(match[1])
+		anchor := base
+		for suffix := 1; ; suffix++ {
+			if _, exists := anchors[anchor]; !exists {
+				break
+			}
+			anchor = fmt.Sprintf("%s-%d", base, suffix)
+		}
+		anchors[anchor] = struct{}{}
+	}
+	return anchors
+}
+
+func markdownHeadingAnchor(heading string) string {
+	var anchor strings.Builder
+	for _, character := range strings.ToLower(heading) {
+		switch {
+		case unicode.IsLetter(character), unicode.IsNumber(character), character == '-', character == '_':
+			anchor.WriteRune(character)
+		case unicode.IsSpace(character):
+			anchor.WriteByte('-')
+		}
+	}
+	return anchor.String()
+}
+
+func TestDocumentationLocalLinksRejectMissingAnchor(t *testing.T) {
+	document := writeTestFile(t, t.TempDir(), "guide.md", "# Existing Heading\n\n[valid](#existing-heading)\n[missing](#missing-heading)\n")
+
+	brokenLinks, err := documentationLinkErrors([]string{document})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{fmt.Sprintf("%s links to missing heading %q in %s", document, "#missing-heading", document)}
+	if !slices.Equal(brokenLinks, want) {
+		t.Fatalf("broken links = %q, want %q", brokenLinks, want)
+	}
+}
+
+func TestDocumentationLocalLinksAcceptDuplicateHeadingAnchor(t *testing.T) {
+	directory := t.TempDir()
+	writeTestFile(t, directory, "target.md", "# `Repeat`!\n\n## Repeat\n")
+	document := writeTestFile(t, directory, "guide.md", "[second heading](target.md#repeat-1)\n")
+
+	brokenLinks, err := documentationLinkErrors([]string{document})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(brokenLinks) != 0 {
+		t.Fatalf("broken links = %q, want none", brokenLinks)
 	}
 }
 
