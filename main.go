@@ -26,6 +26,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
+	tfaddr "github.com/hashicorp/terraform-registry-address"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -436,7 +437,7 @@ func printConfigSummary(terraformUpdates, providerUpdates, moduleUpdates int) {
 			fmt.Printf("Providers: %d update(s) applied\n", providerUpdates)
 		}
 		if moduleUpdates > 0 {
-			fmt.Printf("Modules: %d file(s) updated\n", moduleUpdates)
+			fmt.Printf("Modules: %d update(s) applied\n", moduleUpdates)
 		}
 	} else {
 		fmt.Println("\nNo updates were performed. Config file may be empty or contain no matching items.")
@@ -915,6 +916,11 @@ func updateModuleBlock(block *hclwrite.Block, opts *moduleUpdateOptions) bool {
 				quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat))
 			return false
 		}
+		if !isRegistryModule(sourceValue) {
+			fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) is not a registry module and cannot use a version attribute, skipping\n",
+				quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat))
+			return false
+		}
 	} else if shouldSkipModuleVersion(moduleName, attributeStringValue(versionAttr), opts) {
 		return false
 	}
@@ -979,6 +985,11 @@ func isLocalModule(source string) bool {
 	return strings.HasPrefix(source, "./") ||
 		strings.HasPrefix(source, "../") ||
 		strings.HasPrefix(source, "/")
+}
+
+func isRegistryModule(source string) bool {
+	_, err := tfaddr.ParseModuleSource(source)
+	return err == nil
 }
 
 // shouldIgnoreModule checks if a module name matches any of the ignore patterns.

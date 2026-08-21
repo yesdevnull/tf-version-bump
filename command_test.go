@@ -212,7 +212,7 @@ func TestCommandConfigDryRunOutputContract(t *testing.T) {
 		"==================================================\n" +
 		"Terraform version: 1 file(s) updated\n" +
 		"Providers: 1 update(s) applied\n" +
-		"Modules: 1 file(s) updated\n"
+		"Modules: 1 update(s) applied\n"
 
 	if result.stdout != wantStdout {
 		t.Errorf("stdout = %q, want %q", result.stdout, wantStdout)
@@ -244,7 +244,7 @@ func TestCommandReportsAggregateFileFailure(t *testing.T) {
 			if mode == "CLI" {
 				wantStdout += "Successfully updated 1 file(s)\n"
 			} else {
-				wantStdout += "==================================================\nConfig File Update Summary\n==================================================\nModules: 1 file(s) updated\n"
+				wantStdout += "==================================================\nConfig File Update Summary\n==================================================\nModules: 1 update(s) applied\n"
 			}
 			wantDiag := "Error processing " + bad + ": failed to parse HCL: " + bad + ":1,1-2: Argument or block definition required; An argument or block definition is required here.\n1 module update error(s)\n"
 			wantHCL := "module \"example\" {\n  source  = \"example/module\"\n  version = \"2.0.0\"\n}\n"

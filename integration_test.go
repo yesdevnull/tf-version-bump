@@ -79,7 +79,7 @@ modules:
 		"==================================================\n" +
 		"Terraform version: 2 file(s) updated\n" +
 		"Providers: 2 update(s) applied\n" +
-		"Modules: 2 file(s) updated\n"
+		"Modules: 2 update(s) applied\n"
 	if err != nil || diag != "" || stdout != wantStdout {
 		t.Fatalf("stdout=%q diag=%q err=%v", stdout, diag, err)
 	}
@@ -145,7 +145,7 @@ modules:
 	stdout, diag, err := captureRunnerOutput(t, func() error {
 		return runConfigFileMode([]string{bad1, bad2, good}, &cliFlags{configFile: cfg, output: "text"})
 	})
-	wantPrefix := "✓ Updated Terraform required_version to '>= 1.6' in " + good + "\n✓ Updated provider 'aws' to version '~> 5.0' in " + good + "\n✓ Updated provider 'azurerm' to version '~> 4.0' in " + good + "\n✓ Updated module source 'terraform-aws-modules/vpc/aws' to version '5.0.0' in " + good + "\n✓ Updated module source 'terraform-aws-modules/ec2-instance/aws' to version '6.0.0' in " + good + "\n\n==================================================\nConfig File Update Summary\n==================================================\nTerraform version: 1 file(s) updated\nProviders: 2 update(s) applied\nModules: 2 file(s) updated\n"
+	wantPrefix := "✓ Updated Terraform required_version to '>= 1.6' in " + good + "\n✓ Updated provider 'aws' to version '~> 5.0' in " + good + "\n✓ Updated provider 'azurerm' to version '~> 4.0' in " + good + "\n✓ Updated module source 'terraform-aws-modules/vpc/aws' to version '5.0.0' in " + good + "\n✓ Updated module source 'terraform-aws-modules/ec2-instance/aws' to version '6.0.0' in " + good + "\n\n==================================================\nConfig File Update Summary\n==================================================\nTerraform version: 1 file(s) updated\nProviders: 2 update(s) applied\nModules: 2 update(s) applied\n"
 	if err == nil || err.Error() != "10 update error(s)" || stdout != wantPrefix {
 		t.Fatalf("stdout=%q diag=%q err=%v content=%q", stdout, diag, err, readTestFile(t, good))
 	}
