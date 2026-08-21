@@ -127,6 +127,7 @@ type updateReport struct {
 	ProviderBlocksUpdated int `json:"provider_blocks_updated"`
 	moduleBlockIDs        map[string]struct{}
 	providerBlockIDs      map[string]struct{}
+	fileIdentities        []fs.FileInfo
 }
 
 type preparedReportFile struct {
@@ -135,7 +136,7 @@ type preparedReportFile struct {
 }
 
 func (report *updateReport) recordModuleBlocks(filename string, blockIndexes []int) {
-	fileID := canonicalFileIdentity(filename)
+	fileID := report.fileIdentity(filename)
 	if report.moduleBlockIDs == nil {
 		report.moduleBlockIDs = make(map[string]struct{})
 	}
@@ -150,7 +151,7 @@ func (report *updateReport) recordModuleBlocks(filename string, blockIndexes []i
 }
 
 func (report *updateReport) recordProviderBlocks(filename string, blockLocations []string) {
-	fileID := canonicalFileIdentity(filename)
+	fileID := report.fileIdentity(filename)
 	if report.providerBlockIDs == nil {
 		report.providerBlockIDs = make(map[string]struct{})
 	}
@@ -162,6 +163,20 @@ func (report *updateReport) recordProviderBlocks(filename string, blockLocations
 		report.providerBlockIDs[blockID] = struct{}{}
 		report.ProviderBlocksUpdated++
 	}
+}
+
+func (report *updateReport) fileIdentity(filename string) string {
+	fileInfo, err := os.Stat(filename)
+	if err == nil {
+		for index, existingIdentity := range report.fileIdentities {
+			if os.SameFile(fileInfo, existingIdentity) {
+				return fmt.Sprintf("file:%d", index)
+			}
+		}
+		report.fileIdentities = append(report.fileIdentities, fileInfo)
+		return fmt.Sprintf("file:%d", len(report.fileIdentities)-1)
+	}
+	return "path:" + canonicalFileIdentity(filename)
 }
 
 func canonicalFileIdentity(filename string) string {
@@ -296,6 +311,7 @@ func main() {
 
 	// Find and validate matching files
 	files := findMatchingFiles(flags)
+	validateRequiredOperationFlags(flags)
 	inputFiles := files
 	if flags.configFile != "" {
 		inputFiles = append(append([]string(nil), files...), flags.configFile)
@@ -324,6 +340,15 @@ func main() {
 		if publishErr := preparedReport.publish(flags.report); publishErr != nil {
 			fatalf("Error writing update report: %v", publishErr)
 		}
+	}
+}
+
+func validateRequiredOperationFlags(flags *cliFlags) {
+	if flags.moduleSource != "" {
+		_ = loadModuleUpdates(flags)
+	}
+	if flags.providerName != "" && flags.toVersion == "" {
+		fatalf("Error: -to flag is required when using -provider")
 	}
 }
 

@@ -339,6 +339,37 @@ modules:
 	}
 }
 
+func TestCommandReportCountsHardLinkedBlockOnce(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "a.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	linkedFile := dir + "/b.tf"
+	if err := os.Link(file, linkedFile); err != nil {
+		t.Skipf("cannot create hard link: %v", err)
+	}
+	config := writeTestFile(t, dir, "updates.yml", `modules:
+  - source: example/module
+    version: 2.0.0
+  - source: example/module
+    version: 3.0.0
+`)
+	report := dir + "/report.json"
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", dir + "/*.tf", "-config", config, "-report-file", report,
+	})
+
+	if result.exitCode != -1 || result.diagnostics != "" {
+		t.Fatalf("result = %#v", result)
+	}
+	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 0\n}\n"
+	if got := readTestFile(t, report); got != wantReport {
+		t.Errorf("report = %q, want %q", got, wantReport)
+	}
+	if got := readTestFile(t, linkedFile); !strings.Contains(got, `version = "3.0.0"`) {
+		t.Errorf("final Terraform content = %q", got)
+	}
+}
+
 func TestCommandRejectsReportInputCollision(t *testing.T) {
 	t.Run("Terraform input", func(t *testing.T) {
 		dir := t.TempDir()
@@ -464,6 +495,38 @@ func TestCommandDiscardsPreparedReportAfterUpdateFailure(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Name() != "main.tf" {
 		t.Errorf("temporary directory entries = %v, want only main.tf", entries)
+	}
+}
+
+func TestCommandDoesNotPrepareReportBeforeRequiredFlagValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "module", args: []string{"-module", "example/module"}},
+		{name: "provider", args: []string{"-provider", "aws"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			file := writeTestFile(t, dir, "main.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+			report := dir + "/report.json"
+			args := append([]string{"tf-version-bump", "-pattern", file, "-report-file", report}, tt.args...)
+
+			result := runMainCommand(t, args)
+
+			if result.exitCode != 1 {
+				t.Errorf("result = %#v, want exit code 1", result)
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("read temporary directory: %v", err)
+			}
+			if len(entries) != 1 || entries[0].Name() != "main.tf" {
+				t.Errorf("temporary directory entries = %v, want only main.tf", entries)
+			}
+		})
 	}
 }
 
