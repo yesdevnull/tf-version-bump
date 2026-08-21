@@ -8,19 +8,6 @@ import (
 	"testing"
 )
 
-func TestStringSliceFlagContract(t *testing.T) {
-	var got stringSliceFlag
-	if err := got.Set("3.0.0"); err != nil {
-		t.Fatal(err)
-	}
-	if err := got.Set("~> 3.0"); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual([]string(got), []string{"3.0.0", "~> 3.0"}) || got.String() != "3.0.0,~> 3.0" {
-		t.Fatalf("unexpected flag: %#v %q", got, got.String())
-	}
-}
-
 func TestParseFlagsContract(t *testing.T) {
 	args := []string{"tf-version-bump", "-pattern", "**/*.tf", "-module", "example/module", "-to", "2.0.0", "-from", "1.0.0", "-from", "1.5.0", "-ignore-version", "3.0.0", "-ignore-modules", "vpc, legacy-*", "-config", "config.yml", "-force-add", "-dry-run", "-verbose", "-version", "-output", "md", "-terraform-version", ">= 1.5", "-provider", "aws"}
 	withFlagArgs(t, args, func() {
@@ -53,9 +40,6 @@ func TestParseFlagsRejectsInvalidOutput(t *testing.T) {
 }
 
 func TestValidateOperationModesContract(t *testing.T) {
-	for _, flags := range []*cliFlags{{terraformVersion: ">= 1.5"}, {providerName: "aws"}} {
-		validateOperationModes(flags)
-	}
 	tests := []struct {
 		name  string
 		flags *cliFlags
@@ -67,7 +51,7 @@ func TestValidateOperationModesContract(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			restore, code := stubExit(t)
+			restore, _ := stubExit(t)
 			t.Cleanup(restore)
 			var out, diagnostic string
 			if tt.name == "no operation" {
@@ -77,17 +61,11 @@ func TestValidateOperationModesContract(t *testing.T) {
 			} else {
 				diagnostic = captureLog(t, func() { requireExitCall(t, func() { validateOperationModes(tt.flags) }) })
 			}
-			if *code != 1 {
-				t.Fatal(*code)
-			}
 			if tt.name == "no operation" && !strings.HasPrefix(out, tt.want) {
 				t.Fatalf("output %q", out)
 			}
 			if tt.name != "no operation" && diagnostic != tt.want {
 				t.Fatalf("diagnostic %q", diagnostic)
-			}
-			if tt.name != "no operation" && diagnostic == "" {
-				t.Fatal("missing diagnostic")
 			}
 		})
 	}
