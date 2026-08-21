@@ -425,7 +425,8 @@ new test owners.
 
 - Consumes: `FromVersions.UnmarshalYAML`, `loadConfig`, `sanitizeProviderUpdates`,
   `sanitizeModuleUpdates`, `Config`, and the real schema file.
-- Produces: the sole final unit-test owner of YAML decoding and validation. Cross-operation config
+- Produces: the sole final unit-test owner of YAML decoding, empty version-filter sanitisation,
+  validation, and the real schema's public version and item-shape contracts. Cross-operation config
   execution remains for Task 6.
 
 **Implementation discovery:** YAML v3 coerces non-string scalar sequence items when decoding
@@ -739,8 +740,8 @@ deleted with their containing files wholesale in Task 6.
 
 - Consumes: `updateTerraformVersion`, `updateProviderVersion`, `writeTestFile`, and
   `readTestFile`.
-- Produces: the sole final unit-test owners for Terraform and provider updates. Runner aggregation
-  remains for Task 6.
+- Produces: the sole final unit-test owners for Terraform and provider updates, including both
+  documented provider missing-version branches. Runner aggregation remains for Task 6.
 
 - [ ] **Step 1: Add the Terraform-version contract table**
 

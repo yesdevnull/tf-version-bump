@@ -19,13 +19,13 @@ func (f *FromVersions) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind == yaml.SequenceNode {
 		for _, item := range value.Content {
 			if item.ShortTag() != "!!str" {
-				return fmt.Errorf("from field array contains non-string values")
+				return fmt.Errorf("version filter array contains non-string values")
 			}
 		}
 
 		var slice []string
 		if err := value.Decode(&slice); err != nil {
-			return fmt.Errorf("from field array contains non-string values: %w", err)
+			return fmt.Errorf("version filter array contains non-string values: %w", err)
 		}
 		*f = FromVersions(slice)
 		return nil
@@ -35,7 +35,7 @@ func (f *FromVersions) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind == yaml.ScalarNode {
 		// Only accept string scalars, reject numbers and booleans
 		if value.Tag != "!!str" {
-			return fmt.Errorf("from field must be a string or array of strings, got %s", value.Tag)
+			return fmt.Errorf("version filter must be a string or array of strings, got %s", value.Tag)
 		}
 
 		str := value.Value
@@ -48,7 +48,7 @@ func (f *FromVersions) UnmarshalYAML(value *yaml.Node) error {
 		return nil
 	}
 
-	return fmt.Errorf("from field must be either a string or an array of strings, got node kind %v", value.Kind)
+	return fmt.Errorf("version filter must be either a string or an array of strings, got node kind %v", value.Kind)
 }
 
 // ModuleUpdate represents a single module source and its target version.
