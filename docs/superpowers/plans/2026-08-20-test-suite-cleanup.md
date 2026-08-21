@@ -910,8 +910,15 @@ and `exitCode == -1` because normal success returns without invoking the exit ho
 Add `TestCommandDryRunOutputContract` as one three-row real-command table for module, Terraform,
 and provider modes. The module row includes a matching `-from` value. Every row asserts the exact
 selection banner, dry-run action line, operation-specific dry-run summary, empty diagnostics,
-normal-return status, and byte-for-byte non-mutation. This table is the sole owner of public
-dry-run output; lower-level updater tests continue to own only update detection and non-mutation.
+normal-return status, and byte-for-byte non-mutation. This table owns direct-operation dry-run
+output; lower-level updater tests continue to own only update detection and non-mutation.
+
+Add `TestCommandConfigDryRunOutputContract` as the combined config-mode owner for Terraform,
+provider, and module dry-run execution. It asserts the exact three-operation output and summary,
+normal-return status, empty diagnostics, and byte-for-byte non-mutation of the selected file.
+
+The deleted `TestQuoteContract` is subsumed by exact text quoting in command and integration output
+assertions, and by exact Markdown quoting in `TestRunCLIModeMarkdownOutput`.
 
 - [ ] **Step 4: Add only cross-boundary integration scenarios**
 
