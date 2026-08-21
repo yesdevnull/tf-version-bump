@@ -1,8 +1,8 @@
 # Release process and verification
 
 Git tags beginning with `v` trigger the release workflow. GitHub Actions uses GoReleaser to build
-and publish archives and Linux packages, then the SLSA generator creates provenance for the
-published artefacts.
+archives and Linux packages in a draft release, the SLSA generator attaches provenance, and a final
+job publishes the complete release.
 
 This page serves two audiences:
 
@@ -75,12 +75,16 @@ generator, and uploads the resulting in-toto JSONL file to the release. Third-pa
 pinned to commit SHAs, except for the reusable SLSA generator's upstream-required exact semantic
 version tag. Jobs declare their required permissions explicitly.
 
+GoReleaser runs the tagged module through `proxy.golang.org` and verifies dependencies through
+`sum.golang.org`. This tagged proxy path records verifiable module information in the binaries; a
+local snapshot does not exercise it.
+
 ## Create a release
 
 Before tagging:
 
 1. Ensure the intended commit is on `main` and the worktree is clean.
-2. Run the full tests and lint checks.
+2. Run the full tests, `go mod tidy -diff`, and lint checks.
 3. Choose a semantic version. Include a pre-release suffix when the release is not stable.
 4. Review `.goreleaser.yaml` and `.github/workflows/release.yml` when changing artefact formats.
 
@@ -96,10 +100,21 @@ git push origin "v<version>"
 The tag push starts `.github/workflows/release.yml`, which:
 
 1. Checks out full history.
-2. Installs the Go version declared by `go.mod`.
-3. Runs GoReleaser with `release --clean`.
+2. Installs Go 1.26.6 and GoReleaser v2.17.1 exactly.
+3. Runs GoReleaser with `release --clean`, creating a draft release.
 4. Collects archive and package digests.
-5. Generates and uploads SLSA provenance.
+5. Generates and uploads SLSA provenance to the draft.
+6. Publishes the draft only after the build and provenance jobs succeed.
+
+If a complete workflow rerun is required after a failure, GoReleaser replaces the existing draft
+for that tag and uploads a clean set of assets. If only the final publication job failed, rerunning
+the failed job publishes the already-complete draft.
+
+Before relying on release immutability, follow
+[GitHub's repository instructions](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/prevent-release-changes#enforcing-immutable-releases-for-your-repository):
+open the repository's **Settings**, scroll to **Releases**, and select **Enable release
+immutability**. The setting applies only to releases published after it is enabled. Drafts remain
+editable while the workflow is assembling them; after publication, GitHub locks the tag and assets.
 
 After the workflow completes, verify that the release contains all six platform archives, four
 Linux packages, the checksum manifest, and provenance file. Perform at least one checksum and
@@ -107,18 +122,20 @@ provenance verification using the published assets.
 
 ## Test a release locally
 
-Install GoReleaser v2 and create a snapshot without publishing:
+Install the release workflow's exact GoReleaser version and create a snapshot without publishing:
 
 ```bash
-go install github.com/goreleaser/goreleaser/v2@latest
+go install github.com/goreleaser/goreleaser/v2@v2.17.1
+goreleaser --version
 goreleaser release --snapshot --clean
 ```
 
-GoReleaser writes snapshot output under `dist/`. The configured pre-build hooks run `go mod tidy`
-and `go generate ./...`, so check the worktree afterwards and do not discard unexpected changes.
+GoReleaser writes snapshot output under `dist/`. The release configuration uses `-trimpath`, the
+source commit date, and commit-based modification times to reduce environmental differences. It
+does not run source-mutating pre-build hooks.
 
-A local snapshot confirms GoReleaser packaging. It does not reproduce GitHub OIDC or the reusable
-SLSA workflow.
+A local snapshot confirms GoReleaser packaging. It does not exercise tagged Go module proxy mode,
+prove byte-identical reproducibility, reproduce GitHub OIDC, or run the reusable SLSA workflow.
 
 ## Troubleshooting
 
@@ -141,3 +158,6 @@ the leading `v`.
 
 Inspect both the GoReleaser and SLSA jobs in the tag-triggered workflow. A GoReleaser success does
 not by itself prove that provenance generation and upload also completed.
+
+If the release is still a draft, inspect the failed job before publishing it manually. Prefer a
+workflow rerun so the draft is rebuilt or published through the same reviewed process.
