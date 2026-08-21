@@ -38,6 +38,7 @@ type configSchema struct {
 		Providers        struct {
 			Type  string `json:"type"`
 			Items struct {
+				Type                 string                     `json:"type"`
 				Required             []string                   `json:"required"`
 				AdditionalProperties *bool                      `json:"additionalProperties"`
 				Properties           map[string]json.RawMessage `json:"properties"`
@@ -74,6 +75,9 @@ func TestConfigSchemaExposesConfigurationOptions(t *testing.T) {
 	assertVersionConstraintNode(t, "terraform_version", schema.Properties.TerraformVersion)
 	if schema.Properties.Providers.Type != "array" {
 		t.Fatal("providers should be an array")
+	}
+	if schema.Properties.Providers.Items.Type != "object" {
+		t.Fatal("provider items should be objects")
 	}
 	if schema.Properties.Modules.Type != "array" {
 		t.Fatal("modules should be an array")
