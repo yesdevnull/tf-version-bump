@@ -159,6 +159,55 @@ func TestUpdateModuleVersionWarnsWhenVersionMissing(t *testing.T) {
 	}
 }
 
+func TestUpdateModuleVersionForceAddRequiresRegistrySource(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+	}{
+		{name: "Git URL", source: "git::https://github.com/example/vpc.git"},
+		{name: "GitHub shorthand", source: "github.com/example/vpc"},
+		{name: "HTTP URL", source: "https://example.com/vpc.zip"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := fmt.Sprintf("module \"vpc\" {\n  source = %q\n}\n", tt.source)
+			file := writeTestFile(t, t.TempDir(), "main.tf", input)
+			wantWarning := fmt.Sprintf("Warning: Module 'vpc' in %s (source: '%s') is not a registry module and cannot use a version attribute, skipping\n", file, tt.source)
+
+			var updated bool
+			var err error
+			stderr := captureStderr(t, func() {
+				updated, err = updateModuleVersion(file, tt.source, "2.0.0", nil, nil, nil, true, false, false, "text")
+			})
+
+			if err != nil || updated {
+				t.Fatalf("updated=%v err=%v", updated, err)
+			}
+			if stderr != wantWarning {
+				t.Errorf("stderr = %q, want %q", stderr, wantWarning)
+			}
+			if got := readTestFile(t, file); got != input {
+				t.Errorf("content = %q, want unchanged %q", got, input)
+			}
+		})
+	}
+}
+
+func TestUpdateModuleVersionForceAddSupportsPrivateRegistrySource(t *testing.T) {
+	input := "module \"vpc\" {\n  source = \"app.terraform.io/example/vpc/aws\"\n}\n"
+	file := writeTestFile(t, t.TempDir(), "main.tf", input)
+
+	updated, err := updateModuleVersion(file, "app.terraform.io/example/vpc/aws", "2.0.0", nil, nil, nil, true, false, false, "text")
+	if err != nil || !updated {
+		t.Fatalf("updated=%v err=%v", updated, err)
+	}
+	want := "module \"vpc\" {\n  source  = \"app.terraform.io/example/vpc/aws\"\n  version = \"2.0.0\"\n}\n"
+	if got := readTestFile(t, file); got != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+}
+
 func TestUpdateModuleVersionPreservesHCL(t *testing.T) {
 	input := "# This is a comment\nmodule \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n\n  # Another comment\n  name = \"my-vpc\"\n  cidr = var.vpc_cidr\n}\n\nmodule \"other\" {\n  source = \"terraform-aws-modules/s3-bucket/aws\"\n  version = \"1.0.0\"\n}\n"
 	want := "# This is a comment\nmodule \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"5.0.0\"\n\n  # Another comment\n  name = \"my-vpc\"\n  cidr = var.vpc_cidr\n}\n\nmodule \"other\" {\n  source  = \"terraform-aws-modules/s3-bucket/aws\"\n  version = \"1.0.0\"\n}\n"
