@@ -180,6 +180,8 @@ GitHub Actions runs on every push/PR:
 - **Test**: Go 1.26, race detection, coverage upload
 - **Build**: 6 platforms (Linux/macOS/Windows × amd64/arm64)
 - **Lint**: golangci-lint with 11 enabled linters
+- **Documentation**: `make docs-check` for Markdown, schema, maintained example, and
+  documentation-test changes
 
 ## Version Filtering Logic
 

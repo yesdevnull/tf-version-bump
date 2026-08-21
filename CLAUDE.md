@@ -178,8 +178,9 @@ Adding a config field means updating `schema/config-schema.json` too.
 
 File-level errors log and continue to the next file; bad flags, invalid globs, no file matches,
 and an unparseable config are fatal (`fatalf`). Warnings go to stderr prefixed `Warning:` for
-local modules and missing version attributes without `-force-add`. Filtered modules are printed
-only with `-verbose`. Prefer skipping over guessing.
+local modules, missing version attributes without `-force-add`, and non-registry sources where
+`-force-add` cannot add a version. Filtered modules are printed only with `-verbose`. Prefer
+skipping over guessing.
 
 Success is prefixed `✓`; dry-run lines use `→` with the verb "Would update". User-facing values are wrapped with
 `quote(s, format)`: `'vpc'` for `text` output, `` `vpc` `` for `md`. Thread `outputFormat`
@@ -198,6 +199,7 @@ Final test layout by concern:
 - `terraform_version_test.go` — Terraform required-version updates.
 - `provider_update_test.go` — provider updates and attribute preservation.
 - `config_test.go` / `config_schema_test.go` — YAML configuration and schema validation.
+- `documentation_test.go` — local documentation links, schema-backed examples, and constraints.
 - `command_test.go` — CLI parsing, output, and exit behaviour.
 - `integration_test.go` — cross-file and cross-operation continuation.
 - `release_workflow_test.go` — release workflow artefact validation.
@@ -225,11 +227,13 @@ Copy files from `examples/` to a temporary directory before manual write-mode te
 
 ## CI
 
-Runs on push/PR to `main`, skipping `**/*.md`.
+The primary CI workflow runs on push/PR to `main`, skipping `**/*.md`.
 
 - **Test** — Go 1.26, `-race` + coverage; uploads to Codecov
 - **Build** — needs Test; cross-compiles 6 targets (linux/darwin/windows × amd64/arm64)
 - **Lint** — golangci-lint, only on Go/dependency file changes
+- **Documentation** — a separate path-filtered workflow runs `make docs-check` for Markdown,
+  schema, maintained example, and documentation-test changes
 - **CodeQL** and **Release** (GoReleaser + SLSA, tag-triggered) run separately
 
 ## Conventions

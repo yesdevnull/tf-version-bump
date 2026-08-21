@@ -64,8 +64,9 @@ tf-version-bump \
   -to "5.0.0"
 ```
 
-Module sources are compared as exact strings. All matching module blocks are updated, no
-matter what their block labels are.
+Module sources are compared as exact strings. All eligible module blocks with a matching source
+are updated, no matter what their block labels are. Eligibility depends on the current-version,
+module-name, and missing-version controls described below.
 
 ### Update the required Terraform version
 
