@@ -641,7 +641,7 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 	return updated, nil
 }
 
-// updateProviderVersion updates the version attribute for a specific provider in terraform required_providers blocks
+// updateProviderVersionWithCount updates a provider version and counts blocks whose values changed.
 //
 // This implementation supports both provider syntax styles:
 //
@@ -660,7 +660,8 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 //   - dryRun: If true, show what would be changed without modifying files
 //
 // Returns:
-//   - bool: true if a provider was updated (or would be updated in dry-run mode)
+//   - updated: true if a provider operation was applied (or would be applied in dry-run mode)
+//   - blocksChanged: number of provider blocks whose version values differ from the target
 //   - error: Any error encountered during file reading, parsing, or writing
 func updateProviderVersionWithCount(filename, providerName, version string, dryRun bool) (updated bool, blocksChanged int, err error) {
 	// Get original file permissions to preserve them when writing
@@ -851,8 +852,7 @@ func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
 	return rootName.Name, true
 }
 
-// updateModuleVersion parses a Terraform file, finds modules with the specified source,
-// updates their version attribute, and writes the modified content back to the file.
+// updateModuleVersionWithCount updates modules with the specified source and counts changed blocks.
 //
 // The function retains comments and other HCL structures, then normalises the changed file with
 // hclwrite.Format.
@@ -880,7 +880,8 @@ func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
 //   - outputFormat: Output format ("text" or "md")
 //
 // Returns:
-//   - bool: true if at least one module was updated (or would be updated in dry-run mode), false otherwise
+//   - updated: true if at least one module operation was applied (or would be applied in dry-run mode)
+//   - blocksChanged: number of module blocks whose version values differ from the target
 //   - error: Any error encountered during file reading, parsing, or writing
 func updateModuleVersionWithCount(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, blocksChanged int, err error) {
 	// Get original file permissions to preserve them when writing
