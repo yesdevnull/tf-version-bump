@@ -114,7 +114,7 @@ tf-version-bump -pattern "**/*.tf" -config versions.yml
 
 Config mode is exclusive with `-module`, `-provider`, `-terraform-version`, `-to`, and the
 module-filter flags. It can still be combined with global behaviour flags such as `-dry-run`,
-`-force-add`, `-verbose`, and `-output`.
+`-force-add`, `-verbose`, `-output`, and `-report-file`.
 
 ## Preview and review
 
@@ -140,6 +140,10 @@ terraform validate
 `tf-version-bump` checks HCL syntax but cannot determine whether a new version is compatible
 with your Terraform configuration. Use your normal validation and planning workflow before
 deployment.
+
+Automation can pass `-report-file update-report.json` to receive exact updated module and
+provider block counts as JSON. See the [usage reference](docs/USAGE.md#machine-readable-update-report)
+for the report contract.
 
 ## Common controls
 
