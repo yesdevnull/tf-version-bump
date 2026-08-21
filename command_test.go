@@ -339,6 +339,134 @@ modules:
 	}
 }
 
+func TestCommandRejectsReportInputCollision(t *testing.T) {
+	t.Run("Terraform input", func(t *testing.T) {
+		dir := t.TempDir()
+		input := "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+		file := writeTestFile(t, dir, "main.tf", input)
+
+		result := runMainCommand(t, []string{
+			"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-report-file", file,
+		})
+
+		wantDiagnostic := "Error: report file must not overwrite input file: " + file + "\n"
+		if result.exitCode != 1 || result.diagnostics != wantDiagnostic {
+			t.Errorf("result = %#v, want diagnostic %q", result, wantDiagnostic)
+		}
+		if got := readTestFile(t, file); got != input {
+			t.Errorf("Terraform input = %q, want unchanged %q", got, input)
+		}
+	})
+
+	t.Run("config input", func(t *testing.T) {
+		dir := t.TempDir()
+		input := "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+		file := writeTestFile(t, dir, "main.tf", input)
+		configContent := "modules:\n  - source: example/module\n    version: 2.0.0\n"
+		config := writeTestFile(t, dir, "updates.yml", configContent)
+
+		result := runMainCommand(t, []string{
+			"tf-version-bump", "-pattern", file, "-config", config, "-report-file", config,
+		})
+
+		wantDiagnostic := "Error: report file must not overwrite input file: " + config + "\n"
+		if result.exitCode != 1 || result.diagnostics != wantDiagnostic {
+			t.Errorf("result = %#v, want diagnostic %q", result, wantDiagnostic)
+		}
+		if got := readTestFile(t, file); got != input {
+			t.Errorf("Terraform input = %q, want unchanged %q", got, input)
+		}
+		if got := readTestFile(t, config); got != configContent {
+			t.Errorf("config input = %q, want unchanged %q", got, configContent)
+		}
+	})
+
+	t.Run("symlink alias", func(t *testing.T) {
+		dir := t.TempDir()
+		input := "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+		file := writeTestFile(t, dir, "main.tf", input)
+		report := dir + "/report.json"
+		if err := os.Symlink(file, report); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+
+		result := runMainCommand(t, []string{
+			"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-report-file", report,
+		})
+
+		wantDiagnostic := "Error: report file must not overwrite input file: " + report + "\n"
+		if result.exitCode != 1 || result.diagnostics != wantDiagnostic {
+			t.Errorf("result = %#v, want diagnostic %q", result, wantDiagnostic)
+		}
+		if got := readTestFile(t, file); got != input {
+			t.Errorf("Terraform input = %q, want unchanged %q", got, input)
+		}
+	})
+}
+
+func TestCommandRejectsUnusableReportDestinationBeforeUpdating(t *testing.T) {
+	dir := t.TempDir()
+	input := "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+	file := writeTestFile(t, dir, "main.tf", input)
+	report := dir + "/missing/report.json"
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-report-file", report,
+	})
+
+	if result.exitCode != 1 || !strings.HasPrefix(result.diagnostics, "Error preparing update report: ") {
+		t.Errorf("result = %#v, want report preparation failure", result)
+	}
+	if got := readTestFile(t, file); got != input {
+		t.Errorf("Terraform input = %q, want unchanged %q", got, input)
+	}
+	if _, err := os.Stat(report); !os.IsNotExist(err) {
+		t.Errorf("report stat error = %v, want not exist", err)
+	}
+}
+
+func TestCommandRejectsReportDirectoryBeforeUpdating(t *testing.T) {
+	dir := t.TempDir()
+	input := "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+	file := writeTestFile(t, dir, "main.tf", input)
+	report := dir + "/report-target"
+	if err := os.Mkdir(report, 0o755); err != nil {
+		t.Fatalf("create report directory: %v", err)
+	}
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-report-file", report,
+	})
+
+	if result.exitCode != 1 || !strings.HasPrefix(result.diagnostics, "Error preparing update report: ") {
+		t.Errorf("result = %#v, want report preparation failure", result)
+	}
+	if got := readTestFile(t, file); got != input {
+		t.Errorf("Terraform input = %q, want unchanged %q", got, input)
+	}
+}
+
+func TestCommandDiscardsPreparedReportAfterUpdateFailure(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "!!!\n")
+	report := dir + "/report.json"
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-report-file", report,
+	})
+
+	if result.exitCode != 1 || !strings.Contains(result.diagnostics, "1 module update error(s)") {
+		t.Errorf("result = %#v, want module update failure", result)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read temporary directory: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "main.tf" {
+		t.Errorf("temporary directory entries = %v, want only main.tf", entries)
+	}
+}
+
 func TestCommandReportPreservesSameTargetHumanOutput(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "main.tf", `terraform {
