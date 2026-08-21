@@ -125,6 +125,50 @@ type updateReport struct {
 	SchemaVersion         int `json:"schema_version"`
 	ModuleBlocksUpdated   int `json:"module_blocks_updated"`
 	ProviderBlocksUpdated int `json:"provider_blocks_updated"`
+	moduleBlockIDs        map[string]struct{}
+	providerBlockIDs      map[string]struct{}
+}
+
+func (report *updateReport) recordModuleBlocks(filename string, blockIndexes []int) {
+	fileID := canonicalFileIdentity(filename)
+	if report.moduleBlockIDs == nil {
+		report.moduleBlockIDs = make(map[string]struct{})
+	}
+	for _, blockIndex := range blockIndexes {
+		blockID := fmt.Sprintf("%s\x00%d", fileID, blockIndex)
+		if _, recorded := report.moduleBlockIDs[blockID]; recorded {
+			continue
+		}
+		report.moduleBlockIDs[blockID] = struct{}{}
+		report.ModuleBlocksUpdated++
+	}
+}
+
+func (report *updateReport) recordProviderBlocks(filename string, blockLocations []string) {
+	fileID := canonicalFileIdentity(filename)
+	if report.providerBlockIDs == nil {
+		report.providerBlockIDs = make(map[string]struct{})
+	}
+	for _, blockLocation := range blockLocations {
+		blockID := fileID + "\x00" + blockLocation
+		if _, recorded := report.providerBlockIDs[blockID]; recorded {
+			continue
+		}
+		report.providerBlockIDs[blockID] = struct{}{}
+		report.ProviderBlocksUpdated++
+	}
+}
+
+func canonicalFileIdentity(filename string) string {
+	absolute, err := filepath.Abs(filename)
+	if err == nil {
+		filename = absolute
+	}
+	resolved, err := filepath.EvalSymlinks(filename)
+	if err == nil {
+		return filepath.Clean(resolved)
+	}
+	return filepath.Clean(filename)
 }
 
 // parseFlags parses and validates command-line flags
@@ -186,7 +230,7 @@ func loadModuleUpdates(flags *cliFlags) []ModuleUpdate {
 func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (totalUpdates, totalErrors int) {
 	for _, file := range files {
 		for _, update := range updates {
-			updated, blocksUpdated, err := updateModuleVersionWithCount(file, update.Source, update.Version, update.From, update.IgnoreVersions, update.IgnoreModules, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
+			updated, changedBlocks, err := updateModuleVersionWithCount(file, update.Source, update.Version, update.From, update.IgnoreVersions, update.IgnoreModules, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				totalErrors++
@@ -194,7 +238,7 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (tota
 			}
 			if updated {
 				if !flags.dryRun {
-					flags.report.ModuleBlocksUpdated += blocksUpdated
+					flags.report.recordModuleBlocks(file, changedBlocks)
 				}
 				prefix := "✓"
 				action := "Updated"
@@ -563,7 +607,7 @@ func processTerraformVersion(files []string, version string, dryRun bool, output
 //   - totalErrors: Number of files that could not be processed
 func processProviderVersion(files []string, providerName, version string, dryRun bool, outputFormat string, report *updateReport) (totalUpdates, totalErrors int) {
 	for _, file := range files {
-		updated, blocksUpdated, err := updateProviderVersionWithCount(file, providerName, version, dryRun)
+		updated, changedBlocks, err := updateProviderVersionWithCount(file, providerName, version, dryRun)
 		if err != nil {
 			log.Printf("Error processing %s: %v", file, err)
 			totalErrors++
@@ -571,7 +615,7 @@ func processProviderVersion(files []string, providerName, version string, dryRun
 		}
 		if updated {
 			if !dryRun {
-				report.ProviderBlocksUpdated += blocksUpdated
+				report.recordProviderBlocks(file, changedBlocks)
 			}
 			prefix := "✓"
 			action := "Updated"
@@ -661,36 +705,38 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 //
 // Returns:
 //   - updated: true if a provider operation was applied (or would be applied in dry-run mode)
-//   - blocksChanged: number of provider blocks whose version values differ from the target
+//   - changedBlocks: locations of provider blocks whose version values differ from the target
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateProviderVersionWithCount(filename, providerName, version string, dryRun bool) (updated bool, blocksChanged int, err error) {
+func updateProviderVersionWithCount(filename, providerName, version string, dryRun bool) (updated bool, changedBlocks []string, err error) {
 	// Get original file permissions to preserve them when writing
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
-		return false, 0, fmt.Errorf("failed to stat file: %w", err)
+		return false, nil, fmt.Errorf("failed to stat file: %w", err)
 	}
 	originalMode := fileInfo.Mode()
 
 	// Read the file
 	src, err := os.ReadFile(filename)
 	if err != nil {
-		return false, 0, fmt.Errorf("failed to read file: %w", err)
+		return false, nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
 	// Parse the file with hclwrite
 	file, diags := hclwrite.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return false, 0, fmt.Errorf("failed to parse HCL: %s", diags.Error())
+		return false, nil, fmt.Errorf("failed to parse HCL: %s", diags.Error())
 	}
 
 	updated = false
-	blocksChanged = 0
+	changedBlocks = nil
 
 	// Iterate through all blocks in the file
-	for _, block := range file.Body().Blocks() {
+	for blockIndex, block := range file.Body().Blocks() {
 		blockUpdated, blockChanges := updateProviderTerraformBlockResult(block, providerName, version)
 		updated = updated || blockUpdated
-		blocksChanged += blockChanges
+		for _, blockChange := range blockChanges {
+			changedBlocks = append(changedBlocks, fmt.Sprintf("%d/%s", blockIndex, blockChange))
+		}
 	}
 
 	// If we made changes, write the file back (unless in dry-run mode)
@@ -698,58 +744,60 @@ func updateProviderVersionWithCount(filename, providerName, version string, dryR
 		output := hclwrite.Format(file.Bytes())
 		// Preserve original file permissions
 		if err := os.WriteFile(filename, output, originalMode.Perm()); err != nil {
-			return false, 0, fmt.Errorf("failed to write file: %w", err)
+			return false, nil, fmt.Errorf("failed to write file: %w", err)
 		}
 	}
 
-	return updated, blocksChanged, nil
+	return updated, changedBlocks, nil
 }
 
-func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, version string) (updated bool, blocksChanged int) {
+func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, version string) (updated bool, changedBlocks []string) {
 	if block.Type() != "terraform" {
-		return false, 0
+		return false, nil
 	}
 
 	updated = false
-	blocksChanged = 0
-	for _, nestedBlock := range block.Body().Blocks() {
+	changedBlocks = nil
+	for nestedIndex, nestedBlock := range block.Body().Blocks() {
 		if nestedBlock.Type() != "required_providers" {
 			continue
 		}
 		blockSyntaxUpdated, blockSyntaxChanges := updateProviderBlockSyntaxResult(nestedBlock, providerName, version)
 		if blockSyntaxUpdated {
 			updated = true
-			blocksChanged += blockSyntaxChanges
+			for _, blockSyntaxIndex := range blockSyntaxChanges {
+				changedBlocks = append(changedBlocks, fmt.Sprintf("%d/block/%d", nestedIndex, blockSyntaxIndex))
+			}
 			continue
 		}
 		attributeUpdated, attributeChanged := updateProviderAttributeVersionResult(nestedBlock, providerName, version)
 		if attributeUpdated {
 			updated = true
 			if attributeChanged {
-				blocksChanged++
+				changedBlocks = append(changedBlocks, fmt.Sprintf("%d/attribute/%s", nestedIndex, providerName))
 			}
 		}
 	}
 
-	return updated, blocksChanged
+	return updated, changedBlocks
 }
 
-func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, version string) (updated bool, blocksChanged int) {
+func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, version string) (updated bool, changedBlocks []int) {
 	updated = false
-	blocksChanged = 0
-	for _, providerBlock := range nestedBlock.Body().Blocks() {
+	changedBlocks = nil
+	for providerIndex, providerBlock := range nestedBlock.Body().Blocks() {
 		if providerBlock.Type() != providerName {
 			continue
 		}
 		versionAttribute := providerBlock.Body().GetAttribute("version")
 		if versionAttribute == nil || attributeStringValue(versionAttribute) != version {
-			blocksChanged++
+			changedBlocks = append(changedBlocks, providerIndex)
 		}
 		providerBlock.Body().SetAttributeValue("version", cty.StringVal(version))
 		updated = true
 	}
 
-	return updated, blocksChanged
+	return updated, changedBlocks
 }
 
 // updateProviderAttributeVersion updates the version value within a provider attribute's object expression
@@ -881,30 +929,30 @@ func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
 //
 // Returns:
 //   - updated: true if at least one module operation was applied (or would be applied in dry-run mode)
-//   - blocksChanged: number of module blocks whose version values differ from the target
+//   - changedBlocks: indexes of module blocks whose version values differ from the target
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateModuleVersionWithCount(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, blocksChanged int, err error) {
+func updateModuleVersionWithCount(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, changedBlocks []int, err error) {
 	// Get original file permissions to preserve them when writing
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
-		return false, 0, fmt.Errorf("failed to stat file: %w", err)
+		return false, nil, fmt.Errorf("failed to stat file: %w", err)
 	}
 	originalMode := fileInfo.Mode()
 
 	// Read the file
 	src, err := os.ReadFile(filename)
 	if err != nil {
-		return false, 0, fmt.Errorf("failed to read file: %w", err)
+		return false, nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
 	// Parse the file with hclwrite
 	file, diags := hclwrite.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return false, 0, fmt.Errorf("failed to parse HCL: %s", diags.Error())
+		return false, nil, fmt.Errorf("failed to parse HCL: %s", diags.Error())
 	}
 
 	updated = false
-	blocksChanged = 0
+	changedBlocks = nil
 	opts := moduleUpdateOptions{
 		filename:       filename,
 		moduleSource:   moduleSource,
@@ -918,12 +966,12 @@ func updateModuleVersionWithCount(filename, moduleSource, version string, fromVe
 	}
 
 	// Iterate through all blocks in the file
-	for _, block := range file.Body().Blocks() {
+	for blockIndex, block := range file.Body().Blocks() {
 		blockUpdated, blockChanged := updateModuleBlockResult(block, &opts)
 		if blockUpdated {
 			updated = true
 			if blockChanged {
-				blocksChanged++
+				changedBlocks = append(changedBlocks, blockIndex)
 			}
 		}
 	}
@@ -933,11 +981,11 @@ func updateModuleVersionWithCount(filename, moduleSource, version string, fromVe
 		output := hclwrite.Format(file.Bytes())
 		// Preserve original file permissions
 		if err := os.WriteFile(filename, output, originalMode.Perm()); err != nil {
-			return false, 0, fmt.Errorf("failed to write file: %w", err)
+			return false, nil, fmt.Errorf("failed to write file: %w", err)
 		}
 	}
 
-	return updated, blocksChanged, nil
+	return updated, changedBlocks, nil
 }
 
 type moduleUpdateOptions struct {
