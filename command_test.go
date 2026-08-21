@@ -228,6 +228,67 @@ func TestCommandConfigDryRunOutputContract(t *testing.T) {
 	}
 }
 
+func TestCommandWritesExactUpdatedBlockCounts(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", `terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+module "first" {
+  source  = "example/module"
+  version = "1.0.0"
+}
+module "second" {
+  source  = "example/module"
+  version = "1.0.0"
+}
+module "current" {
+  source  = "example/module"
+  version = "2.0.0"
+}
+`)
+	config := writeTestFile(t, dir, "updates.yml", `providers:
+  - name: aws
+    version: "~> 5.0"
+modules:
+  - source: example/module
+    version: 2.0.0
+`)
+	report := dir + "/report.json"
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-config", config, "-report-file", report,
+	})
+
+	if result.exitCode != -1 || result.diagnostics != "" {
+		t.Fatalf("result = %#v", result)
+	}
+	want := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 2,\n  \"provider_blocks_updated\": 2\n}\n"
+	if got := readTestFile(t, report); got != want {
+		t.Fatalf("report = %q, want %q", got, want)
+	}
+}
+
 func TestCommandReportsAggregateFileFailure(t *testing.T) {
 	for _, mode := range []string{"CLI", "config"} {
 		t.Run(mode, func(t *testing.T) {
