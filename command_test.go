@@ -129,11 +129,13 @@ func TestRunCLIModeMarkdownOutput(t *testing.T) {
 
 func TestCommandDryRunOutputContract(t *testing.T) {
 	tests := []struct {
-		name          string
-		input         string
-		args          []string
-		wantOperation func(string) string
-		wantSummary   string
+		name           string
+		input          string
+		args           []string
+		output         string
+		selectionQuote string
+		wantOperation  func(string) string
+		wantSummary    string
 	}{
 		{
 			name:  "module with from",
@@ -145,22 +147,26 @@ func TestCommandDryRunOutputContract(t *testing.T) {
 			wantSummary: "Dry run: would update 1 file(s)\n",
 		},
 		{
-			name:  "Terraform",
-			input: "terraform {\n  required_version = \">= 1.0\"\n}\n",
-			args:  []string{"-terraform-version", ">= 1.5"},
+			name:           "Terraform",
+			input:          "terraform {\n  required_version = \">= 1.0\"\n}\n",
+			args:           []string{"-terraform-version", ">= 1.5"},
+			output:         "md",
+			selectionQuote: "`",
 			wantOperation: func(file string) string {
-				return "→ Would update Terraform required_version to '>= 1.5' in " + file + "\n"
+				return "→ Would update Terraform required_version to `>= 1.5` in " + file + "\n"
 			},
 			wantSummary: "Dry run: would update Terraform version in 1 file(s)\n",
 		},
 		{
-			name:  "provider",
-			input: "terraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\n",
-			args:  []string{"-provider", "aws", "-to", "~> 5.0"},
+			name:           "provider",
+			input:          "terraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\n",
+			args:           []string{"-provider", "aws", "-to", "~> 5.0"},
+			output:         "md",
+			selectionQuote: "`",
 			wantOperation: func(file string) string {
-				return "→ Would update provider 'aws' to version '~> 5.0' in " + file + "\n"
+				return "→ Would update provider `aws` to version `~> 5.0` in " + file + "\n"
 			},
-			wantSummary: "Dry run: would update 'aws' provider version in 1 file(s)\n",
+			wantSummary: "Dry run: would update `aws` provider version in 1 file(s)\n",
 		},
 	}
 
@@ -168,8 +174,15 @@ func TestCommandDryRunOutputContract(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			file := writeTestFile(t, t.TempDir(), "main.tf", tt.input)
 			args := append([]string{"tf-version-bump", "-pattern", file, "-dry-run"}, tt.args...)
+			if tt.output != "" {
+				args = append(args, "-output", tt.output)
+			}
 			result := runMainCommand(t, args)
-			wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n" +
+			selectionQuote := tt.selectionQuote
+			if selectionQuote == "" {
+				selectionQuote = "'"
+			}
+			wantStdout := "Found 1 file(s) matching pattern " + selectionQuote + file + selectionQuote + "\n" +
 				"Running in dry-run mode - no files will be modified\n" +
 				tt.wantOperation(file) + "\n" + tt.wantSummary
 
@@ -196,13 +209,13 @@ func TestCommandConfigDryRunOutputContract(t *testing.T) {
 	config := writeTestFile(t, dir, "updates.yml", "terraform_version: \">= 1.5\"\nproviders:\n  - name: aws\n    version: \"~> 5.0\"\nmodules:\n  - source: example/module\n    version: 2.0.0\n")
 
 	result := runMainCommand(t, []string{
-		"tf-version-bump", "-pattern", file, "-config", config, "-dry-run",
+		"tf-version-bump", "-pattern", file, "-config", config, "-dry-run", "-output", "md",
 	})
-	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n" +
+	wantStdout := "Found 1 file(s) matching pattern `" + file + "`\n" +
 		"Running in dry-run mode - no files will be modified\n" +
-		"→ Would update Terraform required_version to '>= 1.5' in " + file + "\n" +
-		"→ Would update provider 'aws' to version '~> 5.0' in " + file + "\n" +
-		"→ Would update module source 'example/module' to version '2.0.0' in " + file + "\n\n" +
+		"→ Would update Terraform required_version to `>= 1.5` in " + file + "\n" +
+		"→ Would update provider `aws` to version `~> 5.0` in " + file + "\n" +
+		"→ Would update module source `example/module` to version `2.0.0` in " + file + "\n\n" +
 		"==================================================\n" +
 		"Config File Update Summary\n" +
 		"==================================================\n" +
