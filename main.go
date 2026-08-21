@@ -377,7 +377,7 @@ func runConfigFileMode(files []string, flags *cliFlags) error {
 	}
 
 	// Print summary
-	printConfigSummary(terraformUpdates, providerUpdates, moduleUpdates)
+	printConfigSummary(terraformUpdates, providerUpdates, moduleUpdates, flags.dryRun)
 	if terraformErrors == 0 && providerErrors == 0 && moduleErrors > 0 {
 		return fmt.Errorf("%d module update error(s)", moduleErrors)
 	}
@@ -425,19 +425,31 @@ func runCLIMode(files []string, flags *cliFlags) error {
 }
 
 // printConfigSummary prints the summary for config file mode
-func printConfigSummary(terraformUpdates, providerUpdates, moduleUpdates int) {
+func printConfigSummary(terraformUpdates, providerUpdates, moduleUpdates int, dryRun bool) {
 	if terraformUpdates > 0 || providerUpdates > 0 || moduleUpdates > 0 {
 		fmt.Println("\n" + strings.Repeat("=", 50))
 		fmt.Println("Config File Update Summary")
 		fmt.Println(strings.Repeat("=", 50))
 		if terraformUpdates > 0 {
-			fmt.Printf("Terraform version: %d file(s) updated\n", terraformUpdates)
+			if dryRun {
+				fmt.Printf("Terraform version: would update %d file(s)\n", terraformUpdates)
+			} else {
+				fmt.Printf("Terraform version: %d file(s) updated\n", terraformUpdates)
+			}
 		}
 		if providerUpdates > 0 {
-			fmt.Printf("Providers: %d update(s) applied\n", providerUpdates)
+			if dryRun {
+				fmt.Printf("Providers: would apply %d update(s)\n", providerUpdates)
+			} else {
+				fmt.Printf("Providers: %d update(s) applied\n", providerUpdates)
+			}
 		}
 		if moduleUpdates > 0 {
-			fmt.Printf("Modules: %d update(s) applied\n", moduleUpdates)
+			if dryRun {
+				fmt.Printf("Modules: would apply %d update(s)\n", moduleUpdates)
+			} else {
+				fmt.Printf("Modules: %d update(s) applied\n", moduleUpdates)
+			}
 		}
 	} else {
 		fmt.Println("\nNo updates were performed. Config file may be empty or contain no matching items.")
