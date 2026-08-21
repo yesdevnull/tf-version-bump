@@ -114,8 +114,8 @@ modules:
     version: "5.0.0"
 ```
 
-Every non-local module with that exact source is updated, unless it has no `version` attribute
-and the command was not run with `-force-add`.
+Every non-local module with that exact source is updated when it already has a literal `version`
+attribute. `-force-add` can add a missing attribute only when the source is a registry module.
 
 ### One source version
 
@@ -185,13 +185,15 @@ For a module whose source matches the entry:
 
 1. Local sources are skipped.
 2. `ignore_modules` is applied.
-3. A missing version is skipped unless the command uses `-force-add`.
+3. A missing version is skipped unless the command uses `-force-add` and the source is a registry
+   module.
 4. `ignore_versions` is applied.
 5. `from` is applied.
 6. The target `version` is written.
 
 When `-force-add` handles a missing version, there is no current value to compare with `from` or
-`ignore_versions`, so the target is added after the name and local-source checks.
+`ignore_versions`, so the target is added after the name and registry-source checks. Terraform
+does not support a `version` argument for Git or other non-registry module sources.
 
 ## Config-mode flags
 
@@ -209,7 +211,7 @@ tf-version-bump \
 - `-dry-run` prevents all file writes.
 - `-verbose` explains module skips caused by module or version filters.
 - `-output md` uses backticks instead of single quotes in messages.
-- `-force-add` adds missing version attributes to matching non-local modules.
+- `-force-add` adds missing version attributes to matching registry modules.
 
 Direct operation flags and filters cannot accompany `-config`: `-module`, `-provider`,
 `-terraform-version`, `-to`, `-from`, `-ignore-version`, and `-ignore-modules` are rejected.

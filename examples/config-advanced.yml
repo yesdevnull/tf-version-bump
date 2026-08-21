@@ -1,5 +1,5 @@
 # Advanced configuration example
-# Demonstrates registry modules, subpaths, and a Git source
+# Demonstrates public and private registry modules and subpaths
 
 modules:
   # Public registry modules
@@ -22,6 +22,6 @@ modules:
   - source: "terraform-aws-modules/iam/aws//modules/iam-role"
     version: "5.2.0"
 
-  # Git source modules
-  - source: "git::https://github.com/example/terraform-modules.git//vpc"
-    version: "v1.2.3"
+  # Private registry module
+  - source: "app.terraform.io/example/vpc/aws"
+    version: "1.2.3"

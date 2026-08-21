@@ -11,7 +11,7 @@ This page serves two audiences:
 
 ## Published artefacts
 
-For a tag such as `v1.0.0-rc.6`, the version portion in archive names is `1.0.0-rc.6`:
+For a tag such as `v1.0.0-rc.8`, the version portion in archive names is `1.0.0-rc.8`:
 
 | Artefact pattern | Platform |
 |------------------|----------|
@@ -26,18 +26,18 @@ For a tag such as `v1.0.0-rc.6`, the version portion in archive names is `1.0.0-
 | `tf-version-bump-v<version>.checksums.txt` | SHA-256 checksums |
 | `tf-version-bump-v<version>.intoto.jsonl` | SLSA provenance |
 
-Release tags containing a semantic-version pre-release suffix, such as `-rc.6`, are published as
+Release tags containing a semantic-version pre-release suffix, such as `-rc.8`, are published as
 GitHub pre-releases automatically. Select a tag from the
 [Releases page](https://github.com/yesdevnull/tf-version-bump/releases) rather than assuming a
 stable release exists.
 
 ## Verify a checksum
 
-This Linux example uses the existing `v1.0.0-rc.6` pre-release. Replace `VERSION` deliberately
+This Linux example uses the existing `v1.0.0-rc.8` pre-release. Replace `VERSION` deliberately
 when downloading another release:
 
 ```bash
-VERSION="1.0.0-rc.6"
+VERSION="1.0.0-rc.8"
 
 curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump_${VERSION}_linux_x86_64.tar.gz"
 curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump-v${VERSION}.checksums.txt"
@@ -59,7 +59,7 @@ go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@latest
 Download and verify the provenance matching the same tag:
 
 ```bash
-VERSION="1.0.0-rc.6"
+VERSION="1.0.0-rc.8"
 
 curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump_${VERSION}_linux_x86_64.tar.gz"
 curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VERSION}/tf-version-bump-v${VERSION}.intoto.jsonl"
@@ -86,9 +86,11 @@ Before tagging:
 
 Create and push an annotated tag:
 
+Replace `<version>` with the semantic version selected above:
+
 ```bash
-git tag -a v1.0.0-rc.8 -m "Release v1.0.0-rc.8"
-git push origin v1.0.0-rc.8
+git tag -a "v<version>" -m "Release v<version>"
+git push origin "v<version>"
 ```
 
 The tag push starts `.github/workflows/release.yml`, which:

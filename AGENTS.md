@@ -186,7 +186,7 @@ GitHub Actions runs on every push/PR:
 Priority order in `updateModuleVersion()`:
 1. **Source and locality**: Require an exact source match; skip local sources
 2. **Ignore patterns**: If module name matches `ignore_modules`, skip
-3. **Missing version**: Skip unless `force-add` is enabled
+3. **Missing version**: Skip unless `force-add` is enabled and the source is a registry module
 4. **Ignore versions**: If current version is in `ignore_versions`, skip (takes precedence)
 5. **From filter**: If `from` is set and current version doesn't match, skip
 6. **Update**: If all checks pass, update the version
@@ -211,6 +211,7 @@ Direct dependencies — see `go.mod` for versions:
 
 ```
 github.com/hashicorp/hcl/v2      # Official HCL parser
+github.com/hashicorp/terraform-registry-address # Registry module source parser
 github.com/zclconf/go-cty        # HCL type system
 go.yaml.in/yaml/v3               # YAML parsing
 github.com/bmatcuk/doublestar/v4 # Recursive '**' globbing

@@ -11,7 +11,7 @@ be current releases of the referenced modules or providers.
 | File | Demonstrates |
 |------|--------------|
 | [`config-basic.yml`](config-basic.yml) | A small batch of module updates |
-| [`config-advanced.yml`](config-advanced.yml) | Registry modules, submodules, and a Git source |
+| [`config-advanced.yml`](config-advanced.yml) | Public and private registry modules and submodules |
 | [`config-multiple-from.yml`](config-multiple-from.yml) | Exact current-version allow-lists |
 | [`config-with-ignore.yml`](config-with-ignore.yml) | Module block-name exclusions |
 | [`config-terraform-providers.yml`](config-terraform-providers.yml) | Terraform, provider, and module updates together |
