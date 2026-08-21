@@ -515,8 +515,10 @@ owned by `loadConfig`; retain schema-only editor/validator contracts. The final 
 
 - the schema exposes `terraform_version`, `providers`, module `from`, `ignore_versions`, and
   `ignore_modules` with their documented scalar/array shapes;
-- `from` and `ignore_versions` expose exactly two order-independent alternatives: scalar string and
-  array, with no undocumented third shape;
+- `from` and `ignore_versions` expose exactly two order-independent alternatives: a scalar string
+  whose complete assertion-bearing structure is one shared version-constraint reference plus
+  annotation-only metadata, and an array with only the array/items/minimum assertions plus
+  annotation-only metadata; contradictory or undocumented assertion keywords are rejected;
 - the top-level `anyOf` contains exactly those three singleton required clauses, one per operation;
 - the schema has no unconditional top-level `required` fields, so provider-only and
   `terraform_version`-only documents remain valid; and
@@ -916,11 +918,14 @@ and `exitCode == -1` because normal success returns without invoking the exit ho
 Add `TestCommandDryRunOutputContract` as one three-row real-command table for module, Terraform,
 and provider modes. The module row includes a matching `-from` value. Every row asserts the exact
 selection banner, dry-run action line, operation-specific dry-run summary, empty diagnostics,
-normal-return status, and byte-for-byte non-mutation. This table owns direct-operation dry-run
-output; lower-level updater tests continue to own only update detection and non-mutation.
+normal-return status, and byte-for-byte non-mutation. The module row owns text output, while the
+Terraform and provider rows own Markdown quoting through the direct dry-run plumbing. This table
+owns direct-operation dry-run output; lower-level updater tests continue to own only update
+detection and non-mutation.
 
 Add `TestCommandConfigDryRunOutputContract` as the combined config-mode owner for Terraform,
-provider, and module dry-run execution. It asserts the exact three-operation output and summary,
+provider, and module dry-run execution. It runs with Markdown output and asserts backtick quoting
+for the selection banner and all three operation values, along with the exact summary,
 normal-return status, empty diagnostics, and byte-for-byte non-mutation of the selected file.
 
 The deleted `TestQuoteContract` is subsumed by exact text quoting in command and integration output
