@@ -211,6 +211,41 @@ func TestCommandDryRunOutputContract(t *testing.T) {
 	}
 }
 
+func TestCommandConfigDryRunOutputContract(t *testing.T) {
+	dir := t.TempDir()
+	input := "terraform {\n  required_version = \">= 1.0\"\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\nmodule \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+	file := writeTestFile(t, dir, "main.tf", input)
+	config := writeTestFile(t, dir, "updates.yml", "terraform_version: \">= 1.5\"\nproviders:\n  - name: aws\n    version: \"~> 5.0\"\nmodules:\n  - source: example/module\n    version: 2.0.0\n")
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-config", config, "-dry-run",
+	})
+	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n" +
+		"Running in dry-run mode - no files will be modified\n" +
+		"→ Would update Terraform required_version to '>= 1.5' in " + file + "\n" +
+		"→ Would update provider 'aws' to version '~> 5.0' in " + file + "\n" +
+		"→ Would update module source 'example/module' to version '2.0.0' in " + file + "\n\n" +
+		"==================================================\n" +
+		"Config File Update Summary\n" +
+		"==================================================\n" +
+		"Terraform version: 1 file(s) updated\n" +
+		"Providers: 1 update(s) applied\n" +
+		"Modules: 1 file(s) updated\n"
+
+	if result.stdout != wantStdout {
+		t.Errorf("stdout = %q, want %q", result.stdout, wantStdout)
+	}
+	if result.diagnostics != "" {
+		t.Errorf("diagnostics = %q, want empty", result.diagnostics)
+	}
+	if result.exitCode != -1 {
+		t.Errorf("exit code = %d, want normal return", result.exitCode)
+	}
+	if got := readTestFile(t, file); got != input {
+		t.Errorf("config dry run content = %q, want %q", got, input)
+	}
+}
+
 func TestCommandReportsAggregateFileFailure(t *testing.T) {
 	for _, mode := range []string{"CLI", "config"} {
 		t.Run(mode, func(t *testing.T) {
