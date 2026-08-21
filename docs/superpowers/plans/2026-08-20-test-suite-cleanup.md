@@ -512,8 +512,7 @@ owned by `loadConfig`; retain schema-only editor/validator contracts. The final 
 
 - the schema exposes `terraform_version`, `providers`, module `from`, `ignore_versions`, and
   `ignore_modules` with their documented scalar/array shapes;
-- the top-level `anyOf` requires an option containing each of `modules`, `providers`, and
-  `terraform_version`;
+- the top-level `anyOf` contains exactly those three singleton required clauses, one per operation;
 - provider items require `name` and `version`, and provider/module versions reference the shared
   version-constraint definition; and
 - the version-pattern schema accepts Terraform constraints and rejects an empty version.

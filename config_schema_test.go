@@ -106,16 +106,23 @@ func assertDistinctSchemaContracts(t *testing.T, schema *configSchema) {
 		t.Fatal("module version should reference the shared version constraint definition")
 	}
 
+	if len(schema.AnyOf) != 3 {
+		t.Fatalf("schema anyOf clauses = %d, want exactly 3", len(schema.AnyOf))
+	}
 	requiredTopLevel := make(map[string]bool, len(schema.AnyOf))
 	for _, clause := range schema.AnyOf {
-		for _, field := range clause.Required {
-			requiredTopLevel[field] = true
+		if len(clause.Required) != 1 {
+			t.Fatalf("schema anyOf clause required fields = %v, want exactly one", clause.Required)
 		}
+		requiredTopLevel[clause.Required[0]] = true
 	}
 	for _, field := range []string{"modules", "providers", "terraform_version"} {
 		if !requiredTopLevel[field] {
-			t.Fatalf("schema anyOf should require an option containing %q", field)
+			t.Fatalf("schema anyOf should contain a singleton required clause for %q", field)
 		}
+	}
+	if len(requiredTopLevel) != 3 {
+		t.Fatalf("schema anyOf required field set = %v, want only modules, providers, terraform_version", requiredTopLevel)
 	}
 }
 
