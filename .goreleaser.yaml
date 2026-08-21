@@ -3,14 +3,11 @@
 
 version: 2
 
-before:
-  hooks:
-    - go mod tidy
-    - go generate ./...
-
 builds:
   - env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath
     goos:
       - linux
       - windows
@@ -19,8 +16,11 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.CommitDate}}
     mod_timestamp: "{{ .CommitTimestamp }}"
+
+gomod:
+  proxy: true
 
 archives:
   - formats:
@@ -48,7 +48,8 @@ release:
   github:
     owner: yesdevnull
     name: tf-version-bump
-  draft: false
+  draft: true
+  replace_existing_draft: true
   prerelease: auto
   name_template: "{{ .ProjectName }} v{{ .Version }}"
   header: |
