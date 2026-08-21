@@ -107,16 +107,16 @@ not atomic. Files are processed in memory, so very large files (>100MB) are impr
 
 `main()` → `validateOperationModes` → `findMatchingFiles` → either `runConfigFileMode`
 (YAML) or `runCLIMode` (one direct operation). Each dispatches to one of three update paths:
-`updateModuleVersion`, `updateTerraformVersion`, or `updateProviderVersion`.
+`updateModuleVersionWithCount`, `updateTerraformVersion`, or `updateProviderVersionWithCount`.
 
-`updateModuleVersion` reads and parses the file, then bundles its many
+`updateModuleVersionWithCount` reads and parses the file, then bundles its many
 parameters into a `moduleUpdateOptions` struct and delegates per-block work to
-`updateModuleBlock` → `shouldSkipModuleVersion`. Add new per-module filtering there rather
+`updateModuleBlockResult` → `shouldSkipModuleVersion`. Add new per-module filtering there rather
 than growing the parameter list.
 
 Provider updates are the fiddliest path: `required_providers` entries can be either a nested
-block or an object expression, so `updateProviderVersion` branches through
-`updateProviderBlockSyntax` and `updateProviderAttributeVersion` /
+block or an object expression, so `updateProviderVersionWithCount` branches through
+`updateProviderBlockSyntaxResult` and `updateProviderAttributeVersionResult` /
 `providerAttributeObject` / `replaceProviderObjectVersion`. Attribute-object updates replace only
 the version expression's byte range so other expressions such as `configuration_aliases` remain.
 
@@ -140,7 +140,7 @@ os.WriteFile(filename, output, fileInfo.Mode().Perm())
 
 ### Module update precedence
 
-Evaluated across `updateModuleBlock` and `shouldSkipModuleVersion`:
+Evaluated across `updateModuleBlockResult` and `shouldSkipModuleVersion`:
 
 1. Source must match exactly.
 2. Local sources are skipped.
@@ -187,9 +187,10 @@ Success is prefixed `✓`; dry-run lines use `→` with the verb "Would update".
 through rather than hardcoding quotes.
 
 `-report-file` is the machine-readable automation contract. It writes schema version 1 JSON with
-exact counts of module and provider blocks whose version values changed. Keep human summaries and
-the report separate: existing summaries count source/file operations, while the report counts
-individual changed blocks. Dry-run reports contain zero counts because no file values changed.
+exact counts of unique module and provider blocks whose version values changed across the complete
+command. Keep human summaries and the report separate: existing summaries count source/file
+operations, while the report counts individual changed blocks. Dry-run reports contain zero counts
+because no file values changed.
 
 ## Testing
 
@@ -221,7 +222,7 @@ Testing rules:
 A representative call — note the full 10-parameter signature:
 
 ```go
-updated, err := updateModuleVersion(
+updated, changedBlocks, err := updateModuleVersionWithCount(
     tmpFile, "terraform-aws-modules/vpc/aws", "5.0.0",
     nil, nil, nil, // fromVersions, ignoreVersions, ignorePatterns
     false, false, false, "text", // forceAdd, dryRun, verbose, outputFormat
