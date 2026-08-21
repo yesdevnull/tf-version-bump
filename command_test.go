@@ -210,9 +210,9 @@ func TestCommandConfigDryRunOutputContract(t *testing.T) {
 		"==================================================\n" +
 		"Config File Update Summary\n" +
 		"==================================================\n" +
-		"Terraform version: 1 file(s) updated\n" +
-		"Providers: 1 update(s) applied\n" +
-		"Modules: 1 update(s) applied\n"
+		"Terraform version: would update 1 file(s)\n" +
+		"Providers: would apply 1 update(s)\n" +
+		"Modules: would apply 1 update(s)\n"
 
 	if result.stdout != wantStdout {
 		t.Errorf("stdout = %q, want %q", result.stdout, wantStdout)

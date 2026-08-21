@@ -67,7 +67,7 @@ func documentationLinkErrors(documents []string) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", document, err)
 		}
-		for _, match := range linkPattern.FindAllStringSubmatch(string(contents), -1) {
+		for _, match := range linkPattern.FindAllStringSubmatch(markdownRenderedText(string(contents)), -1) {
 			brokenLink, err := documentationLinkError(document, match[1], anchorCache)
 			if err != nil {
 				return nil, err
@@ -113,7 +113,7 @@ func documentationLinkError(document, link string, anchorCache map[string]map[st
 func markdownHeadingAnchors(contents string) map[string]struct{} {
 	anchors := make(map[string]struct{})
 	headingPattern := regexp.MustCompile(`(?m)^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$`)
-	for _, match := range headingPattern.FindAllStringSubmatch(contents, -1) {
+	for _, match := range headingPattern.FindAllStringSubmatch(markdownRenderedText(contents), -1) {
 		base := markdownHeadingAnchor(match[1])
 		anchor := base
 		for suffix := 1; ; suffix++ {
@@ -125,6 +125,64 @@ func markdownHeadingAnchors(contents string) map[string]struct{} {
 		anchors[anchor] = struct{}{}
 	}
 	return anchors
+}
+
+func markdownRenderedText(contents string) string {
+	var rendered strings.Builder
+	var fenceCharacter byte
+	var fenceLength int
+
+	for _, line := range strings.Split(contents, "\n") {
+		character, length, remainder, isFence := markdownFence(line)
+		if fenceCharacter == 0 {
+			if isFence {
+				fenceCharacter = character
+				fenceLength = length
+				rendered.WriteByte('\n')
+				continue
+			}
+			rendered.WriteString(line)
+			rendered.WriteByte('\n')
+			continue
+		}
+
+		if isFence && character == fenceCharacter && length >= fenceLength && strings.TrimSpace(remainder) == "" {
+			fenceCharacter = 0
+			fenceLength = 0
+		}
+		rendered.WriteByte('\n')
+	}
+
+	return rendered.String()
+}
+
+func markdownFence(line string) (character byte, length int, remainder string, ok bool) {
+	line = strings.TrimSuffix(line, "\r")
+	indent := 0
+	for indent < len(line) && line[indent] == ' ' {
+		indent++
+	}
+	if indent > 3 || indent == len(line) {
+		return 0, 0, "", false
+	}
+
+	character = line[indent]
+	if character != '`' && character != '~' {
+		return 0, 0, "", false
+	}
+	end := indent
+	for end < len(line) && line[end] == character {
+		end++
+	}
+	length = end - indent
+	if length < 3 {
+		return 0, 0, "", false
+	}
+	remainder = line[end:]
+	if character == '`' && strings.ContainsRune(remainder, '`') {
+		return 0, 0, "", false
+	}
+	return character, length, remainder, true
 }
 
 func markdownHeadingAnchor(heading string) string {
@@ -150,6 +208,35 @@ func TestDocumentationLocalLinksRejectMissingAnchor(t *testing.T) {
 	want := []string{fmt.Sprintf("%s links to missing heading %q in %s", document, "#missing-heading", document)}
 	if !slices.Equal(brokenLinks, want) {
 		t.Fatalf("broken links = %q, want %q", brokenLinks, want)
+	}
+}
+
+func TestDocumentationLocalLinksIgnoreFencedCode(t *testing.T) {
+	directory := t.TempDir()
+	writeTestFile(t, directory, "target.md", "# Target\n")
+	document := writeTestFile(t, directory, "guide.md", "```markdown\n[backtick](missing-backtick.md)\n```\n\n~~~~markdown\n[tilde](missing-tilde.md)\n~~~~\n\n[rendered](target.md)\n")
+
+	brokenLinks, err := documentationLinkErrors([]string{document})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(brokenLinks) != 0 {
+		t.Fatalf("broken links = %q, want none", brokenLinks)
+	}
+}
+
+func TestMarkdownHeadingAnchorsIgnoreFencedCode(t *testing.T) {
+	contents := "```sh\n# Backtick only\n# Repeat\n```\n\n~~~sh\n# Tilde only\n~~~\n\n# Repeat\n## Repeat\n"
+
+	anchors := markdownHeadingAnchors(contents)
+	want := map[string]struct{}{"repeat": {}, "repeat-1": {}}
+	if len(anchors) != len(want) {
+		t.Fatalf("anchors = %q, want %q", anchors, want)
+	}
+	for anchor := range want {
+		if _, ok := anchors[anchor]; !ok {
+			t.Errorf("anchors = %q, want %q", anchors, want)
+		}
 	}
 }
 
