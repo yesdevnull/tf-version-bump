@@ -260,7 +260,7 @@ func schemaScalarOptionShape(entry map[string]json.RawMessage) (string, bool) {
 			refCount++
 			continue
 		}
-		if !schemaAnnotationOnly(assertionObject) {
+		if !schemaOptionKeysAllowed(assertionObject) {
 			return "", false
 		}
 	}
@@ -290,15 +290,6 @@ func schemaOptionKeysAllowed(node map[string]json.RawMessage, assertionKeys ...s
 			continue
 		}
 		if _, ok := allowed[key]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func schemaAnnotationOnly(node map[string]json.RawMessage) bool {
-	for key := range node {
-		if _, ok := schemaAnnotationKeys[key]; !ok {
 			return false
 		}
 	}

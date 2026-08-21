@@ -132,15 +132,15 @@ func TestCommandDryRunOutputContract(t *testing.T) {
 		name           string
 		input          string
 		args           []string
-		output         string
 		selectionQuote string
 		wantOperation  func(string) string
 		wantSummary    string
 	}{
 		{
-			name:  "module with from",
-			input: "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n",
-			args:  []string{"-module", "example/module", "-to", "2.0.0", "-from", "1.0.0"},
+			name:           "module with from",
+			input:          "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n",
+			args:           []string{"-module", "example/module", "-to", "2.0.0", "-from", "1.0.0"},
+			selectionQuote: "'",
 			wantOperation: func(file string) string {
 				return "→ Would update module source 'example/module' from version(s) [1.0.0] to '2.0.0' in " + file + "\n"
 			},
@@ -149,8 +149,7 @@ func TestCommandDryRunOutputContract(t *testing.T) {
 		{
 			name:           "Terraform",
 			input:          "terraform {\n  required_version = \">= 1.0\"\n}\n",
-			args:           []string{"-terraform-version", ">= 1.5"},
-			output:         "md",
+			args:           []string{"-terraform-version", ">= 1.5", "-output", "md"},
 			selectionQuote: "`",
 			wantOperation: func(file string) string {
 				return "→ Would update Terraform required_version to `>= 1.5` in " + file + "\n"
@@ -160,8 +159,7 @@ func TestCommandDryRunOutputContract(t *testing.T) {
 		{
 			name:           "provider",
 			input:          "terraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\n",
-			args:           []string{"-provider", "aws", "-to", "~> 5.0"},
-			output:         "md",
+			args:           []string{"-provider", "aws", "-to", "~> 5.0", "-output", "md"},
 			selectionQuote: "`",
 			wantOperation: func(file string) string {
 				return "→ Would update provider `aws` to version `~> 5.0` in " + file + "\n"
@@ -174,15 +172,8 @@ func TestCommandDryRunOutputContract(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			file := writeTestFile(t, t.TempDir(), "main.tf", tt.input)
 			args := append([]string{"tf-version-bump", "-pattern", file, "-dry-run"}, tt.args...)
-			if tt.output != "" {
-				args = append(args, "-output", tt.output)
-			}
 			result := runMainCommand(t, args)
-			selectionQuote := tt.selectionQuote
-			if selectionQuote == "" {
-				selectionQuote = "'"
-			}
-			wantStdout := "Found 1 file(s) matching pattern " + selectionQuote + file + selectionQuote + "\n" +
+			wantStdout := "Found 1 file(s) matching pattern " + tt.selectionQuote + file + tt.selectionQuote + "\n" +
 				"Running in dry-run mode - no files will be modified\n" +
 				tt.wantOperation(file) + "\n" + tt.wantSummary
 
