@@ -13,6 +13,21 @@ type capturedStreams struct {
 	stderr string
 }
 
+type moduleCase struct {
+	name           string
+	input          string
+	source         string
+	version        string
+	from           []string
+	ignoreVersions []string
+	ignoreModules  []string
+	forceAdd       bool
+	dryRun         bool
+	verbose        bool
+	wantUpdated    bool
+	wantContent    string
+}
+
 func captureStdoutAndStderr(t *testing.T, fn func()) capturedStreams {
 	t.Helper()
 	testOutputMu.Lock()
@@ -60,20 +75,6 @@ func captureStdoutAndStderr(t *testing.T, fn func()) capturedStreams {
 }
 
 func TestUpdateModuleVersionContract(t *testing.T) {
-	type moduleCase struct {
-		name           string
-		input          string
-		source         string
-		version        string
-		from           []string
-		ignoreVersions []string
-		ignoreModules  []string
-		forceAdd       bool
-		dryRun         bool
-		verbose        bool
-		wantUpdated    bool
-		wantContent    string
-	}
 	const registry = "terraform-aws-modules/vpc/aws"
 	cases := []moduleCase{
 		{"matching registry module updates", "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n", registry, "5.0.0", nil, nil, nil, false, false, false, true, "module \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"5.0.0\"\n}\n"},
@@ -84,11 +85,11 @@ func TestUpdateModuleVersionContract(t *testing.T) {
 		{"updates every eligible block with the same source", "module \"primary\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n\nmodule \"secondary\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"4.0.0\"\n}\n", registry, "5.0.0", nil, nil, nil, false, false, false, true, "module \"primary\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"5.0.0\"\n}\n\nmodule \"secondary\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"5.0.0\"\n}\n"},
 		{"second from entry matches", "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n", registry, "5.0.0", []string{"4.0.0", "3.14.0"}, nil, nil, false, false, false, true, "module \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"5.0.0\"\n}\n"},
 		{"second ignore version entry matches", "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n", registry, "5.0.0", nil, []string{"4.0.0", "3.14.0"}, nil, false, false, false, false, "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n"},
-		{"non-matching from preserves version", "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n", registry, "5.0.0", []string{"4.0.0"}, nil, nil, false, false, false, false, "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n"},
+		{"non-matching from preserves version", "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n", registry, "5.0.0", []string{"4.0.0"}, nil, nil, false, false, true, false, "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n"},
 		{"matching ignore version preserves version", "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n", registry, "5.0.0", nil, []string{"3.14.0"}, nil, false, false, false, false, "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n"},
 		{"mixed ignored and eligible modules", "module \"ignored\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n\nmodule \"eligible\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"4.0.0\"\n}\n", registry, "5.0.0", nil, []string{"3.14.0"}, nil, false, false, false, true, "module \"ignored\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n\nmodule \"eligible\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"5.0.0\"\n}\n"},
 		{"ignore takes precedence over from", "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n", registry, "5.0.0", []string{"4.0.0"}, []string{"3.14.0"}, nil, false, false, true, false, "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n"},
-		{"module name ignore preserves unchanged content", "module \"legacy-vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n", registry, "5.0.0", nil, nil, []string{"legacy-*"}, false, false, false, false, "module \"legacy-vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n"},
+		{"module name ignore preserves unchanged content", "module \"legacy-vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n", registry, "5.0.0", nil, nil, []string{"legacy-*"}, false, false, true, false, "module \"legacy-vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.14.0\"\n}\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -109,7 +110,7 @@ func TestUpdateModuleVersionContract(t *testing.T) {
 			}
 			switch {
 			case tc.verbose:
-				want := fmt.Sprintf("  ⊗ Skipped module 'vpc' in %s (current version '3.14.0' matches 'ignore-version' filter [3.14.0])\n", file)
+				want := wantModuleVerboseDiagnostic(&tc, file)
 				if output.stdout != want || output.stderr != "" {
 					t.Errorf("streams = stdout %q stderr %q, want stdout %q and empty stderr", output.stdout, output.stderr, want)
 				}
@@ -122,6 +123,19 @@ func TestUpdateModuleVersionContract(t *testing.T) {
 				t.Errorf("unexpected output: stdout=%q stderr=%q", output.stdout, output.stderr)
 			}
 		})
+	}
+}
+
+func wantModuleVerboseDiagnostic(tc *moduleCase, file string) string {
+	switch {
+	case len(tc.ignoreVersions) > 0:
+		return fmt.Sprintf("  ⊗ Skipped module 'vpc' in %s (current version '3.14.0' matches 'ignore-version' filter [3.14.0])\n", file)
+	case len(tc.from) > 0:
+		return fmt.Sprintf("  ⊗ Skipped module 'vpc' in %s (current version '3.14.0' does not match any 'from' filter [4.0.0])\n", file)
+	case len(tc.ignoreModules) > 0:
+		return fmt.Sprintf("  ⊗ Skipped module 'legacy-vpc' in %s (matches ignore pattern)\n", file)
+	default:
+		return ""
 	}
 }
 

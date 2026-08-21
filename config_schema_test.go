@@ -17,7 +17,8 @@ type versionSchema struct {
 }
 
 type configSchema struct {
-	AnyOf []struct {
+	Required []string `json:"required"`
+	AnyOf    []struct {
 		Required []string `json:"required"`
 	} `json:"anyOf"`
 	Definitions struct {
@@ -90,6 +91,9 @@ func TestConfigSchemaExposesConfigurationOptions(t *testing.T) {
 
 func assertDistinctSchemaContracts(t *testing.T, schema *configSchema) {
 	t.Helper()
+	if len(schema.Required) != 0 {
+		t.Fatalf("schema has unconditional required fields = %v, want none", schema.Required)
+	}
 	for _, field := range []string{"name", "version"} {
 		if !slices.Contains(schema.Properties.Providers.Items.Required, field) {
 			t.Fatalf("provider schema should require %q", field)
@@ -128,7 +132,7 @@ func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
 
 	regexes := compileConstraintRegexps(t, schema.Definitions.VersionConstraint)
 
-	validConstraints := []string{"1.2.3", "~> 3.0", ">= 1.5, < 2.0"}
+	validConstraints := []string{"1.2.3", "~> 3.0", ">= 1.5, < 2.0", "~> 3.0.0-beta.1+build.5"}
 
 	for _, constraint := range validConstraints {
 		matched := false
@@ -146,6 +150,14 @@ func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
 	for _, re := range regexes {
 		if re.MatchString("") {
 			t.Error("expected schema pattern to reject an empty version")
+		}
+	}
+
+	for _, constraint := range []string{"invalid", "1.2.3.4"} {
+		for _, re := range regexes {
+			if re.MatchString(constraint) {
+				t.Errorf("expected schema pattern to reject %q", constraint)
+			}
 		}
 	}
 }
