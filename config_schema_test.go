@@ -204,23 +204,115 @@ func hasExactOneOfShapes(t *testing.T, raw json.RawMessage, shapes ...string) bo
 
 func schemaOptionShape(t *testing.T, raw json.RawMessage) (string, bool) {
 	t.Helper()
-	var entry struct {
-		Type  string          `json:"type"`
-		Items json.RawMessage `json:"items"`
-	}
+	var entry map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &entry); err != nil {
 		t.Fatalf("failed to parse oneOf option: %v", err)
 	}
-	if entry.Type == "array" {
-		if len(entry.Items) == 0 || !referencesVersionConstraint(t, entry.Items) || referencesVersionConstraint(t, raw) {
+
+	if _, ok := entry["type"]; ok {
+		return schemaArrayOptionShape(entry)
+	}
+	return schemaScalarOptionShape(entry)
+}
+
+func schemaArrayOptionShape(entry map[string]json.RawMessage) (string, bool) {
+	typeRaw, ok := entry["type"]
+	var typeName string
+	if !ok || json.Unmarshal(typeRaw, &typeName) != nil || typeName != "array" ||
+		!schemaOptionKeysAllowed(entry, "type", "items", "minItems") {
+		return "", false
+	}
+
+	items, ok := entry["items"]
+	if !ok || !isExactVersionConstraintReference(items) {
+		return "", false
+	}
+	var minItems int
+	minItemsRaw, ok := entry["minItems"]
+	if !ok || json.Unmarshal(minItemsRaw, &minItems) != nil || minItems != 1 {
+		return "", false
+	}
+	return "array", true
+}
+
+func schemaScalarOptionShape(entry map[string]json.RawMessage) (string, bool) {
+	if !schemaOptionKeysAllowed(entry, "allOf") {
+		return "", false
+	}
+	allOf, ok := entry["allOf"]
+	if !ok {
+		return "", false
+	}
+	var assertions []json.RawMessage
+	if json.Unmarshal(allOf, &assertions) != nil || len(assertions) == 0 {
+		return "", false
+	}
+	refCount := 0
+	for _, assertion := range assertions {
+		var assertionObject map[string]json.RawMessage
+		if json.Unmarshal(assertion, &assertionObject) != nil {
 			return "", false
 		}
-		return "array", true
+		if isExactVersionConstraintReference(assertion) {
+			refCount++
+			continue
+		}
+		if !schemaAnnotationOnly(assertionObject) {
+			return "", false
+		}
 	}
-	if (entry.Type == "" || entry.Type == "string") && len(entry.Items) == 0 && referencesVersionConstraint(t, raw) {
+	if refCount == 1 {
 		return "string", true
 	}
 	return "", false
+}
+
+var schemaAnnotationKeys = map[string]struct{}{
+	"$comment":    {},
+	"default":     {},
+	"description": {},
+	"examples":    {},
+	"readOnly":    {},
+	"title":       {},
+	"writeOnly":   {},
+}
+
+func schemaOptionKeysAllowed(node map[string]json.RawMessage, assertionKeys ...string) bool {
+	allowed := make(map[string]struct{}, len(assertionKeys))
+	for _, key := range assertionKeys {
+		allowed[key] = struct{}{}
+	}
+	for key := range node {
+		if _, ok := schemaAnnotationKeys[key]; ok {
+			continue
+		}
+		if _, ok := allowed[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func schemaAnnotationOnly(node map[string]json.RawMessage) bool {
+	for key := range node {
+		if _, ok := schemaAnnotationKeys[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func isExactVersionConstraintReference(raw json.RawMessage) bool {
+	var node map[string]json.RawMessage
+	if json.Unmarshal(raw, &node) != nil || len(node) != 1 {
+		return false
+	}
+	ref, ok := node["$ref"]
+	if !ok {
+		return false
+	}
+	var reference string
+	return json.Unmarshal(ref, &reference) == nil && reference == "#/definitions/versionConstraint"
 }
 
 func referencesVersionConstraint(t *testing.T, raw json.RawMessage) bool {
