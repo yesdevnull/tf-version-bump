@@ -1,4 +1,4 @@
-.PHONY: help test test-verbose test-coverage coverage-html coverage-func clean build install branch-automation-test test-github-actions actionlint
+.PHONY: help test test-verbose test-coverage coverage-html coverage-func clean build install docs-check branch-automation-test test-github-actions actionlint
 
 TEST_GIT ?= git
 
@@ -13,6 +13,7 @@ help:
 	@echo "  clean          - Clean build artifacts and coverage files"
 	@echo "  build          - Build the binary"
 	@echo "  install        - Install the binary"
+	@echo "  docs-check     - Check documentation links, schema, and example configs"
 	@echo "  branch-automation-test - Alias for test-github-actions"
 	@echo "  test-github-actions - Run GitHub Actions example checks (harness + actionlint)"
 	@echo "  actionlint     - Lint GitHub Actions workflows"
@@ -56,6 +57,10 @@ build:
 # Install the binary
 install:
 	go install -v .
+
+# Check user documentation, its local links, the config schema, and maintained YAML examples.
+docs-check:
+	go test -v -run 'Test(ConfigSchema|Documentation|ExampleConfigs)' ./...
 
 # Alias kept for muscle memory: identical to test-github-actions, which also runs actionlint.
 branch-automation-test: test-github-actions

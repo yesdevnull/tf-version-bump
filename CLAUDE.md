@@ -14,7 +14,8 @@ normalised when a changed file is formatted.
 This repository is an experiment for generative AI coding tools. It may contain bugs or incomplete
 features. Keep changes under version control and test them.
 
-**Stack**: Go 1.26+ (CI pins 1.26), `hashicorp/hcl/v2`, `zclconf/go-cty`, `yaml.v3`,
+**Stack**: Go 1.26+ (CI pins 1.26), `hashicorp/hcl/v2`,
+`hashicorp/terraform-registry-address`, `zclconf/go-cty`, `yaml.v3`, and
 `bmatcuk/doublestar/v4`. Dependency versions live in `go.mod` — don't restate them here or in
 AGENTS.md; they drift.
 
@@ -144,7 +145,7 @@ Evaluated across `updateModuleBlock` and `shouldSkipModuleVersion`:
 1. Source must match exactly.
 2. Local sources are skipped.
 3. `ignore_modules` matches the module *name* → skip.
-4. A missing version is skipped unless `-force-add` is set.
+4. A missing version is skipped unless `-force-add` is set and the source is a registry module.
 5. `ignore_versions` contains the current value → skip (takes precedence over `from`).
 6. `from` is set and does not contain the current value → skip.
 7. Otherwise update.

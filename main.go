@@ -129,7 +129,7 @@ func parseFlags() *cliFlags {
 	flag.Var(&flags.ignoreVersions, "ignore-version", "Optional: version(s) to skip (can be specified multiple times, e.g., -ignore-version 3.0.0 -ignore-version '~> 3.0')")
 	flag.StringVar(&flags.ignoreModules, "ignore-modules", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
 	flag.StringVar(&flags.configFile, "config", "", "Path to YAML config file with multiple module updates")
-	flag.BoolVar(&flags.forceAdd, "force-add", false, "Add version attribute to modules that don't have one (default: skip with warning)")
+	flag.BoolVar(&flags.forceAdd, "force-add", false, "Add a missing version attribute to registry modules (default: skip with warning)")
 	flag.BoolVar(&flags.dryRun, "dry-run", false, "Show what changes would be made without actually modifying files")
 	flag.BoolVar(&flags.verbose, "verbose", false, "Show verbose output including skipped modules")
 	flag.BoolVar(&flags.showVersion, "version", false, "Print version information and exit")

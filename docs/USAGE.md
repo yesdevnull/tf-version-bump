@@ -32,7 +32,7 @@ with the three direct operation flags or their module filters.
 | `-config <file>` | Config mode | YAML file containing one or more update groups. |
 | `-terraform-version <constraint>` | Direct Terraform mode | Value to set as `required_version`. |
 | `-provider <name>` | Direct provider mode | Local provider name within `required_providers`. |
-| `-force-add` | Module updates | Add a missing module `version` attribute. Local modules remain excluded. |
+| `-force-add` | Module updates | Add a missing module `version` attribute to registry modules. |
 | `-dry-run` | All update modes | Report changes without writing files. |
 | `-verbose` | Module updates | Report modules skipped by name or version filters. |
 | `-output <format>` | All update modes | `text` (default) uses single quotes; `md` uses backticks in messages. |
@@ -111,22 +111,23 @@ tf-version-bump \
 The only special character is `*`, which matches zero or more characters. Matching is
 case-sensitive. An exact name contains no wildcard.
 
-### Missing versions and local modules
+### Missing versions and module sources
 
-A matching remote or registry module without `version` is skipped with a warning unless
-`-force-add` is supplied. When the attribute is added, it is written through `hclwrite` and may
-not appear at the same position you would have chosen manually.
+A matching registry module without `version` is skipped with a warning unless `-force-add` is
+supplied. When the attribute is added, it is written through `hclwrite` and may not appear at the
+same position you would have chosen manually.
 
-Sources beginning with `./`, `../`, or `/` are treated as local modules and always skipped. They
-remain skipped with `-force-add` because Terraform does not support a registry-style version
-constraint for a local source.
+Sources beginning with `./`, `../`, or `/` are treated as local modules and always skipped.
+Non-registry remote sources such as Git URLs are also skipped when `-force-add` would otherwise add
+a missing version. Terraform permits the `version` argument only for registry modules; Git sources
+select revisions with a `ref` query parameter in `source`.
 
 Module processing follows this order:
 
 1. Require an exact source match.
 2. Skip local sources.
 3. Apply module-name exclusions.
-4. Skip a missing version unless `-force-add` is enabled.
+4. Skip a missing version unless `-force-add` is enabled and the source is a registry module.
 5. Apply `ignore-version` exclusions.
 6. Apply the `from` allow-list.
 7. Set the requested version.
@@ -213,6 +214,9 @@ Config mode applies updates in this order for each selected set of files:
 
 Use `-force-add`, `-dry-run`, `-verbose`, or `-output md` with config mode when required. See
 [Configuration](CONFIGURATION.md) for the complete YAML contract.
+
+Config summaries count module entry/file applications as `update(s)`, not distinct files. A file
+matched by two module entries therefore contributes two module updates.
 
 ## File selection
 

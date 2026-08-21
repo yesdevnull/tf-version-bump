@@ -35,9 +35,9 @@ directory is on your `PATH`.
 
 Pre-built archives and Linux packages are published on the
 [GitHub Releases](https://github.com/yesdevnull/tf-version-bump/releases) page. Releases may
-be marked as pre-releases, so choose the tag deliberately. Each recent release provides
-checksums and SLSA provenance alongside builds for Linux, macOS, and Windows on amd64 and
-arm64.
+be marked as pre-releases, so choose the tag deliberately. Release assets include checksums
+alongside builds for Linux, macOS, and Windows on amd64 and arm64. Releases that include SLSA
+provenance publish a matching `.intoto.jsonl` asset.
 
 See [Release process and verification](docs/RELEASING.md) for artefact names and verification
 commands.
@@ -177,8 +177,8 @@ tf-version-bump \
 
 ### Add a missing module version
 
-Matching modules without a `version` attribute are skipped with a warning by default. Use
-`-force-add` to add the attribute to registry or remote modules:
+Matching registry modules without a `version` attribute are skipped with a warning by default.
+Use `-force-add` to add the attribute:
 
 ```bash
 tf-version-bump \
@@ -188,8 +188,9 @@ tf-version-bump \
   -force-add
 ```
 
-Local module sources beginning with `./`, `../`, or `/` are always skipped, including with
-`-force-add`.
+Local and non-registry remote module sources are always skipped when their `version` attribute is
+missing, including with `-force-add`. Terraform supports `version` only for registry modules; Git
+and other remote sources select revisions through their source address.
 
 ## Glob patterns
 
