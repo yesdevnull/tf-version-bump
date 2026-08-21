@@ -67,13 +67,15 @@ func documentationLinkErrors(documents []string) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", document, err)
 		}
-		for _, match := range linkPattern.FindAllStringSubmatch(markdownRenderedText(string(contents)), -1) {
-			brokenLink, err := documentationLinkError(document, match[1], anchorCache)
-			if err != nil {
-				return nil, err
-			}
-			if brokenLink != "" {
-				brokenLinks = append(brokenLinks, brokenLink)
+		for _, line := range markdownLinesOutsideTopLevelFences(string(contents)) {
+			for _, match := range linkPattern.FindAllStringSubmatch(line, -1) {
+				brokenLink, err := documentationLinkError(document, match[1], anchorCache)
+				if err != nil {
+					return nil, err
+				}
+				if brokenLink != "" {
+					brokenLinks = append(brokenLinks, brokenLink)
+				}
 			}
 		}
 	}
@@ -112,8 +114,12 @@ func documentationLinkError(document, link string, anchorCache map[string]map[st
 
 func markdownHeadingAnchors(contents string) map[string]struct{} {
 	anchors := make(map[string]struct{})
-	headingPattern := regexp.MustCompile(`(?m)^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$`)
-	for _, match := range headingPattern.FindAllStringSubmatch(markdownRenderedText(contents), -1) {
+	headingPattern := regexp.MustCompile(`^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$`)
+	for _, line := range markdownLinesOutsideTopLevelFences(contents) {
+		match := headingPattern.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
 		base := markdownHeadingAnchor(match[1])
 		anchor := base
 		for suffix := 1; ; suffix++ {
@@ -127,8 +133,8 @@ func markdownHeadingAnchors(contents string) map[string]struct{} {
 	return anchors
 }
 
-func markdownRenderedText(contents string) string {
-	var rendered strings.Builder
+func markdownLinesOutsideTopLevelFences(contents string) []string {
+	var rendered []string
 	var fenceCharacter byte
 	var fenceLength int
 
@@ -138,22 +144,19 @@ func markdownRenderedText(contents string) string {
 			if isFence {
 				fenceCharacter = character
 				fenceLength = length
-				rendered.WriteByte('\n')
 				continue
 			}
-			rendered.WriteString(line)
-			rendered.WriteByte('\n')
+			rendered = append(rendered, line)
 			continue
 		}
 
-		if isFence && character == fenceCharacter && length >= fenceLength && strings.TrimSpace(remainder) == "" {
+		if isFence && character == fenceCharacter && length >= fenceLength && strings.Trim(remainder, " \t") == "" {
 			fenceCharacter = 0
 			fenceLength = 0
 		}
-		rendered.WriteByte('\n')
 	}
 
-	return rendered.String()
+	return rendered
 }
 
 func markdownFence(line string) (character byte, length int, remainder string, ok bool) {
@@ -215,6 +218,18 @@ func TestDocumentationLocalLinksIgnoreFencedCode(t *testing.T) {
 	directory := t.TempDir()
 	writeTestFile(t, directory, "target.md", "# Target\n")
 	document := writeTestFile(t, directory, "guide.md", "```markdown\n[backtick](missing-backtick.md)\n```\n\n~~~~markdown\n[tilde](missing-tilde.md)\n~~~~\n\n[rendered](target.md)\n")
+
+	brokenLinks, err := documentationLinkErrors([]string{document})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(brokenLinks) != 0 {
+		t.Fatalf("broken links = %q, want none", brokenLinks)
+	}
+}
+
+func TestDocumentationLocalLinksDoNotSpanFencedCode(t *testing.T) {
+	document := writeTestFile(t, t.TempDir(), "guide.md", "[not a link\n```text\ncode\n```\n](missing.md)\n")
 
 	brokenLinks, err := documentationLinkErrors([]string{document})
 	if err != nil {
