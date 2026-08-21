@@ -173,22 +173,11 @@ func hasExactOneOfShapes(t *testing.T, raw json.RawMessage, shapes ...string) bo
 	}
 	found := map[string]bool{}
 	for _, option := range node.OneOf {
-		var entry struct {
-			Type  string          `json:"type"`
-			Items json.RawMessage `json:"items"`
+		shape, ok := schemaOptionShape(t, option)
+		if !ok {
+			return false
 		}
-		if err := json.Unmarshal(option, &entry); err != nil {
-			t.Fatalf("failed to parse oneOf option: %v", err)
-		}
-		if entry.Type == "array" && len(entry.Items) > 0 && referencesVersionConstraint(t, entry.Items) {
-			found["array"] = true
-			continue
-		}
-		if referencesVersionConstraint(t, option) {
-			found["string"] = true
-			continue
-		}
-		return false
+		found[shape] = true
 	}
 	if len(found) != len(shapes) {
 		return false
@@ -199,6 +188,27 @@ func hasExactOneOfShapes(t *testing.T, raw json.RawMessage, shapes ...string) bo
 		}
 	}
 	return true
+}
+
+func schemaOptionShape(t *testing.T, raw json.RawMessage) (string, bool) {
+	t.Helper()
+	var entry struct {
+		Type  string          `json:"type"`
+		Items json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		t.Fatalf("failed to parse oneOf option: %v", err)
+	}
+	if entry.Type == "array" {
+		if len(entry.Items) == 0 || !referencesVersionConstraint(t, entry.Items) || referencesVersionConstraint(t, raw) {
+			return "", false
+		}
+		return "array", true
+	}
+	if (entry.Type == "" || entry.Type == "string") && len(entry.Items) == 0 && referencesVersionConstraint(t, raw) {
+		return "string", true
+	}
+	return "", false
 }
 
 func referencesVersionConstraint(t *testing.T, raw json.RawMessage) bool {
