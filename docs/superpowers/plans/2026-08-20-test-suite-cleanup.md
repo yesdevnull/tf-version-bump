@@ -925,8 +925,9 @@ row receives a malformed file followed by a valid file, captures runner output, 
 runner error count/type, and compares the valid file with complete expected content.
 
 `AppliesCombinedUpdates` uses one real config containing Terraform, provider, and module updates
-against one valid file. Assert exact final HCL, empty diagnostics, nil error, and exact three-line
-config summary counts.
+against two valid files. Assert exact final HCL for both files, empty diagnostics, nil error,
+exact per-file output ordering, and exact summary counts of two for Terraform, provider, and module
+updates. This owner replaces separate two-successful-file processor tests.
 
 `AggregatesMixedFailures` reuses the fixture from the existing
 `TestRunConfigModeAggregatesMixedFileFailures` scenario: malformed files precede a valid file and

@@ -41,7 +41,7 @@ func TestRunCLIModeContinuesAfterFileFailure(t *testing.T) {
 
 func TestRunConfigFileModeAppliesCombinedUpdates(t *testing.T) {
 	dir := t.TempDir()
-	file := writeTestFile(t, dir, "main.tf", `terraform {
+	input := `terraform {
   required_version = ">= 1.0"
   required_providers {
     aws = {
@@ -54,7 +54,9 @@ module "x" {
   source = "example/module"
   version = "1.0.0"
 }
-`)
+`
+	first := writeTestFile(t, dir, "01.tf", input)
+	second := writeTestFile(t, dir, "02.tf", input)
 	cfg := writeTestFile(t, dir, "updates.yml", `terraform_version: ">= 1.5"
 providers:
   - name: aws
@@ -63,9 +65,22 @@ modules:
   - source: example/module
     version: 2.0.0
 `)
-	stdout, diag, err := captureRunnerOutput(t, func() error { return runConfigFileMode([]string{file}, &cliFlags{configFile: cfg, output: "text"}) })
-	wantPrefix := "✓ Updated Terraform required_version to '>= 1.5' in " + file + "\n✓ Updated provider 'aws' to version '~> 5.0' in " + file + "\n✓ Updated module source 'example/module' to version '2.0.0' in " + file + "\n\n==================================================\nConfig File Update Summary\n==================================================\nTerraform version: 1 file(s) updated\nProviders: 1 update(s) applied\nModules: 1 file(s) updated\n"
-	if err != nil || diag != "" || stdout != wantPrefix {
+	stdout, diag, err := captureRunnerOutput(t, func() error {
+		return runConfigFileMode([]string{first, second}, &cliFlags{configFile: cfg, output: "text"})
+	})
+	wantStdout := "✓ Updated Terraform required_version to '>= 1.5' in " + first + "\n" +
+		"✓ Updated Terraform required_version to '>= 1.5' in " + second + "\n" +
+		"✓ Updated provider 'aws' to version '~> 5.0' in " + first + "\n" +
+		"✓ Updated provider 'aws' to version '~> 5.0' in " + second + "\n" +
+		"✓ Updated module source 'example/module' to version '2.0.0' in " + first + "\n" +
+		"✓ Updated module source 'example/module' to version '2.0.0' in " + second + "\n\n" +
+		"==================================================\n" +
+		"Config File Update Summary\n" +
+		"==================================================\n" +
+		"Terraform version: 2 file(s) updated\n" +
+		"Providers: 2 update(s) applied\n" +
+		"Modules: 2 file(s) updated\n"
+	if err != nil || diag != "" || stdout != wantStdout {
 		t.Fatalf("stdout=%q diag=%q err=%v", stdout, diag, err)
 	}
 	wantHCL := `terraform {
@@ -82,8 +97,10 @@ module "x" {
   version = "2.0.0"
 }
 `
-	if readTestFile(t, file) != wantHCL {
-		t.Fatalf("final HCL=%q want=%q", readTestFile(t, file), wantHCL)
+	for _, file := range []string{first, second} {
+		if got := readTestFile(t, file); got != wantHCL {
+			t.Errorf("final HCL in %s = %q, want %q", file, got, wantHCL)
+		}
 	}
 }
 
