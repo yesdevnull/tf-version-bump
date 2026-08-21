@@ -64,11 +64,13 @@ The report has this stable shape:
 }
 ```
 
-Counts represent individual blocks whose version value changed. Blocks already at the requested
+Counts represent unique individual blocks whose version value changed across the complete command.
+Repeated config entries that update the same block count it once. Blocks already at the requested
 version are excluded. Dry runs write zero counts because they do not change files. The report is
-written only after the update operation completes without errors. Terraform `required_version`
-changes and changed-file counts are outside this report; automation can derive file counts from
-its version-control diff.
+written only after the update operation completes without errors. Its destination is validated
+before Terraform files are modified and cannot be one of the selected Terraform or YAML config
+inputs. Terraform `required_version` changes and changed-file counts are outside this report;
+automation can derive file counts from its version-control diff.
 
 ## Module updates
 
