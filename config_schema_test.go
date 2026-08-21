@@ -253,6 +253,9 @@ func schemaScalarOptionShape(entry map[string]json.RawMessage) (string, bool) {
 		if json.Unmarshal(assertion, &assertionObject) != nil {
 			return "", false
 		}
+		if assertionObject == nil {
+			return "", false
+		}
 		if isExactVersionConstraintReference(assertion) {
 			refCount++
 			continue
