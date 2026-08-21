@@ -143,7 +143,7 @@ from the two source files and add the complete required imports to `test_helpers
 Add these helpers to `test_helpers_test.go`:
 
 ```go
-func requireExitCall(t *testing.T, wantCode int, fn func()) {
+func requireExitCall(t *testing.T, fn func()) {
 	t.Helper()
 
 	var recovered any
@@ -156,8 +156,8 @@ func requireExitCall(t *testing.T, wantCode int, fn func()) {
 	if !ok {
 		t.Fatalf("recovered value = %#v, want exitCall", recovered)
 	}
-	if call.code != wantCode {
-		t.Fatalf("exit code = %d, want %d", call.code, wantCode)
+	if call.code != 1 {
+		t.Fatalf("exit code = %d, want 1", call.code)
 	}
 }
 
@@ -496,8 +496,10 @@ Create `TestLoadConfigRejectsInvalidInput` with one row for each distinct branch
 - malformed YAML;
 - module missing source;
 - module missing version;
+- valid module followed by a module missing source at index 1;
 - provider missing name;
-- provider missing version.
+- provider missing version; and
+- valid provider followed by a provider missing name at index 1.
 
 Assert the exact validation error for missing fields, and a stable parser component for YAML
 failures. `TestFromVersionsUnmarshalYAML/mapping` is the precise decoder owner for invalid `from`
@@ -516,9 +518,13 @@ owned by `loadConfig`; retain schema-only editor/validator contracts. The final 
 - `from` and `ignore_versions` expose exactly two order-independent alternatives: scalar string and
   array, with no undocumented third shape;
 - the top-level `anyOf` contains exactly those three singleton required clauses, one per operation;
+- the schema has no unconditional top-level `required` fields, so provider-only and
+  `terraform_version`-only documents remain valid; and
 - provider items require `name` and `version`, and provider/module versions reference the shared
   version-constraint definition; and
-- the version-pattern schema accepts Terraform constraints and rejects an empty version.
+- the version-pattern schema accepts Terraform constraints including
+  `~> 3.0.0-beta.1+build.5`, rejects an empty version, and rejects non-empty malformed values
+  such as `invalid` and `1.2.3.4`.
 
 Both tests must unmarshal `schema/config-schema.json` and inspect the real schema tree. Do not build
 synthetic schema fragments.
@@ -598,8 +604,9 @@ observable updater behaviour. The module-name ignore row owns ignore-pattern pre
 
 For changed files, compare against a literal, fully formatted HCL result. For skipped files,
 compare against the exact original input. Capture stderr for the local-source row and assert its
-exact local-module warning. Capture stdout for the precedence row and assert the final exact
-diagnostic and empty stderr. The remaining rows emit no output. Do not use
+exact local-module warning. Capture stdout for the non-matching `from`, ignore-version precedence,
+and module-name-ignore rows; assert each final exact diagnostic and empty stderr. The remaining rows
+emit no output. Do not use
 `!strings.Contains(oldVersion)` as the success condition.
 
 Use this options shape in the table so every filter is visible:
@@ -621,7 +628,8 @@ type moduleCase struct {
 }
 ```
 
-Set `verbose: true` only on the precedence row and pass every table field directly to
+Set `verbose: true` on the non-matching `from`, ignore-version precedence, and module-name-ignore
+rows, and pass every table field directly to
 `updateModuleVersion` with output format `"text"`.
 
 - [ ] **Step 2: Repair the false missing-version warning test with a RED fixture**
@@ -850,15 +858,12 @@ Expected: all checks pass, coverage remains at least 90.0%, and the commit is si
 In `command_test.go`, add:
 
 ```go
-func TestStringSliceFlagContract(t *testing.T)
 func TestParseFlagsContract(t *testing.T)
 func TestLoadModuleUpdatesContract(t *testing.T)
 ```
 
-`StringSliceFlagContract` sets `3.0.0` and `~> 3.0`, then asserts the exact slice and
-`String() == "3.0.0,~> 3.0"`. `ParseFlagsContract` parses one all-options argument list through
-`withFlagArgs` and compares the complete `cliFlags` value. `LoadModuleUpdatesContract` asserts one exact
-`ModuleUpdate`, including trimmed
+`ParseFlagsContract` parses one all-options argument list through `withFlagArgs` and compares the
+complete `cliFlags` value. `LoadModuleUpdatesContract` asserts one exact `ModuleUpdate`, including trimmed
 comma-separated ignore patterns and both repeated version flag slices.
 
 - [ ] **Step 2: Replace permissive fatal-path tests with exact exit tests**
@@ -871,14 +876,15 @@ For every fatal row:
 1. call `stubExit` and immediately register `t.Cleanup(restoreExit)` inside that fatal-row
    subtest;
 2. capture the relevant log or stdout stream;
-3. invoke only the expected production call through `requireExitCall(t, 1, fn)`; and
+3. invoke only the expected production call through `requireExitCall(t, fn)`; the helper requires
+   exact exit code 1; and
 4. assert the exact diagnostic or stable usage prefix.
 
-`TestValidateOperationModesContract` must call the real function for direct valid Terraform and
-provider cases plus three invalid cases: config mixed with module flags, no operation, and multiple
-operations. Valid module and config returns are owned more strongly by the full-main module/config
-command tests. The no-operation row asserts the printed `Usage:` prefix and exact exit code. This
-replaces the test that merely built flags without invoking production code.
+`TestValidateOperationModesContract` must call the real function for three invalid cases: config
+mixed with module flags, no operation, and multiple operations. Valid Terraform and provider
+returns are owned more strongly by the full-main command tests. The no-operation row asserts the
+printed `Usage:` prefix and exact exit code. This replaces the test that merely built flags without
+invoking production code.
 
 - [ ] **Step 3: Add exact public command contracts**
 
@@ -954,7 +960,7 @@ Run:
 
 ```bash
 gofmt -w command_test.go integration_test.go
-go test -run '^(TestStringSliceFlagContract|TestParseFlagsContract|TestLoadModuleUpdatesContract|TestParseFlagsRejectsInvalidOutput|TestValidateOperationModesContract|TestLoadModuleUpdatesRequiresFlags|TestRunCLIModeRequiresProviderVersion|TestCommandReportsAggregateFileFailure|TestCommandVersion|TestRunConfigFileModeReturnsLoadErrorContract|TestRunCLIModeMarkdownOutput|TestCommandNoMatchingModuleIsSuccess|TestCommandDryRunOutputContract|TestCommandConfigDryRunOutputContract|TestRunCLIModeContinuesAfterFileFailure|TestRunConfigFileModeAppliesCombinedUpdates|TestRunConfigFileModeAggregatesMixedFailures)$' -count=1
+go test -run '^(TestParseFlagsContract|TestLoadModuleUpdatesContract|TestParseFlagsRejectsInvalidOutput|TestValidateOperationModesContract|TestLoadModuleUpdatesRequiresFlags|TestRunCLIModeRequiresProviderVersion|TestCommandReportsAggregateFileFailure|TestCommandVersion|TestRunConfigFileModeReturnsLoadErrorContract|TestRunCLIModeMarkdownOutput|TestCommandNoMatchingModuleIsSuccess|TestCommandDryRunOutputContract|TestCommandConfigDryRunOutputContract|TestRunCLIModeContinuesAfterFileFailure|TestRunConfigFileModeAppliesCombinedUpdates|TestRunConfigFileModeAggregatesMixedFailures)$' -count=1
 ```
 
 Expected: PASS with all expected process output captured.

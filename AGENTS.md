@@ -43,7 +43,7 @@ tf-version-bump/
 |------|---------|
 | `main.go` | CLI parsing, HCL processing, version updates |
 | `config.go` | YAML config loading and validation |
-| `main_test.go` | Core functionality tests |
+| Focused `*_test.go` files | Contract owners by responsibility; see the detailed test layout in `CLAUDE.md` |
 | `config_test.go` | Config validation tests |
 | `schema/config-schema.json` | JSON Schema for YAML |
 
