@@ -173,15 +173,18 @@ func hasExactOneOfShapes(t *testing.T, raw json.RawMessage, shapes ...string) bo
 	}
 	found := map[string]bool{}
 	for _, option := range node.OneOf {
-		var entry map[string]any
+		var entry struct {
+			Type  string          `json:"type"`
+			Items json.RawMessage `json:"items"`
+		}
 		if err := json.Unmarshal(option, &entry); err != nil {
 			t.Fatalf("failed to parse oneOf option: %v", err)
 		}
-		if typeName, ok := entry["type"].(string); ok {
-			found[typeName] = true
+		if entry.Type == "array" && len(entry.Items) > 0 && referencesVersionConstraint(t, entry.Items) {
+			found["array"] = true
 			continue
 		}
-		if allOf, ok := entry["allOf"].([]any); ok && len(allOf) > 0 && referencesVersionConstraint(t, option) {
+		if referencesVersionConstraint(t, option) {
 			found["string"] = true
 			continue
 		}
