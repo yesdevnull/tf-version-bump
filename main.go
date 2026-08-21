@@ -662,12 +662,7 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 // Returns:
 //   - bool: true if a provider was updated (or would be updated in dry-run mode)
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateProviderVersion(filename, providerName, version string, dryRun bool) (bool, error) {
-	updated, _, err := updateProviderVersionWithCount(filename, providerName, version, dryRun)
-	return updated, err
-}
-
-func updateProviderVersionWithCount(filename, providerName, version string, dryRun bool) (bool, int, error) {
+func updateProviderVersionWithCount(filename, providerName, version string, dryRun bool) (updated bool, blocksChanged int, err error) {
 	// Get original file permissions to preserve them when writing
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
@@ -687,8 +682,8 @@ func updateProviderVersionWithCount(filename, providerName, version string, dryR
 		return false, 0, fmt.Errorf("failed to parse HCL: %s", diags.Error())
 	}
 
-	updated := false
-	blocksChanged := 0
+	updated = false
+	blocksChanged = 0
 
 	// Iterate through all blocks in the file
 	for _, block := range file.Body().Blocks() {
@@ -709,18 +704,13 @@ func updateProviderVersionWithCount(filename, providerName, version string, dryR
 	return updated, blocksChanged, nil
 }
 
-func updateProviderTerraformBlock(block *hclwrite.Block, providerName, version string) bool {
-	updated, _ := updateProviderTerraformBlockResult(block, providerName, version)
-	return updated
-}
-
-func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, version string) (bool, int) {
+func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, version string) (updated bool, blocksChanged int) {
 	if block.Type() != "terraform" {
 		return false, 0
 	}
 
-	updated := false
-	blocksChanged := 0
+	updated = false
+	blocksChanged = 0
 	for _, nestedBlock := range block.Body().Blocks() {
 		if nestedBlock.Type() != "required_providers" {
 			continue
@@ -743,14 +733,9 @@ func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, ver
 	return updated, blocksChanged
 }
 
-func updateProviderBlockSyntax(nestedBlock *hclwrite.Block, providerName, version string) bool {
-	updated, _ := updateProviderBlockSyntaxResult(nestedBlock, providerName, version)
-	return updated
-}
-
-func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, version string) (bool, int) {
-	updated := false
-	blocksChanged := 0
+func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, version string) (updated bool, blocksChanged int) {
+	updated = false
+	blocksChanged = 0
 	for _, providerBlock := range nestedBlock.Body().Blocks() {
 		if providerBlock.Type() != providerName {
 			continue
@@ -768,12 +753,7 @@ func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, 
 
 // updateProviderAttributeVersion updates the version value within a provider attribute's object expression
 // This handles the attribute-based syntax: aws = { source = "..." version = "..." }
-func updateProviderAttributeVersion(nestedBlock *hclwrite.Block, providerName, newVersion string) bool {
-	updated, _ := updateProviderAttributeVersionResult(nestedBlock, providerName, newVersion)
-	return updated
-}
-
-func updateProviderAttributeVersionResult(nestedBlock *hclwrite.Block, providerName, newVersion string) (bool, bool) {
+func updateProviderAttributeVersionResult(nestedBlock *hclwrite.Block, providerName, newVersion string) (updated, changed bool) {
 	objExpr, expression, ok := providerAttributeObject(nestedBlock, providerName)
 	if !ok {
 		return false, false
@@ -815,10 +795,10 @@ func providerAttributeObject(nestedBlock *hclwrite.Block, providerName string) (
 	return objExpr, expression, ok
 }
 
-func replaceProviderObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression []byte, newVersion string) ([]byte, bool, bool) {
-	updated := append([]byte(nil), expression...)
-	hasVersion := false
-	changed := false
+func replaceProviderObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression []byte, newVersion string) (updated []byte, hasVersion, changed bool) {
+	updated = append([]byte(nil), expression...)
+	hasVersion = false
+	changed = false
 	newValue := hclwrite.TokensForValue(cty.StringVal(newVersion)).Bytes()
 
 	for index := len(objExpr.Items) - 1; index >= 0; index-- {
@@ -902,12 +882,7 @@ func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
 // Returns:
 //   - bool: true if at least one module was updated (or would be updated in dry-run mode), false otherwise
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateModuleVersion(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (bool, error) {
-	updated, _, err := updateModuleVersionWithCount(filename, moduleSource, version, fromVersions, ignoreVersions, ignorePatterns, forceAdd, dryRun, verbose, outputFormat)
-	return updated, err
-}
-
-func updateModuleVersionWithCount(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (bool, int, error) {
+func updateModuleVersionWithCount(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, blocksChanged int, err error) {
 	// Get original file permissions to preserve them when writing
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
@@ -927,8 +902,8 @@ func updateModuleVersionWithCount(filename, moduleSource, version string, fromVe
 		return false, 0, fmt.Errorf("failed to parse HCL: %s", diags.Error())
 	}
 
-	updated := false
-	blocksChanged := 0
+	updated = false
+	blocksChanged = 0
 	opts := moduleUpdateOptions{
 		filename:       filename,
 		moduleSource:   moduleSource,
@@ -976,12 +951,7 @@ type moduleUpdateOptions struct {
 	outputFormat   string
 }
 
-func updateModuleBlock(block *hclwrite.Block, opts *moduleUpdateOptions) bool {
-	updated, _ := updateModuleBlockResult(block, opts)
-	return updated
-}
-
-func updateModuleBlockResult(block *hclwrite.Block, opts *moduleUpdateOptions) (bool, bool) {
+func updateModuleBlockResult(block *hclwrite.Block, opts *moduleUpdateOptions) (updated, changed bool) {
 	if block.Type() != "module" {
 		return false, false
 	}
