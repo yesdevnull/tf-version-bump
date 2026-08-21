@@ -849,14 +849,13 @@ In `command_test.go`, add:
 ```go
 func TestStringSliceFlagContract(t *testing.T)
 func TestParseFlagsContract(t *testing.T)
-func TestQuoteContract(t *testing.T)
 func TestLoadModuleUpdatesContract(t *testing.T)
 ```
 
 `StringSliceFlagContract` sets `3.0.0` and `~> 3.0`, then asserts the exact slice and
 `String() == "3.0.0,~> 3.0"`. `ParseFlagsContract` parses one all-options argument list through
-`withFlagArgs` and compares the complete `cliFlags` value. `QuoteContract` has only text and
-Markdown rows. `LoadModuleUpdatesContract` asserts one exact `ModuleUpdate`, including trimmed
+`withFlagArgs` and compares the complete `cliFlags` value. `LoadModuleUpdatesContract` asserts one exact
+`ModuleUpdate`, including trimmed
 comma-separated ignore patterns and both repeated version flag slices.
 
 - [ ] **Step 2: Replace permissive fatal-path tests with exact exit tests**
@@ -872,10 +871,11 @@ For every fatal row:
 3. invoke only the expected production call through `requireExitCall(t, 1, fn)`; and
 4. assert the exact diagnostic or stable usage prefix.
 
-`TestValidateOperationModesContract` must call the real function for four valid modes and three invalid
-cases: config mixed with module flags, no operation, and multiple operations. The no-operation row
-asserts the printed `Usage:` prefix and exact exit code. This replaces the test that merely built
-flags without invoking production code.
+`TestValidateOperationModesContract` must call the real function for direct valid Terraform and
+provider cases plus three invalid cases: config mixed with module flags, no operation, and multiple
+operations. Valid module and config returns are owned more strongly by the full-main module/config
+command tests. The no-operation row asserts the printed `Usage:` prefix and exact exit code. This
+replaces the test that merely built flags without invoking production code.
 
 - [ ] **Step 3: Add exact public command contracts**
 
@@ -920,9 +920,10 @@ func TestRunConfigFileModeAppliesCombinedUpdates(t *testing.T)
 func TestRunConfigFileModeAggregatesMixedFailures(t *testing.T)
 ```
 
-`ContinuesAfterFileFailure` is a three-row table for module, Terraform, and provider modes. Each
-row receives a malformed file followed by a valid file, captures runner output, asserts the exact
-runner error count/type, and compares the valid file with complete expected content.
+`ContinuesAfterFileFailure` is the final two-row table for Terraform and provider modes. Each row
+receives a malformed file followed by a valid file, captures runner output, asserts the exact runner
+error count/type, and compares the valid file with complete expected content. The stronger
+`TestCommandReportsAggregateFileFailure/CLI` module owner covers module continuation.
 
 `AppliesCombinedUpdates` uses one real config containing Terraform, provider, and module updates
 against two valid files. Assert exact final HCL for both files, empty diagnostics, nil error,
@@ -943,7 +944,7 @@ Run:
 
 ```bash
 gofmt -w command_test.go integration_test.go
-go test -run '^(TestStringSliceFlagContract|TestParseFlagsContract|TestQuoteContract|TestLoadModuleUpdatesContract|TestParseFlagsRejectsInvalidOutput|TestValidateOperationModesContract|TestLoadModuleUpdatesRequiresFlags|TestRunCLIModeRequiresProviderVersion|TestCommandReportsAggregateFileFailure|TestCommandVersion|TestRunConfigFileModeReturnsLoadErrorContract|TestRunCLIModeMarkdownOutput|TestCommandNoMatchingModuleIsSuccess|TestCommandDryRunOutputContract|TestRunCLIModeContinuesAfterFileFailure|TestRunConfigFileModeAppliesCombinedUpdates|TestRunConfigFileModeAggregatesMixedFailures)$' -count=1
+go test -run '^(TestStringSliceFlagContract|TestParseFlagsContract|TestLoadModuleUpdatesContract|TestParseFlagsRejectsInvalidOutput|TestValidateOperationModesContract|TestLoadModuleUpdatesRequiresFlags|TestRunCLIModeRequiresProviderVersion|TestCommandReportsAggregateFileFailure|TestCommandVersion|TestRunConfigFileModeReturnsLoadErrorContract|TestRunCLIModeMarkdownOutput|TestCommandNoMatchingModuleIsSuccess|TestCommandDryRunOutputContract|TestCommandConfigDryRunOutputContract|TestRunCLIModeContinuesAfterFileFailure|TestRunConfigFileModeAppliesCombinedUpdates|TestRunConfigFileModeAggregatesMixedFailures)$' -count=1
 ```
 
 Expected: PASS with all expected process output captured.
