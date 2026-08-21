@@ -186,6 +186,11 @@ Success is prefixed `✓`; dry-run lines use `→` with the verb "Would update".
 `quote(s, format)`: `'vpc'` for `text` output, `` `vpc` `` for `md`. Thread `outputFormat`
 through rather than hardcoding quotes.
 
+`-report-file` is the machine-readable automation contract. It writes schema version 1 JSON with
+exact counts of module and provider blocks whose version values changed. Keep human summaries and
+the report separate: existing summaries count source/file operations, while the report counts
+individual changed blocks.
+
 ## Testing
 
 Follow TDD. Tests are commonly table-driven with `t.Run` subtests; prefer `t.TempDir()` for new

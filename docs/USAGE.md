@@ -36,10 +36,38 @@ with the three direct operation flags or their module filters.
 | `-dry-run` | All update modes | Report changes without writing files. |
 | `-verbose` | Module updates | Report modules skipped by name or version filters. |
 | `-output <format>` | All update modes | `text` (default) uses single quotes; `md` uses backticks in messages. |
+| `-report-file <path>` | All update modes | Write exact updated module and provider block counts as JSON. |
 | `-version` | Standalone | Print version, commit, and build date metadata, then exit. |
 
 `-output md` changes quoting in human-readable messages; it does not emit a structured Markdown
 document or machine-readable result.
+
+### Machine-readable update report
+
+Use `-report-file` when automation needs exact block counts independently of the human-readable
+summary:
+
+```bash
+tf-version-bump \
+  -pattern "**/*.tf" \
+  -config versions.yml \
+  -report-file update-report.json
+```
+
+The report has this stable shape:
+
+```json
+{
+  "schema_version": 1,
+  "module_blocks_updated": 4,
+  "provider_blocks_updated": 2
+}
+```
+
+Counts represent individual blocks whose version value changed. Blocks already at the requested
+version are excluded. The report is written only after the update operation completes without
+errors. Terraform `required_version` changes and changed-file counts are outside this report;
+automation can derive file counts from its version-control diff.
 
 ## Module updates
 
