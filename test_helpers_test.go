@@ -50,6 +50,17 @@ type commandResult struct {
 	exitCode    int
 }
 
+//nolint:unparam // The adapter preserves the production call shape used by focused tests.
+func updateModuleVersion(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (bool, error) {
+	updated, _, err := updateModuleVersionWithCount(filename, moduleSource, version, fromVersions, ignoreVersions, ignorePatterns, forceAdd, dryRun, verbose, outputFormat)
+	return updated, err
+}
+
+func updateProviderVersion(filename, providerName, version string, dryRun bool) (bool, error) {
+	updated, _, err := updateProviderVersionWithCount(filename, providerName, version, dryRun)
+	return updated, err
+}
+
 var testOutputMu sync.Mutex
 
 func startPipeDrain(reader *os.File) (output *bytes.Buffer, done <-chan struct{}) {
