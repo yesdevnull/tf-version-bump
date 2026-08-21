@@ -564,7 +564,7 @@ deleted after its contract moves to `config_test.go`, and the commit is signed.
 
 **Interfaces:**
 
-- Consumes: `updateModuleVersion`, `isLocalModule`, `containsVersion`, `captureStdout`,
+- Consumes: `updateModuleVersion`, `isLocalModule`, `captureStdout`,
   `captureStderr`, `writeTestFile`, and `readTestFile`.
 - Produces: the sole final owner of module-update unit behaviour. Command-level aggregation remains
   for Task 6.
@@ -579,17 +579,24 @@ filters, flags, `wantUpdated`, and complete `wantContent`. Include exactly these
 - force-add adds a missing version to a registry module;
 - relative local source is skipped even with force-add;
 - matching `from` filter updates;
+- second `from` entry matches;
 - non-matching `from` filter preserves the original version;
 - matching `ignore_versions` preserves the original version;
+- second `ignore_versions` entry matches and preserves the original version;
 - mixed ignored and eligible modules update only the eligible module; and
+- every eligible block with the same source updates;
 - an ignored version that does not match `from` remains unchanged and, with verbose output,
-  reports the `ignore-version` reason rather than the `from` reason.
+  reports the `ignore-version` reason rather than the `from` reason; and
+- module-name ignore preserves unchanged content.
+
+The same-source row owns continuation after a successful update, while the existing mixed row owns
+continuation after a skipped update. The two second-entry rows own list-as-OR matching through
+observable updater behaviour. The module-name ignore row owns ignore-pattern preservation.
 
 For changed files, compare against a literal, fully formatted HCL result. For skipped files,
 compare against the exact original input. Capture stderr for the local-source row and assert its
-exact local-module warning. Capture stdout for the precedence row and assert that it
-contains `matches 'ignore-version' filter` and does not contain
-`does not match any 'from' filter`. The remaining rows emit no output. Do not use
+exact local-module warning. Capture stdout for the precedence row and assert the final exact
+diagnostic and empty stderr. The remaining rows emit no output. Do not use
 `!strings.Contains(oldVersion)` as the success condition.
 
 Use this options shape in the table so every filter is visible:
@@ -660,7 +667,6 @@ Add:
 
 - `TestIsLocalModuleContract` with relative, parent-relative, absolute, registry, and Git source
   rows;
-- `TestContainsVersionContract` with empty, exact match, and non-match rows;
 - `TestUpdateModuleVersionErrors` with missing-file/stat and malformed-HCL rows; and
 - a write-error row using a read-only file, skipped only when `os.Geteuid() == 0`, with the
   `failed to write file:` wrapper asserted.
@@ -682,7 +688,7 @@ fails, then restore the original order.
 Run:
 
 ```bash
-go test -run '^(TestUpdateModuleVersion.*|TestIsLocalModuleContract|TestContainsVersionContract)$' -count=1
+go test -run '^(TestUpdateModuleVersion.*|TestIsLocalModuleContract)$' -count=1
 ```
 
 Expected after restoration: PASS and no diff in `main.go`.
@@ -693,7 +699,7 @@ Run:
 
 ```bash
 gofmt -w module_update_test.go
-go test -run '^(TestUpdateModuleVersion.*|TestIsLocalModuleContract|TestContainsVersionContract)$' -count=1
+go test -run '^(TestUpdateModuleVersion.*|TestIsLocalModuleContract)$' -count=1
 go test -count=1 ./...
 go test -count=1 -race -coverprofile=/tmp/tf-version-bump-task4.cover -covermode=atomic ./...
 go tool cover -func=/tmp/tf-version-bump-task4.cover
