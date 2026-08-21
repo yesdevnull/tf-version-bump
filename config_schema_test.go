@@ -80,11 +80,11 @@ func TestConfigSchemaExposesConfigurationOptions(t *testing.T) {
 	if schemaNodeType(t, schema.Properties.Modules.Items.Properties["ignore_modules"]) != "array" {
 		t.Fatal("ignore_modules should be an array")
 	}
-	if !hasOneOfShape(t, schema.Properties.Modules.Items.Properties["from"], "string", "array") {
-		t.Fatal("from should allow scalar and array shapes")
+	if !hasExactOneOfShapes(t, schema.Properties.Modules.Items.Properties["from"], "string", "array") {
+		t.Fatal("from should allow exactly scalar and array shapes")
 	}
-	if !hasOneOfShape(t, schema.Properties.Modules.Items.Properties["ignore_versions"], "string", "array") {
-		t.Fatal("ignore_versions should allow scalar and array shapes")
+	if !hasExactOneOfShapes(t, schema.Properties.Modules.Items.Properties["ignore_versions"], "string", "array") {
+		t.Fatal("ignore_versions should allow exactly scalar and array shapes")
 	}
 }
 
@@ -160,13 +160,16 @@ func schemaNodeType(t *testing.T, raw json.RawMessage) string {
 	return typeName
 }
 
-func hasOneOfShape(t *testing.T, raw json.RawMessage, shapes ...string) bool {
+func hasExactOneOfShapes(t *testing.T, raw json.RawMessage, shapes ...string) bool {
 	t.Helper()
 	var node struct {
 		OneOf []json.RawMessage `json:"oneOf"`
 	}
 	if err := json.Unmarshal(raw, &node); err != nil {
 		t.Fatalf("failed to parse oneOf schema: %v", err)
+	}
+	if len(node.OneOf) != len(shapes) {
+		return false
 	}
 	found := map[string]bool{}
 	for _, option := range node.OneOf {
@@ -180,7 +183,12 @@ func hasOneOfShape(t *testing.T, raw json.RawMessage, shapes ...string) bool {
 		}
 		if allOf, ok := entry["allOf"].([]any); ok && len(allOf) > 0 && referencesVersionConstraint(t, option) {
 			found["string"] = true
+			continue
 		}
+		return false
+	}
+	if len(found) != len(shapes) {
+		return false
 	}
 	for _, shape := range shapes {
 		if !found[shape] {

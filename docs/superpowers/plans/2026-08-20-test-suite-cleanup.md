@@ -497,11 +497,12 @@ Create `TestLoadConfigRejectsInvalidInput` with one row for each distinct branch
 - module missing source;
 - module missing version;
 - provider missing name;
-- provider missing version; and
-- invalid `from` mapping.
+- provider missing version.
 
 Assert the exact validation error for missing fields, and a stable parser component for YAML
-failures. Add `TestLoadConfigReadError`, use a missing file, require
+failures. `TestFromVersionsUnmarshalYAML/mapping` is the precise decoder owner for invalid `from`
+mapping input, and the malformed-YAML row already owns `loadConfig`'s parse wrapper. Add
+`TestLoadConfigReadError`, use a missing file, require
 `errors.Is(err, os.ErrNotExist)`, and assert the `failed to read config file:` wrapper. Add one
 `TestLoadConfigEmptyDocument` case for the valid empty/EOF contract.
 
@@ -512,6 +513,8 @@ owned by `loadConfig`; retain schema-only editor/validator contracts. The final 
 
 - the schema exposes `terraform_version`, `providers`, module `from`, `ignore_versions`, and
   `ignore_modules` with their documented scalar/array shapes;
+- `from` and `ignore_versions` expose exactly two order-independent alternatives: scalar string and
+  array, with no undocumented third shape;
 - the top-level `anyOf` contains exactly those three singleton required clauses, one per operation;
 - provider items require `name` and `version`, and provider/module versions reference the shared
   version-constraint definition; and
