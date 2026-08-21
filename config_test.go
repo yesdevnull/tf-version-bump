@@ -58,8 +58,8 @@ providers:
 modules:
   - source: " terraform-aws-modules/vpc/aws "
     version: " 5.0.0 "
-    from: " 4.0.0 "
-    ignore_versions: [" 3.0.0 ", " ~> 3.0 "]
+    from: [" 4.0.0 ", "", "   "]
+    ignore_versions: [" 3.0.0 ", " ~> 3.0 ", "", "   "]
     ignore_modules: [" legacy-* ", " ", " *-test "]
 `
 	if err := os.WriteFile(configFile, []byte(data), 0o644); err != nil {
@@ -97,6 +97,7 @@ func TestLoadConfigRejectsInvalidInput(t *testing.T) {
 		{name: "provider missing name", data: "providers:\n  - version: 5.0.0\n", want: "provider at index 0 is missing 'name' field", exact: true},
 		{name: "provider missing version", data: "providers:\n  - name: aws\n", want: "provider at index 0 is missing 'version' field", exact: true},
 		{name: "later provider missing name", data: "providers:\n  - name: aws\n    version: 5.0.0\n  - version: 6.0.0\n", want: "provider at index 1 is missing 'name' field", exact: true},
+		{name: "ignore versions non-string", data: "modules:\n  - source: example/module\n    version: 5.0.0\n    ignore_versions: [4]\n", want: "failed to parse YAML: version filter array contains non-string values", exact: true},
 	}
 
 	for _, tt := range tests {
