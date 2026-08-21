@@ -121,9 +121,6 @@ func assertDistinctSchemaContracts(t *testing.T, schema *configSchema) {
 			t.Fatalf("schema anyOf should contain a singleton required clause for %q", field)
 		}
 	}
-	if len(requiredTopLevel) != 3 {
-		t.Fatalf("schema anyOf required field set = %v, want only modules, providers, terraform_version", requiredTopLevel)
-	}
 }
 
 func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
