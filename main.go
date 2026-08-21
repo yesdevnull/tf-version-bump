@@ -193,7 +193,9 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (tota
 				continue
 			}
 			if updated {
-				flags.report.ModuleBlocksUpdated += blocksUpdated
+				if !flags.dryRun {
+					flags.report.ModuleBlocksUpdated += blocksUpdated
+				}
 				prefix := "✓"
 				action := "Updated"
 				if flags.dryRun {
@@ -568,7 +570,9 @@ func processProviderVersion(files []string, providerName, version string, dryRun
 			continue
 		}
 		if updated {
-			report.ProviderBlocksUpdated += blocksUpdated
+			if !dryRun {
+				report.ProviderBlocksUpdated += blocksUpdated
+			}
 			prefix := "✓"
 			action := "Updated"
 			if dryRun {
@@ -683,15 +687,18 @@ func updateProviderVersionWithCount(filename, providerName, version string, dryR
 		return false, 0, fmt.Errorf("failed to parse HCL: %s", diags.Error())
 	}
 
-	blocksUpdated := 0
+	updated := false
+	blocksChanged := 0
 
 	// Iterate through all blocks in the file
 	for _, block := range file.Body().Blocks() {
-		blocksUpdated += updateProviderTerraformBlockCount(block, providerName, version)
+		blockUpdated, blockChanges := updateProviderTerraformBlockResult(block, providerName, version)
+		updated = updated || blockUpdated
+		blocksChanged += blockChanges
 	}
 
 	// If we made changes, write the file back (unless in dry-run mode)
-	if blocksUpdated > 0 && !dryRun {
+	if updated && !dryRun {
 		output := hclwrite.Format(file.Bytes())
 		// Preserve original file permissions
 		if err := os.WriteFile(filename, output, originalMode.Perm()); err != nil {
@@ -699,82 +706,96 @@ func updateProviderVersionWithCount(filename, providerName, version string, dryR
 		}
 	}
 
-	return blocksUpdated > 0, blocksUpdated, nil
+	return updated, blocksChanged, nil
 }
 
 func updateProviderTerraformBlock(block *hclwrite.Block, providerName, version string) bool {
-	return updateProviderTerraformBlockCount(block, providerName, version) > 0
+	updated, _ := updateProviderTerraformBlockResult(block, providerName, version)
+	return updated
 }
 
-func updateProviderTerraformBlockCount(block *hclwrite.Block, providerName, version string) int {
+func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, version string) (bool, int) {
 	if block.Type() != "terraform" {
-		return 0
+		return false, 0
 	}
 
-	blocksUpdated := 0
+	updated := false
+	blocksChanged := 0
 	for _, nestedBlock := range block.Body().Blocks() {
 		if nestedBlock.Type() != "required_providers" {
 			continue
 		}
-		blockSyntaxUpdates := updateProviderBlockSyntaxCount(nestedBlock, providerName, version)
-		if blockSyntaxUpdates > 0 {
-			blocksUpdated += blockSyntaxUpdates
+		blockSyntaxUpdated, blockSyntaxChanges := updateProviderBlockSyntaxResult(nestedBlock, providerName, version)
+		if blockSyntaxUpdated {
+			updated = true
+			blocksChanged += blockSyntaxChanges
 			continue
 		}
-		if updateProviderAttributeVersion(nestedBlock, providerName, version) {
-			blocksUpdated++
+		attributeUpdated, attributeChanged := updateProviderAttributeVersionResult(nestedBlock, providerName, version)
+		if attributeUpdated {
+			updated = true
+			if attributeChanged {
+				blocksChanged++
+			}
 		}
 	}
 
-	return blocksUpdated
+	return updated, blocksChanged
 }
 
 func updateProviderBlockSyntax(nestedBlock *hclwrite.Block, providerName, version string) bool {
-	return updateProviderBlockSyntaxCount(nestedBlock, providerName, version) > 0
+	updated, _ := updateProviderBlockSyntaxResult(nestedBlock, providerName, version)
+	return updated
 }
 
-func updateProviderBlockSyntaxCount(nestedBlock *hclwrite.Block, providerName, version string) int {
-	blocksUpdated := 0
+func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, version string) (bool, int) {
+	updated := false
+	blocksChanged := 0
 	for _, providerBlock := range nestedBlock.Body().Blocks() {
 		if providerBlock.Type() != providerName {
 			continue
 		}
 		versionAttribute := providerBlock.Body().GetAttribute("version")
-		if versionAttribute != nil && attributeStringValue(versionAttribute) == version {
-			continue
+		if versionAttribute == nil || attributeStringValue(versionAttribute) != version {
+			blocksChanged++
 		}
 		providerBlock.Body().SetAttributeValue("version", cty.StringVal(version))
-		blocksUpdated++
+		updated = true
 	}
 
-	return blocksUpdated
+	return updated, blocksChanged
 }
 
 // updateProviderAttributeVersion updates the version value within a provider attribute's object expression
 // This handles the attribute-based syntax: aws = { source = "..." version = "..." }
 func updateProviderAttributeVersion(nestedBlock *hclwrite.Block, providerName, newVersion string) bool {
+	updated, _ := updateProviderAttributeVersionResult(nestedBlock, providerName, newVersion)
+	return updated
+}
+
+func updateProviderAttributeVersionResult(nestedBlock *hclwrite.Block, providerName, newVersion string) (bool, bool) {
 	objExpr, expression, ok := providerAttributeObject(nestedBlock, providerName)
 	if !ok {
-		return false
+		return false, false
 	}
 
 	updatedExpression, hasVersion, changed := replaceProviderObjectVersion(objExpr, expression, newVersion)
-	if !hasVersion || !changed {
-		return false
+	if !hasVersion {
+		return false, false
 	}
 
 	newAttribute := append([]byte(providerName+" = "), updatedExpression...)
 	newExpr, diags := hclwrite.ParseConfig(newAttribute, "inline", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return false
+		return false, false
 	}
 
 	for _, newAttr := range newExpr.Body().Attributes() {
 		nestedBlock.Body().SetAttributeRaw(providerName, newAttr.Expr().BuildTokens(nil))
-		return true
+		return true, changed
 	}
 
-	return false
+	return false, false
 }
 
 func providerAttributeObject(nestedBlock *hclwrite.Block, providerName string) (*hclsyntax.ObjectConsExpr, []byte, bool) {
@@ -906,7 +927,8 @@ func updateModuleVersionWithCount(filename, moduleSource, version string, fromVe
 		return false, 0, fmt.Errorf("failed to parse HCL: %s", diags.Error())
 	}
 
-	blocksUpdated := 0
+	updated := false
+	blocksChanged := 0
 	opts := moduleUpdateOptions{
 		filename:       filename,
 		moduleSource:   moduleSource,
@@ -921,13 +943,17 @@ func updateModuleVersionWithCount(filename, moduleSource, version string, fromVe
 
 	// Iterate through all blocks in the file
 	for _, block := range file.Body().Blocks() {
-		if updateModuleBlock(block, &opts) {
-			blocksUpdated++
+		blockUpdated, blockChanged := updateModuleBlockResult(block, &opts)
+		if blockUpdated {
+			updated = true
+			if blockChanged {
+				blocksChanged++
+			}
 		}
 	}
 
 	// If we made changes, write the file back (unless in dry-run mode)
-	if blocksUpdated > 0 && !dryRun {
+	if updated && !dryRun {
 		output := hclwrite.Format(file.Bytes())
 		// Preserve original file permissions
 		if err := os.WriteFile(filename, output, originalMode.Perm()); err != nil {
@@ -935,7 +961,7 @@ func updateModuleVersionWithCount(filename, moduleSource, version string, fromVe
 		}
 	}
 
-	return blocksUpdated > 0, blocksUpdated, nil
+	return updated, blocksChanged, nil
 }
 
 type moduleUpdateOptions struct {
@@ -951,27 +977,32 @@ type moduleUpdateOptions struct {
 }
 
 func updateModuleBlock(block *hclwrite.Block, opts *moduleUpdateOptions) bool {
+	updated, _ := updateModuleBlockResult(block, opts)
+	return updated
+}
+
+func updateModuleBlockResult(block *hclwrite.Block, opts *moduleUpdateOptions) (bool, bool) {
 	if block.Type() != "module" {
-		return false
+		return false, false
 	}
 
 	moduleName := moduleBlockName(block)
 	sourceValue, ok := moduleSourceValue(block)
 	if !ok || sourceValue != opts.moduleSource {
-		return false
+		return false, false
 	}
 
 	if isLocalModule(sourceValue) {
 		fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) is a local module and cannot be version-bumped, skipping\n",
 			quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat))
-		return false
+		return false, false
 	}
 
 	if shouldIgnoreModule(moduleName, opts.ignorePatterns) {
 		if opts.verbose {
 			fmt.Printf("  ⊗ Skipped module %s in %s (matches ignore pattern)\n", quote(moduleName, opts.outputFormat), opts.filename)
 		}
-		return false
+		return false, false
 	}
 
 	versionAttr := block.Body().GetAttribute("version")
@@ -979,22 +1010,24 @@ func updateModuleBlock(block *hclwrite.Block, opts *moduleUpdateOptions) bool {
 		if !opts.forceAdd {
 			fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) has no version attribute, skipping\n",
 				quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat))
-			return false
+			return false, false
 		}
 		if !isRegistryModule(sourceValue) {
 			fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) is not a registry module and cannot use a version attribute, skipping\n",
 				quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat))
-			return false
+			return false, false
 		}
 	} else {
 		currentVersion := attributeStringValue(versionAttr)
-		if shouldSkipModuleVersion(moduleName, currentVersion, opts) || currentVersion == opts.version {
-			return false
+		if shouldSkipModuleVersion(moduleName, currentVersion, opts) {
+			return false, false
 		}
+		block.Body().SetAttributeValue("version", cty.StringVal(opts.version))
+		return true, currentVersion != opts.version
 	}
 
 	block.Body().SetAttributeValue("version", cty.StringVal(opts.version))
-	return true
+	return true, true
 }
 
 func moduleBlockName(block *hclwrite.Block) string {
