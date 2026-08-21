@@ -126,6 +126,45 @@ terraform {
 `, wantUpdated: true,
 		},
 		{
+			name: "attribute provider without version is unchanged", provider: "aws", version: "~> 5.0",
+			input: `terraform {
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+    }
+  }
+}
+`,
+			want: `terraform {
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+    }
+  }
+}
+`, wantUpdated: false,
+		},
+		{
+			name: "block provider without version adds version", provider: "aws", version: "~> 5.0",
+			input: `terraform {
+  required_providers {
+    aws {
+      source = "hashicorp/aws"
+    }
+  }
+}
+`,
+			want: `terraform {
+  required_providers {
+    aws {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+`, wantUpdated: true,
+		},
+		{
 			name: "missing provider unchanged", provider: "google", version: "~> 6.0",
 			input: `terraform {
   required_providers {

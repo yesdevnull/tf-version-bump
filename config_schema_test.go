@@ -26,16 +26,21 @@ type configSchema struct {
 	} `json:"definitions"`
 	Properties struct {
 		Modules struct {
+			Type  string `json:"type"`
 			Items struct {
-				Properties map[string]json.RawMessage `json:"properties"`
+				Type                 string                     `json:"type"`
+				Required             []string                   `json:"required"`
+				AdditionalProperties *bool                      `json:"additionalProperties"`
+				Properties           map[string]json.RawMessage `json:"properties"`
 			} `json:"items"`
 		} `json:"modules"`
 		TerraformVersion json.RawMessage `json:"terraform_version"`
 		Providers        struct {
 			Type  string `json:"type"`
 			Items struct {
-				Required   []string                   `json:"required"`
-				Properties map[string]json.RawMessage `json:"properties"`
+				Required             []string                   `json:"required"`
+				AdditionalProperties *bool                      `json:"additionalProperties"`
+				Properties           map[string]json.RawMessage `json:"properties"`
 			} `json:"items"`
 		} `json:"providers"`
 	} `json:"properties"`
@@ -66,11 +71,19 @@ func TestConfigSchemaExposesConfigurationOptions(t *testing.T) {
 	if len(schema.Properties.TerraformVersion) == 0 {
 		t.Fatal("terraform_version schema is missing")
 	}
-	if !referencesVersionConstraint(t, schema.Properties.TerraformVersion) {
-		t.Fatal("terraform_version should reference the shared version constraint definition")
-	}
+	assertVersionConstraintNode(t, "terraform_version", schema.Properties.TerraformVersion)
 	if schema.Properties.Providers.Type != "array" {
 		t.Fatal("providers should be an array")
+	}
+	if schema.Properties.Modules.Type != "array" {
+		t.Fatal("modules should be an array")
+	}
+	if schema.Properties.Modules.Items.Type != "object" {
+		t.Fatal("module items should be objects")
+	}
+	assertExactRequiredFields(t, "module", schema.Properties.Modules.Items.Required, "source", "version")
+	if schema.Properties.Modules.Items.AdditionalProperties == nil || *schema.Properties.Modules.Items.AdditionalProperties {
+		t.Fatal("module items should disallow additional properties")
 	}
 	assertDistinctSchemaContracts(t, &schema)
 	for _, field := range []string{"ignore_versions", "ignore_modules"} {
@@ -94,21 +107,22 @@ func assertDistinctSchemaContracts(t *testing.T, schema *configSchema) {
 	if len(schema.Required) != 0 {
 		t.Fatalf("schema has unconditional required fields = %v, want none", schema.Required)
 	}
-	for _, field := range []string{"name", "version"} {
-		if !slices.Contains(schema.Properties.Providers.Items.Required, field) {
-			t.Fatalf("provider schema should require %q", field)
-		}
+	assertExactRequiredFields(t, "provider", schema.Properties.Providers.Items.Required, "name", "version")
+	if schema.Properties.Providers.Items.AdditionalProperties == nil || *schema.Properties.Providers.Items.AdditionalProperties {
+		t.Fatal("provider items should disallow additional properties")
 	}
 
 	providerVersion, ok := schema.Properties.Providers.Items.Properties["version"]
-	if !ok || !referencesVersionConstraint(t, providerVersion) {
-		t.Fatal("provider version should reference the shared version constraint definition")
+	if !ok {
+		t.Fatal("provider version schema is missing")
 	}
+	assertVersionConstraintNode(t, "provider version", providerVersion)
 
 	moduleVersion, ok := schema.Properties.Modules.Items.Properties["version"]
-	if !ok || !referencesVersionConstraint(t, moduleVersion) {
-		t.Fatal("module version should reference the shared version constraint definition")
+	if !ok {
+		t.Fatal("module version schema is missing")
 	}
+	assertVersionConstraintNode(t, "module version", moduleVersion)
 
 	if len(schema.AnyOf) != 3 {
 		t.Fatalf("schema anyOf clauses = %d, want exactly 3", len(schema.AnyOf))
@@ -132,7 +146,7 @@ func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
 
 	regexes := compileConstraintRegexps(t, schema.Definitions.VersionConstraint)
 
-	validConstraints := []string{"1.2.3", "~> 3.0", ">= 1.5, < 2.0", "~> 3.0.0-beta.1+build.5"}
+	validConstraints := []string{"1.2.3", "v1.0.0", "~> 3.0", "!= 1.0.0", "<=1.4.0", ">= 1.5, < 2.0", "~> 3.0.0-beta.1+build.5"}
 
 	for _, constraint := range validConstraints {
 		matched := false
@@ -309,36 +323,24 @@ func isExactVersionConstraintReference(raw json.RawMessage) bool {
 	return json.Unmarshal(ref, &reference) == nil && reference == "#/definitions/versionConstraint"
 }
 
-func referencesVersionConstraint(t *testing.T, raw json.RawMessage) bool {
+func assertVersionConstraintNode(t *testing.T, name string, raw json.RawMessage) {
 	t.Helper()
-
-	if len(raw) == 0 {
-		return false
+	shape, ok := schemaOptionShape(t, raw)
+	if !ok || shape != "string" {
+		t.Fatalf("%s should be exactly one version-constraint reference plus annotation-only metadata", name)
 	}
+}
 
-	var node map[string]any
-	if err := json.Unmarshal(raw, &node); err != nil {
-		t.Fatalf("failed to parse schema node: %v", err)
+func assertExactRequiredFields(t *testing.T, name string, got []string, want ...string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s required fields = %v, want exactly %v", name, got, want)
 	}
-
-	if ref, ok := node["$ref"].(string); ok && ref == "#/definitions/versionConstraint" {
-		return true
-	}
-
-	allOf, ok := node["allOf"].([]any)
-	if !ok {
-		return false
-	}
-
-	for _, entry := range allOf {
-		if entryMap, ok := entry.(map[string]any); ok {
-			if ref, ok := entryMap["$ref"].(string); ok && ref == "#/definitions/versionConstraint" {
-				return true
-			}
+	for _, field := range want {
+		if !slices.Contains(got, field) {
+			t.Fatalf("%s required fields = %v, want exactly %v", name, got, want)
 		}
 	}
-
-	return false
 }
 
 func compileConstraintRegexps(t *testing.T, schema versionSchema) []*regexp.Regexp {
