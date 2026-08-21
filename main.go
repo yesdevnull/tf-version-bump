@@ -798,7 +798,9 @@ func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
 // hclwrite.Format.
 // If a matching module doesn't have a version attribute:
 //   - When forceAdd is false (default): a warning is printed and the module is skipped
-//   - When forceAdd is true: a version attribute is added to the module
+//   - When forceAdd is true and the source is a registry module: a version attribute is added
+//   - When forceAdd is true and the source is not a registry module: a warning is printed and the
+//     module is skipped because Terraform does not permit version constraints for those sources
 //
 // All modules with the same source attribute will be updated to the same version.
 // If fromVersions is specified, only modules with current version matching any in the list will be updated.
@@ -812,7 +814,7 @@ func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
 //   - fromVersions: Optional: only update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
 //   - ignoreVersions: Optional: skip update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
 //   - ignorePatterns: Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
-//   - forceAdd: If true, add version attribute to modules that don't have one
+//   - forceAdd: If true, add a version attribute to registry modules that don't have one
 //   - dryRun: If true, show what would be changed without modifying files
 //   - verbose: If true, print informational messages about skipped modules
 //   - outputFormat: Output format ("text" or "md")

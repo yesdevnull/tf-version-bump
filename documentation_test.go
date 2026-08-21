@@ -6,8 +6,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
-	tfaddr "github.com/hashicorp/terraform-registry-address"
 )
 
 func TestExampleConfigsMatchDocumentedContract(t *testing.T) {
@@ -20,9 +18,6 @@ func TestExampleConfigsMatchDocumentedContract(t *testing.T) {
 			t.Fatalf("load %s: %v", filename, err)
 		}
 		for _, module := range config.Modules {
-			if _, err := tfaddr.ParseModuleSource(module.Source); err != nil {
-				t.Errorf("%s uses non-registry module source %q: %v", filename, module.Source, err)
-			}
 			assertDocumentedVersionConstraint(t, filename, "module version", module.Version, constraintPatterns)
 			for _, version := range module.From {
 				assertDocumentedVersionConstraint(t, filename, "module from filter", version, constraintPatterns)
@@ -51,12 +46,8 @@ func assertDocumentedVersionConstraint(t *testing.T, filename, field, value stri
 }
 
 func TestDocumentationLocalLinksResolve(t *testing.T) {
-	documents := []string{"README.md", "CLAUDE.md", "AGENTS.md", "examples/README.md"}
-	documents = append(documents, globTestFiles(t, "docs/*.md")...)
-	documents = append(documents, globTestFiles(t, "examples/*/README.md")...)
-
 	linkPattern := regexp.MustCompile(`\[[^]]+\]\(([^)]+)\)`)
-	for _, document := range documents {
+	for _, document := range markdownTestFiles(t) {
 		contents, err := os.ReadFile(document)
 		if err != nil {
 			t.Fatalf("read %s: %v", document, err)
@@ -72,6 +63,33 @@ func TestDocumentationLocalLinksResolve(t *testing.T) {
 			}
 		}
 	}
+}
+
+func markdownTestFiles(t *testing.T) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir(".", func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if entry.Name() == ".git" || entry.Name() == ".superpowers" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.EqualFold(filepath.Ext(path), ".md") {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk Markdown files: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("found no Markdown files")
+	}
+	return files
 }
 
 func globTestFiles(t *testing.T, pattern string) []string {
