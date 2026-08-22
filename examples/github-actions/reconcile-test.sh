@@ -31,7 +31,43 @@ fixture_commit() {
         -c user.name='Reconcile Test' \
         -c user.email='reconcile-test@example.invalid' \
         commit "$@" -m "$message" >/dev/null
-    "$TEST_GIT" -C "$checkout" verify-commit HEAD >/dev/null 2>&1
+}
+
+test_fixture_commits_do_not_require_verify_commit() {
+    # Production break caught: the default CI harness uses plain Git, so fixture creation must
+    # not require a verifiable signature after a successful commit.
+    local repository="$TEST_ROOT/fixture-commit-without-verify"
+    local git_without_verify="$TEST_ROOT/git-without-verify"
+    local delegate=$TEST_GIT
+    mkdir -p "$repository"
+    "$delegate" -C "$repository" init --initial-branch=main >/dev/null
+    printf '%s\n' fixture >"$repository/fixture.txt"
+    "$delegate" -C "$repository" add -- fixture.txt
+    cat >"$git_without_verify" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+for argument in "$@"; do
+    if [[ "$argument" == "verify-commit" ]]; then
+        exit 97
+    fi
+done
+exec "${TEST_GIT_DELEGATE:?}" "$@"
+EOF
+    chmod 755 "$git_without_verify"
+
+    TEST_GIT_DELEGATE=$delegate
+    export TEST_GIT_DELEGATE
+    TEST_GIT=$git_without_verify
+    local fixture_status=0
+    fixture_commit "$repository" 'test: create fixture without verification' \
+        || fixture_status=$?
+    TEST_GIT=$delegate
+    unset TEST_GIT_DELEGATE
+
+    [[ "$fixture_status" -eq 0 ]] \
+        || fail "fixture commit required signature verification after the commit succeeded"
+    "$delegate" -C "$repository" rev-parse --verify HEAD >/dev/null \
+        || fail "fixture helper did not create a commit"
 }
 
 # Runs $4.. (redirected to $2/$3), asserts it succeeded, and asserts it emitted nothing on
@@ -485,6 +521,24 @@ test_emits_strict_verified_result_variants() {
     assert_exact_result_entries "branch-validation verified result" 'manifest.json'
 }
 
+test_rejects_zero_status_preparation_failures() {
+    # Production break caught: a failure preparation with a successful command status reaches
+    # the trusted result and can be published as a contradictory failure.
+    local classification stage
+    for classification in branch-update branch-init branch-format automation; do
+        setup_success_fixture
+        case "$classification" in
+            branch-update) stage="tf-version-bump" ;;
+            branch-init) stage="terraform init" ;;
+            branch-format) stage="terraform fmt" ;;
+            automation) stage="tf-version-bump report" ;;
+        esac
+        configure_preparation_failure "$classification" "$stage" 0
+        assert_verification_failure "$classification zero-status preparation failure"
+        unset RECONCILE_VALIDATION_OUTCOME_DIR
+    done
+}
+
 test_rejects_post_terraform_mutation() {
     # Production breaks caught: the trusted reconciliation pass accepts accidental mutation after
     # Terraform exits instead of rechecking both source artefacts and the already-applied checkout.
@@ -596,6 +650,45 @@ test_publication_rejects_ambiguous_verified_results() {
         2>"$FIXTURE_ROOT/no-change-patch.stderr"; then
         fail "publication accepted a patch in a no-change verified result"
     fi
+}
+
+test_publication_rejects_zero_status_failure_results() {
+    # Production break caught: publication trusts a verified failure whose command status says
+    # success, producing a contradictory issue or accepting automation as a valid no-op.
+    local classification stage
+    for classification in branch-validation branch-update branch-init branch-format automation; do
+        setup_success_fixture
+        case "$classification" in
+            branch-validation)
+                jq '.classification = "branch-validation" | .command_status = 1 |
+                    .failure = {stage: "terraform validate", root: "root", status: 1}' \
+                    "$FIXTURE_OUTCOME/manifest.json" \
+                    >"$FIXTURE_ROOT/branch-validation.json"
+                mv "$FIXTURE_ROOT/branch-validation.json" \
+                    "$FIXTURE_OUTCOME/manifest.json"
+                run_verify
+                ;;
+            branch-update) stage="tf-version-bump" ;;
+            branch-init) stage="terraform init" ;;
+            branch-format) stage="terraform fmt" ;;
+            automation) stage="tf-version-bump report" ;;
+        esac
+        if [[ "$classification" != "branch-validation" ]]; then
+            configure_preparation_failure "$classification" "$stage" 1
+            run_verify
+        fi
+        chmod -R u+w "$FIXTURE_VERIFIED"
+        jq '.failure.status = 0' "$FIXTURE_VERIFIED/manifest.json" \
+            >"$FIXTURE_ROOT/zero-status-verified.json"
+        mv "$FIXTURE_ROOT/zero-status-verified.json" \
+            "$FIXTURE_VERIFIED/manifest.json"
+        setup_gh_capture
+        if run_publish >"$FIXTURE_ROOT/zero-status-publish.stdout" \
+            2>"$FIXTURE_ROOT/zero-status-publish.stderr"; then
+            fail "publication accepted $classification zero-status failure result"
+        fi
+        unset RECONCILE_VALIDATION_OUTCOME_DIR
+    done
 }
 
 assert_verification_failure() {
@@ -1162,11 +1255,14 @@ test_issue_lookup_searches_the_ref_hash_in_bodies() {
 }
 
 if [[ $# -eq 0 ]]; then
+    test_fixture_commits_do_not_require_verify_commit
     test_verifies_successful_candidate_without_credentials
     test_verifies_candidate_with_valid_tab_in_path
     test_emits_strict_verified_result_variants
+    test_rejects_zero_status_preparation_failures
     test_rejects_post_terraform_mutation
     test_publication_rejects_ambiguous_verified_results
+    test_publication_rejects_zero_status_failure_results
     test_rejects_mismatched_or_corrupt_candidates
     test_verifies_deleting_candidate_reports_a_classified_digest_error
     test_verifies_only_bounded_branch_failures_without_a_patch

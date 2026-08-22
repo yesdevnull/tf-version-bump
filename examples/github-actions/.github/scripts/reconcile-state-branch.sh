@@ -175,7 +175,7 @@ preparation_manifest_is_valid() {
             (.failure.stage | type == "string" and length > 0) and
             (.failure.root | type == "string") and
             (.failure.command | type == "string" and length > 0) and
-            (.failure.status | type == "number" and . >= 0 and floor == .)
+            (.failure.status | type == "number" and . > 0 and floor == .)
         else false end
     ' "$1" >/dev/null
 }
@@ -815,7 +815,7 @@ verified_manifest_is_valid() {
             (.failure | keys) == ["root", "stage", "status"] and
             (.failure.stage | type == "string" and length > 0) and
             (.failure.root | type == "string") and
-            (.failure.status | type == "number" and . >= 0 and floor == .) and
+            (.failure.status | type == "number" and . > 0 and floor == .) and
             (.run_url | type == "string" and test("^https://[^[:space:]]+$"))
         elif .classification == "branch-update" or .classification == "branch-init" or
              .classification == "branch-format" or .classification == "automation" then
@@ -825,7 +825,7 @@ verified_manifest_is_valid() {
             (.failure | keys) == ["root", "stage", "status"] and
             (.failure.stage | type == "string" and length > 0) and
             (.failure.root | type == "string") and
-            (.failure.status | type == "number" and . >= 0 and floor == .) and
+            (.failure.status | type == "number" and . > 0 and floor == .) and
             (.run_url | type == "string" and test("^https://[^[:space:]]+$"))
         else false end
     ' "$1" >/dev/null
