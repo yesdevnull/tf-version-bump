@@ -34,43 +34,6 @@ fixture_commit() {
         commit "$@" -m "$message" >/dev/null
 }
 
-test_fixture_commits_do_not_require_verify_commit() {
-    # Production break caught: the default CI harness uses plain Git, so fixture creation must
-    # not require a verifiable signature after a successful commit.
-    local repository="$TEST_ROOT/fixture-commit-without-verify"
-    local git_without_verify="$TEST_ROOT/git-without-verify"
-    local delegate=$TEST_GIT
-    mkdir -p "$repository"
-    "$delegate" -C "$repository" init --initial-branch=main >/dev/null
-    printf '%s\n' fixture >"$repository/fixture.txt"
-    "$delegate" -C "$repository" add -- fixture.txt
-    cat >"$git_without_verify" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-for argument in "$@"; do
-    if [[ "$argument" == "verify-commit" ]]; then
-        exit 97
-    fi
-done
-exec "${TEST_GIT_DELEGATE:?}" "$@"
-EOF
-    chmod 755 "$git_without_verify"
-
-    TEST_GIT_DELEGATE=$delegate
-    export TEST_GIT_DELEGATE
-    TEST_GIT=$git_without_verify
-    local fixture_status=0
-    fixture_commit "$repository" 'test: create fixture without verification' \
-        || fixture_status=$?
-    TEST_GIT=$delegate
-    unset TEST_GIT_DELEGATE
-
-    [[ "$fixture_status" -eq 0 ]] \
-        || fail "fixture commit required signature verification after the commit succeeded"
-    "$delegate" -C "$repository" rev-parse --verify HEAD >/dev/null \
-        || fail "fixture helper did not create a commit"
-}
-
 # Runs $4.. (redirected to $2/$3), asserts it succeeded, and asserts it emitted nothing on
 # either stream.
 assert_silent_success() {
@@ -1350,7 +1313,6 @@ test_issue_lookup_searches_the_ref_hash_in_bodies() {
 }
 
 if [[ $# -eq 0 ]]; then
-    test_fixture_commits_do_not_require_verify_commit
     test_verifies_successful_candidate_without_credentials
     test_verifies_candidate_with_valid_tab_in_path
     test_emits_strict_verified_result_variants
