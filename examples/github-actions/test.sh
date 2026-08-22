@@ -335,19 +335,21 @@ create_validation_candidate_bundle() {
           updates: {
             module_blocks_updated: 0,
             provider_blocks_updated: 0,
-            changed_files:
+            changed_files: (
               (if $lock_sha256 == "" then [] else
                  [{path: "root/.terraform.lock.hcl", mode: "100644", sha256: $lock_sha256}]
                end) +
-              [{path: "root/main.tf", mode: "100644", sha256: $main_sha256}],
+              [{path: "root/main.tf", mode: "100644", sha256: $main_sha256}]
+            ),
             patch_sha256: $patch_sha256
           },
           formatting: {ran: false, changed_files: []},
-          final_changed_files:
+          final_changed_files: (
             (if $lock_sha256 == "" then [] else
                [{path: "root/.terraform.lock.hcl", mode: "100644", sha256: $lock_sha256}]
              end) +
-            [{path: "root/main.tf", mode: "100644", sha256: $main_sha256}]}' \
+            [{path: "root/main.tf", mode: "100644", sha256: $main_sha256}]
+          )}' \
         >"$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
     chmod 444 \
         "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" \
@@ -893,7 +895,8 @@ test_ci_uses_supported_go_and_runs_github_actions_poc_checks() {
         any(.test.steps[];
             .name == "Set up Go" and
             .with["go-version-file"] == "go.mod" and
-            .with["go-version"] == null) and
+            .with["go-version"] == null and
+            .with.cache == false) and
         all(.test.steps[];
             ((.if // "") | contains("matrix.go-version") | not)) and
         any(.test.steps[];
