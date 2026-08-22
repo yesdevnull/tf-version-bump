@@ -241,7 +241,29 @@ run_workflow_result_classification() {
         "$REUSABLE_WORKFLOW" >"$classification_script"
     [[ -s "$classification_script" ]] \
         || fail "workflow does not define the final verified-result classification gate"
-    VERIFIED_MANIFEST="$FIXTURE_VERIFIED/manifest.json" bash "$classification_script"
+    CONTROL_CHECKOUT="$SCRIPT_DIR" \
+        RECONCILE_RUN_ID=100 \
+        RECONCILE_RUN_ATTEMPT=1 \
+        RECONCILE_AUTOMATION_POLICY_ID=nonproduction \
+        RECONCILE_CONTROL_OID="$FIXTURE_CONTROL_OID" \
+        RECONCILE_STATE_BRANCH="$FIXTURE_STATE_BRANCH" \
+        RECONCILE_BASE_OID="$FIXTURE_BASE_OID" \
+        RECONCILE_REF_HASH="$(ref_hash)" \
+        RECONCILE_VERIFIED_RESULT_DIR="$FIXTURE_VERIFIED" \
+        bash "$classification_script"
+}
+
+assert_workflow_classification_failure() {
+    local expected_diagnostic=$1 description=$2
+    local stdout_file="$FIXTURE_ROOT/workflow-classification.stdout"
+    local stderr_file="$FIXTURE_ROOT/workflow-classification.stderr"
+    if run_workflow_result_classification >"$stdout_file" 2>"$stderr_file"; then
+        fail "$description succeeded"
+    fi
+    [[ ! -s "$stdout_file" ]] \
+        || fail "$description emitted unexpected stdout: $(<"$stdout_file")"
+    [[ "$(<"$stderr_file")" == "$expected_diagnostic" ]] \
+        || fail "$description emitted an unexpected diagnostic: $(<"$stderr_file")"
 }
 
 setup_gh_capture() {
@@ -575,19 +597,22 @@ test_workflow_classifies_verified_results_after_reconciliation() {
     run_verify
     [[ -f "$FIXTURE_VERIFIED/manifest.json" ]] \
         || fail "automation reconciliation did not produce its verified result"
-    if run_workflow_result_classification; then
-        fail "workflow accepted a verified automation result"
-    fi
+    assert_workflow_classification_failure "" \
+        "workflow classification of a verified automation result"
 
     chmod -R u+w "$FIXTURE_VERIFIED"
     rm "$FIXTURE_VERIFIED/manifest.json"
-    if run_workflow_result_classification; then
-        fail "workflow accepted a missing verified result"
-    fi
+    assert_workflow_classification_failure \
+        "reconciliation error: verified result manifest must be a regular file" \
+        "workflow classification of a missing verified result"
     printf '%s\n' '{}' >"$FIXTURE_VERIFIED/manifest.json"
-    if run_workflow_result_classification; then
-        fail "workflow accepted a malformed verified result"
-    fi
+    assert_workflow_classification_failure \
+        "reconciliation error: verified result manifest contract is invalid" \
+        "workflow classification of a malformed verified result"
+    printf '%s\n' '{"classification":"success"}' >"$FIXTURE_VERIFIED/manifest.json"
+    assert_workflow_classification_failure \
+        "reconciliation error: verified result manifest contract is invalid" \
+        "workflow classification of an allowed-classification malformed verified result"
     unset RECONCILE_VALIDATION_OUTCOME_DIR
 }
 

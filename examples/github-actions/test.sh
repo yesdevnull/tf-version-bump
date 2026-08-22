@@ -1078,6 +1078,15 @@ test_reusable_workflow_wires_current_attempt_pipeline() {
             .with.name == "verified-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}") and
         any(.validate.steps[]; .name == "Confirm verified classification" and
             .if == "${{ always() }}" and
+            (.env.RECONCILE_RUN_ID == "${{ matrix.run_id }}") and
+            (.env.RECONCILE_RUN_ATTEMPT == "${{ matrix.run_attempt }}") and
+            (.env.RECONCILE_AUTOMATION_POLICY_ID == "${{ matrix.automation_policy_id }}") and
+            (.env.RECONCILE_CONTROL_OID == "${{ matrix.control_oid }}") and
+            (.env.RECONCILE_STATE_BRANCH == "${{ matrix.branch }}") and
+            (.env.RECONCILE_BASE_OID == "${{ matrix.base_oid }}") and
+            (.env.RECONCILE_REF_HASH == "${{ matrix.ref_hash }}") and
+            (.env.RECONCILE_VERIFIED_RESULT_DIR == "${{ runner.temp }}/verified-result") and
+            (.run | contains("reconcile-state-branch.sh\" classify")) and
             (.run | contains("branch-format")) and
             (.run | contains("branch-validation")) and
             (.run | contains("automation"))) and
