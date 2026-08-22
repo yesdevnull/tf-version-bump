@@ -59,6 +59,18 @@ After discovery, the workflow uses three processing jobs:
 
 The privileged publication job never executes Terraform or downloaded provider/module code.
 
+This simplified topology deliberately trusts every configured provider and module source. Provider
+plugins execute with the validation runner's authority, so combining validation and verification no
+longer protects publication from malicious provider code in the way a verifier on a clean runner
+would. Private or first-party provenance is the trust decision; it is not a sandbox boundary.
+
+After Terraform exits, a trusted host-side reconciliation step rechecks the exact control checkout,
+preparation manifest, validation outcome, both patch digests, stage metadata, and final candidate
+before atomically creating the verified result. These checks catch accidental or non-adversarial
+mutation. Consumers that do not fully trust all provider code must restore an independent clean
+verifier or provide equivalent isolation. The separate publication job remains mandatory so
+Terraform never receives repository write credentials.
+
 ## Workflow inputs and release pin
 
 The reusable workflow adds:
@@ -127,8 +139,11 @@ an unsigned or unpublished temporary commit.
 
 ## Preparation artefact schema
 
-Successful and no-change manifests use schema version 2. A successful manifest has this logical
-shape; identity, tool, config, root, and artefact-name fields remain as in the existing contract:
+Every manifest type has the same seven identity fields: `run_id`, `run_attempt`,
+`automation_policy_id`, `control_oid`, `state_branch`, `base_oid`, and `ref_hash`. Every preparation
+manifest uses schema version 2 and additionally requires its existing `artifact_name`. Successful
+and no-change preparations also require `tools`, `config_path`, and non-empty `roots`. A successful
+manifest has this logical shape in addition to those fields:
 
 ```json
 {
@@ -157,20 +172,45 @@ shape; identity, tool, config, root, and artefact-name fields remain as in the e
 }
 ```
 
-`formatting` always records whether formatting ran. It omits `patch_sha256` and uses an empty
-`changed_files` array when formatting ran without changing files. When formatting was disabled or
-skipped because updates produced no diff, `ran` is false and no format patch exists.
+The preparation bundle has these normative variants:
 
-A no-change manifest preserves the aggregate report counts, records empty update and final file
-lists, contains no update patch, and sets `formatting.ran: false`. Counts may be non-zero when
-sequential config entries changed a block and ultimately returned it to its base value; the Git diff,
-not the counts, controls no-change classification and formatting eligibility. Failure bundles
-contain the existing bounded failure record and logs but no update or format patch. The new bounded
-preparation classification is `branch-format` with failure stage `terraform fmt`.
+| Classification | Required manifest data | Patch files |
+|----------------|------------------------|-------------|
+| `success` | `terraform_fmt`, `updates`, `formatting`, and non-empty `final_changed_files` | `update.patch`; `format.patch` only when `formatting.changed_files` is non-empty |
+| `no-change` | `terraform_fmt`, aggregate counts in `updates`, empty stage/final file lists, and `formatting.ran` reflecting whether formatting actually ran | None |
+| `branch-update` | Existing bounded `failure` with stage `tf-version-bump` | None |
+| `branch-init` | Existing bounded `failure` with stage `terraform init` | None |
+| `branch-format` | Existing bounded `failure` with stage `terraform fmt` | None |
+| `automation` | Existing diagnostic failure data identifying the control-contract stage | None |
 
-All three manifest types move together to schema version 2. A run cannot mix schemas
-because artefact names include the run attempt and immutable control identity, and partial reruns
-are rejected.
+The bundle's exact top-level allow-list is `manifest.json`, `logs/`, and the patch files permitted
+by the table. `logs/` contains only the existing bounded, regular, non-symlink stage log filenames;
+unknown entries at either level invalidate the bundle.
+
+`updates.module_blocks_updated` and `updates.provider_blocks_updated` are non-negative integers.
+Every changed-file list contains unique path/mode/SHA-256 records and is sorted by encoded Git path.
+`updates.patch_sha256` exists exactly when `update.patch` exists. `formatting.ran` always records
+whether formatting ran; `formatting.patch_sha256` exists exactly when `format.patch` exists. A
+successful formatting run that changes no files therefore has `ran: true`, no formatting digest,
+and an empty formatting list.
+
+After optional formatting, preparation compares the final tree with the exact base again. If they
+are equal, it discards both intermediate patches, clears every changed-file list, and classifies the
+bundle as `no-change`; `formatting.ran` remains true when formatting performed the cancellation.
+Aggregate report counts remain available for diagnostics but never override final-tree
+classification. Counts may also be non-zero when sequential config entries changed a block and
+ultimately returned it to its base value.
+
+If the updater exits zero but its report is absent, malformed, not schema version 1, or contains an
+invalid count, preparation emits an `automation` diagnostic bundle. It retains bounded logs but no
+patch or validation outcome. Validation converts the checked bundle into an `automation` verified
+disposition so the matching publication matrix entry can terminate cleanly without a branch issue,
+commit, or pull request. This is a trusted tool/control-contract failure rather than a state-branch
+failure.
+
+Preparation, validation-outcome, and verified-result manifests move together to schema version 2.
+Artefact names bind the run ID, run attempt, automation policy ID, and state-ref hash. Manifest
+identity validation separately binds the immutable control OID. Partial job reruns remain rejected.
 
 ## Stage-specific path policy
 
@@ -199,33 +239,112 @@ formatted tree.
 
 Validation downloads the preparation bundle into one fresh exact-base checkout. In that checkout,
 the job validates schema version 2 and the complete run/control/base/policy identity before running
-Terraform:
+Terraform. For a successful preparation it performs the following sequence exactly:
 
-1. Require the correct presence or absence of `update.patch` and `format.patch` for the declared
-   classification and formatting state, then recompute their SHA-256 values.
-2. Validate `update.patch` against its stage-specific path policy and changed-file metadata, then
-   apply it to the exact base when classification is `success`.
-3. Validate `format.patch` against its stage-specific path policy and changed-file metadata, then
-   apply it to the update state when the formatting manifest declares a non-empty formatting diff.
-4. Confirm the resulting Git status plus final paths, modes, and digests match
-   `final_changed_files` exactly.
-5. Run the existing per-root non-upgrade initialisation. Use `-lockfile=readonly` when a lock file
+1. Check the allowed bundle files, recompute both declared patch SHA-256 values, and validate the
+   update patch's structure, paths, and policy without applying it.
+2. Apply `update.patch` to the exact base, then compare the complete intermediate Git diff with
+   `updates.changed_files`, including every path, mode, and intermediate file digest.
+3. When declared, validate the format patch's structure, paths, and policy without applying it.
+4. Apply `format.patch` to the verified intermediate state, then compare that stage's exact paths
+   and resulting file metadata with `formatting.changed_files`.
+5. Compare the complete base-to-candidate paths, modes, and digests with `final_changed_files`.
+6. Run the existing per-root non-upgrade initialisation. Use `-lockfile=readonly` when a lock file
    exists.
-6. Run `terraform validate -no-color` for every root.
-7. Confirm Terraform did not alter the candidate checkout.
-8. Write the validation outcome, bind it to the preparation-manifest SHA-256, and assemble the
-   verified-result artefact from the already checked patches and staged metadata.
+7. Run `terraform validate -no-color` for every root.
+8. Confirm Terraform did not alter the candidate checkout and write the local validation outcome.
 
-The job uploads the verified result only after every applicable integrity check succeeds and the
-validation outcome has been faithfully recorded. A preparation failure does not run Terraform:
-validation checks the bounded failure manifest and logs, binds a failure outcome to that manifest,
-and packages the verified failure result for publication. A separate validation-outcome artefact
-and a second checkout are unnecessary because the outcome is produced and bound before the
-verified result leaves this job.
+The local validation-outcome directory contains only `manifest.json` and `logs/`; its logs use the
+existing bounded regular-file allow-list. The manifest uses schema version 2 and copies exactly the
+seven common identity fields.
+It has this normative shape:
 
-Validation failures retain the existing `branch-validation` classification and marked-issue
-lifecycle. The combined job remains credential-free beyond `contents: read` and does not repeat
-preparation commands.
+```json
+{
+  "schema_version": 2,
+  "classification": "success",
+  "candidate_manifest_sha256": "<preparation-manifest-sha256>",
+  "command_status": 0
+}
+```
+
+For a successful or no-change preparation, an outcome is required. Its classification must match
+the preparation classification unless Terraform initialisation or validation fails, in which case
+it is `branch-validation`, has a non-zero `command_status`, and includes the existing bounded
+`failure` object. Preparation classifications `branch-update`, `branch-init`, and `branch-format`
+forbid a validation outcome because Terraform is not run. An `automation` preparation failure also
+forbids an outcome and is represented only by a non-publishing verified disposition.
+
+The candidate-validation step uses `continue-on-error` so a bounded `branch-validation` outcome
+does not skip reconciliation. A trusted reconciliation step runs under `if: always()` after all
+Terraform processes exit. It rechecks the control checkout identity and cleanliness, preparation
+manifest digest, allowed bundle files, both patch digests, stage metadata, candidate state, and the
+required presence or absence and identity of the local outcome. It then atomically assembles the
+verified result. The verified-result upload and final classification step also use `if: always()`.
+Bounded preparation or validation failures count as successfully packaged workflow results so the
+publication job can maintain their marked issues. A well-formed `automation` preparation result is
+also packaged, but publication treats it as a no-op. Malformed contracts fail closed without a
+verified result, causing that matrix entry to remain red rather than reaching repository mutation.
+Every well-formed matrix entry therefore uploads exactly one verified result, avoiding unsafe
+aggregation through matrix job outputs.
+
+A preparation branch failure skips Terraform and reconciliation creates the verified failure result
+directly from the checked manifest and logs. A separate validation-outcome artefact and a second
+checkout are unnecessary because the local outcome is checked and bound before the verified result
+leaves this job. The combined job remains credential-free beyond `contents: read` and does not
+repeat preparation commands.
+
+## Verified-result artefact schema
+
+The verified-result directory contains only `manifest.json`, `update.patch` when required, and
+`format.patch` when required. Its manifest uses schema version 2, copies exactly the seven common
+identity fields, and binds the source artefacts. A successful result has this logical shape:
+
+```json
+{
+  "schema_version": 2,
+  "classification": "success",
+  "preparation_manifest_sha256": "<sha256>",
+  "validation_outcome_sha256": "<sha256>",
+  "terraform_fmt": true,
+  "updates": {
+    "module_blocks_updated": 4,
+    "provider_blocks_updated": 2,
+    "patch_sha256": "<update-patch-sha256>",
+    "changed_files": [
+      {"path": "root/main.tf", "mode": "100644", "sha256": "<stage-sha256>"}
+    ]
+  },
+  "formatting": {
+    "ran": true,
+    "patch_sha256": "<format-patch-sha256>",
+    "changed_files": [
+      {"path": "root/nested/child.tf", "mode": "100644", "sha256": "<final-sha256>"}
+    ]
+  },
+  "final_changed_files": [
+    {"path": "root/main.tf", "mode": "100644", "sha256": "<final-sha256>"},
+    {"path": "root/nested/child.tf", "mode": "100644", "sha256": "<final-sha256>"}
+  ]
+}
+```
+
+The verified result has these presence rules:
+
+| Classification | Outcome binding | Staged metadata and patches | Failure data |
+|----------------|-----------------|-----------------------------|--------------|
+| `success` | Required | Copy all counts and lists; require `update.patch`; require `format.patch` exactly when its digest exists | Forbidden |
+| `no-change` | Required | Copy counts and formatting-run state; require empty lists and no patches | Forbidden |
+| `branch-update`, `branch-init`, `branch-format` | Forbidden | Forbidden | Required bounded `failure` and validated raw workflow `run_url` |
+| `branch-validation` | Required | Forbidden | Required bounded `failure` and validated raw workflow `run_url` |
+| `automation` | Forbidden | Forbidden | Required diagnostic `failure` and validated raw workflow `run_url` |
+
+Publication accepts only these five variant groups. It revalidates schema and common identity,
+requires the exact allowed file set, recomputes every present patch digest, enforces all
+classification-specific presence rules, and rejects unknown fields that could create an ambiguous
+contract. The preparation and validation digests are audit bindings; their source manifests are not
+copied into the narrowly scoped verified result. Publication applies the existing contextual
+HTML/Markdown escaping to the raw `run_url`; producers must not pre-encode it.
 
 ## Publication and commits
 
@@ -241,6 +360,15 @@ is chosen from the exact report counts:
 
 The fallback covers Terraform `required_version` or lock-only changes because report schema version
 1 intentionally excludes an exact `required_version` count.
+
+A verified `no-change` result creates no commit and performs no GitHub mutation, including when
+formatting cancelled the complete update/init diff. Publication obtains all counts and file lists
+from the verified-result manifest; it never consults the preparation bundle or local validation
+outcome.
+
+A verified `automation` result also performs no Git or GitHub mutation. It exists only to give each
+validation/publication matrix pair a deterministic, per-entry disposition without relying on shared
+matrix job outputs.
 
 When a verified format patch exists, publication applies it to the first commit and creates a second
 commit with the fixed subject:
@@ -302,11 +430,22 @@ implementation for:
 - Skipping formatting when update/init produces no diff.
 - Recursive formatting of a nested `.tf` file from each configured root.
 - Formatting enabled but producing no format patch.
+- Formatting completely cancelling the update/init tree and producing a final no-change result with
+  no commits or pull request.
 - Bounded format failure artefacts, diagnostics, validation-time verification, and marked-issue
   lifecycle.
+- Missing, malformed, wrong-schema, and invalid-count report files producing a non-publishable
+  `automation` diagnostic.
 - Rejection of nested formatting paths outside roots, paths beneath `.terraform`, symlinks,
   undeclared files, changed modes, invalid UTF-8, and tampered patch/file digests.
-- Applying and verifying the two patches in order once during validation.
+- Applying and verifying the two patches in order once during validation, including intermediate
+  digests for files touched by both patches.
+- Schema and exact-file-set rejection tests for every preparation, validation-outcome, and
+  verified-result classification.
+- Always-run reconciliation and upload after bounded preparation and validation failures, with no
+  local outcome for preparation failures.
+- Post-Terraform control, patch, outcome, stage-metadata, and candidate rechecks before verified
+  result assembly.
 - One update commit when formatting is unchanged and two commits when formatting changes files.
 - All four dynamic update/init commit subjects.
 - The fixed `chore: run Terraform fmt` subject.
@@ -327,6 +466,7 @@ Stage two is complete when:
 - The example downloads and verifies `v1.0.0-rc.9`.
 - Formatting is opt-in at the reusable boundary and enabled by both supplied callers.
 - No update/init diff means no formatting invocation and no publication.
+- A final tree equal to the base after formatting means no commits or publication.
 - A successful formatted candidate is represented by two verified patches and two deterministic
   commits only when the second patch is non-empty.
 - Recursive formatting can change safe nested `.tf` files beneath configured roots and no other
