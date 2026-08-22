@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 RECONCILE_SCRIPT="$SCRIPT_DIR/.github/scripts/reconcile-state-branch.sh"
+REUSABLE_WORKFLOW="$SCRIPT_DIR/.github/workflows/tf-version-bump-reusable.yml"
 TEST_GIT=${TEST_GIT-git}
 TEST_ROOT=$(mktemp -d)
 
@@ -231,6 +232,16 @@ run_verify() {
         RECONCILE_VERIFIED_RESULT_DIR="$FIXTURE_VERIFIED" \
         RECONCILE_RUN_URL=https://github.example/yesdevnull/reconciliation-test/actions/runs/100 \
         "$RECONCILE_SCRIPT" verify
+}
+
+run_workflow_result_classification() {
+    local classification_script="$TEST_ROOT/confirm-verified-classification.sh"
+    yq -r '.jobs.validate.steps[] |
+        select(.name == "Confirm verified classification") | .run' \
+        "$REUSABLE_WORKFLOW" >"$classification_script"
+    [[ -s "$classification_script" ]] \
+        || fail "workflow does not define the final verified-result classification gate"
+    VERIFIED_MANIFEST="$FIXTURE_VERIFIED/manifest.json" bash "$classification_script"
 }
 
 setup_gh_capture() {
@@ -519,6 +530,65 @@ test_emits_strict_verified_result_variants() {
         "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
         || fail "branch-validation verified result did not enforce its exact variant"
     assert_exact_result_entries "branch-validation verified result" 'manifest.json'
+}
+
+test_workflow_classifies_verified_results_after_reconciliation() {
+    # Production breaks caught: a bounded branch failure makes validation red before publication,
+    # or an automation/malformed result passes the final workflow classification gate.
+    setup_success_fixture
+    run_verify
+    run_workflow_result_classification \
+        || fail "workflow rejected a verified success result"
+
+    setup_success_fixture
+    configure_no_change
+    run_verify
+    run_workflow_result_classification \
+        || fail "workflow rejected a verified no-change result"
+
+    local classification stage
+    for classification in branch-update branch-init branch-format; do
+        setup_success_fixture
+        case "$classification" in
+            branch-update) stage="tf-version-bump" ;;
+            branch-init) stage="terraform init" ;;
+            branch-format) stage="terraform fmt" ;;
+        esac
+        configure_preparation_failure "$classification" "$stage" 1
+        run_verify
+        run_workflow_result_classification \
+            || fail "workflow rejected a verified $classification result"
+        unset RECONCILE_VALIDATION_OUTCOME_DIR
+    done
+
+    setup_success_fixture
+    jq '.classification = "branch-validation" | .command_status = 1 |
+        .failure = {stage: "terraform validate", root: "root", status: 1}' \
+        "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/branch-validation.json"
+    mv "$FIXTURE_ROOT/branch-validation.json" "$FIXTURE_OUTCOME/manifest.json"
+    run_verify
+    run_workflow_result_classification \
+        || fail "workflow rejected a verified branch-validation result"
+
+    setup_success_fixture
+    configure_preparation_failure automation "tf-version-bump report" 1
+    run_verify
+    [[ -f "$FIXTURE_VERIFIED/manifest.json" ]] \
+        || fail "automation reconciliation did not produce its verified result"
+    if run_workflow_result_classification; then
+        fail "workflow accepted a verified automation result"
+    fi
+
+    chmod -R u+w "$FIXTURE_VERIFIED"
+    rm "$FIXTURE_VERIFIED/manifest.json"
+    if run_workflow_result_classification; then
+        fail "workflow accepted a missing verified result"
+    fi
+    printf '%s\n' '{}' >"$FIXTURE_VERIFIED/manifest.json"
+    if run_workflow_result_classification; then
+        fail "workflow accepted a malformed verified result"
+    fi
+    unset RECONCILE_VALIDATION_OUTCOME_DIR
 }
 
 test_rejects_zero_status_preparation_failures() {
@@ -850,9 +920,9 @@ test_verifies_only_bounded_branch_failures_without_a_patch() {
         unset RECONCILE_DRY_RUN
     done
 
-    yq -o=json '.jobs.verify.steps' \
+    yq -o=json '.jobs.validate.steps' \
         "$SCRIPT_DIR/.github/workflows/tf-version-bump-reusable.yml" | jq -e '
-        any(.[]; .name == "Verify candidate result" and
+        any(.[]; .name == "Reconcile candidate result" and
             .env.RECONCILE_RUN_URL ==
                 "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")
     ' >/dev/null || fail "workflow does not pass the trusted direct run URL to verification"
@@ -1259,6 +1329,7 @@ if [[ $# -eq 0 ]]; then
     test_verifies_successful_candidate_without_credentials
     test_verifies_candidate_with_valid_tab_in_path
     test_emits_strict_verified_result_variants
+    test_workflow_classifies_verified_results_after_reconciliation
     test_rejects_zero_status_preparation_failures
     test_rejects_post_terraform_mutation
     test_publication_rejects_ambiguous_verified_results

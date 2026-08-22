@@ -1005,11 +1005,10 @@ test_reusable_workflow_declares_lean_interface() {
         >/dev/null || fail "reusable workflow declares publication secrets"
 
     yq -o=json '.jobs' "$REUSABLE_WORKFLOW" | jq -e '
-        keys == ["discover", "prepare", "publish", "validate", "verify"] and
+        keys == ["discover", "prepare", "publish", "validate"] and
         .discover["timeout-minutes"] == 10 and .discover.permissions == {contents: "read"} and
         .prepare["timeout-minutes"] == 30 and .prepare.permissions == {contents: "read"} and
         .validate["timeout-minutes"] == 30 and .validate.permissions == {contents: "read"} and
-        .verify["timeout-minutes"] == 20 and .verify.permissions == {contents: "read"} and
         .publish["timeout-minutes"] == 15 and
         .publish.permissions == {contents: "write", issues: "write", "pull-requests": "write"} and
         (.publish | has("environment") | not) and
@@ -1018,6 +1017,8 @@ test_reusable_workflow_declares_lean_interface() {
         any(.publish.steps[]; .name == "Publish verified result" and
             .env.GH_TOKEN == "${{ github.token }}") and
         (. | tostring | contains("GIT_AUTH_TOKEN") | not) and
+        ([.publish.steps[] | select((.uses // "") |
+            startswith("hashicorp/setup-terraform@"))] | length == 0) and
         ([.[] | .steps[]? | select((.uses // "") | startswith("hashicorp/setup-terraform@")) |
             .with.terraform_wrapper] | length > 0 and all(.[]; . == false))
     ' >/dev/null || fail "reusable workflow jobs do not preserve the lean safety contract"
@@ -1031,8 +1032,6 @@ test_reusable_workflow_declares_lean_interface() {
             {job: "prepare", path: "target", persist: false},
             {job: "validate", path: "control", persist: false},
             {job: "validate", path: "target", persist: false},
-            {job: "verify", path: "control", persist: false},
-            {job: "verify", path: "target", persist: false},
             {job: "publish", path: "control", persist: false},
             {job: "publish", path: "target", persist: true}
         ]
@@ -1047,14 +1046,13 @@ test_reusable_workflow_wires_current_attempt_pipeline() {
         .prepare.needs == "discover" and
         .validate.needs == ["discover", "prepare"] and
         .validate.if == "${{ always() && needs.discover.result == '"'"'success'"'"' }}" and
-        .verify.needs == ["discover", "prepare", "validate"] and
-        .publish.needs == ["discover", "verify"] and
+        .publish.needs == ["discover", "validate"] and
         .publish.if == "${{ always() && needs.discover.result == '"'"'success'"'"' }}" and
-        all(.prepare, .validate, .verify, .publish;
+        all(.prepare, .validate, .publish;
             .strategy["fail-fast"] == false and
             .strategy["max-parallel"] == "${{ inputs.max_parallel }}" and
             .strategy.matrix == "${{ fromJSON(needs.discover.outputs.matrix) }}") and
-        all(.prepare, .validate, .verify, .publish;
+        all(.prepare, .validate, .publish;
             any(.steps[]; .name == "Check current run attempt" and
                 .env.EXPECTED_RUN_ATTEMPT == "${{ matrix.run_attempt }}" and
                 .env.CURRENT_RUN_ATTEMPT == "${{ github.run_attempt }}")) and
@@ -1063,18 +1061,34 @@ test_reusable_workflow_wires_current_attempt_pipeline() {
             (.env.PROCESS_TERRAFORM_FMT | contains("inputs.terraform_fmt"))) and
         any(.prepare.steps[]; .name == "Confirm preparation classification" and
             (.run | contains("branch-format"))) and
-        any(.validate.steps[]; .name == "Confirm validation classification" and
-            (.run | contains("branch-format"))) and
-        any(.validate.steps[]; (.run // "") | contains("process-state-branch.sh\" validate")) and
-        any(.verify.steps[]; (.run // "") | contains("reconcile-state-branch.sh\" verify")) and
+        ((.validate.steps | map(.name // "")) as $validation_steps |
+            ($validation_steps | index("Reconcile candidate result")) as $reconcile_step |
+            ($reconcile_step != null and
+                $validation_steps[$reconcile_step + 1] == "Upload verified result" and
+                $validation_steps[$reconcile_step + 2] == "Confirm verified classification")) and
+        any(.validate.steps[]; .name == "Validate candidate" and
+            .["continue-on-error"] == true and
+            ((.run // "") | contains("process-state-branch.sh\" validate"))) and
+        any(.validate.steps[]; .name == "Reconcile candidate result" and
+            .if == "${{ always() }}" and
+            ((.run // "") | contains("reconcile-state-branch.sh\" verify"))) and
+        any(.validate.steps[]; .name == "Upload verified result" and
+            .if == "${{ always() }}" and
+            ((.uses // "") | startswith("actions/upload-artifact@")) and
+            .with.name == "verified-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}") and
+        any(.validate.steps[]; .name == "Confirm verified classification" and
+            .if == "${{ always() }}" and
+            (.run | contains("branch-format")) and
+            (.run | contains("branch-validation")) and
+            (.run | contains("automation"))) and
         any(.publish.steps[]; (.run // "") | contains("reconcile-state-branch.sh\" publish")) and
         any(.prepare.steps[]; ((.uses // "") | startswith("actions/upload-artifact@")) and
             .with.name == "preparation-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}") and
-        any(.validate.steps[]; ((.uses // "") | startswith("actions/upload-artifact@")) and
-            .with.name == "validation-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}") and
-        any(.verify.steps[]; ((.uses // "") | startswith("actions/upload-artifact@")) and
-            .with.name == "verified-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}")
-    ' >/dev/null || fail "reusable workflow does not wire the current-attempt five-stage pipeline"
+        any(.publish.steps[]; ((.uses // "") | startswith("actions/download-artifact@")) and
+            .with.name == "verified-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}") and
+        ([.[] | .steps[]? | .with.name? // empty |
+            select(startswith("validation-"))] | length == 0)
+    ' >/dev/null || fail "reusable workflow does not wire the current-attempt four-job pipeline"
 }
 
 test_callers_define_weekly_policies_and_tool_pins() {
@@ -1109,10 +1123,10 @@ test_callers_define_weekly_policies_and_tool_pins() {
             --arg tf_version_bump_version "$TF_VERSION_BUMP_VERSION" \
             --arg tf_version_bump_archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" '
             .terraform_directories == "." and
+            .terraform_fmt == true and
             .terraform_version == "1.15.5" and
             .tf_version_bump_version == $tf_version_bump_version and
             .tf_version_bump_archive_sha256 == $tf_version_bump_archive_sha256 and
-            (has("terraform_fmt") | not) and
             (has("github_app_client_id") | not) and
             (has("unattended_checks_safe") | not) and
             (has("publication_environment") | not)
@@ -1189,7 +1203,6 @@ test_workflows_keep_representative_execution_boundaries() {
         ((.discover | tostring | contains("secrets.")) | not) and
         ((.prepare | tostring | contains("secrets.")) | not) and
         ((.validate | tostring | contains("secrets.")) | not) and
-        ((.verify | tostring | contains("secrets.")) | not) and
         ((.publish | tostring | contains("secrets.")) | not) and
         ((.publish | tostring | contains("github_app")) | not) and
         ((.publish | tostring | contains("signing")) | not) and
@@ -2773,7 +2786,7 @@ EOF
             (.run | contains("no-change"))) and
         any(.validate.steps[]; .name == "Validate candidate" and
             ((.run | contains("success")) and (.run | contains("no-change")))) and
-        any(.validate.steps[]; .name == "Confirm validation classification" and
+        any(.validate.steps[]; .name == "Confirm verified classification" and
             (.run | contains("no-change")))
     ' >/dev/null || fail "workflow does not route no-change candidates through validation"
 }
