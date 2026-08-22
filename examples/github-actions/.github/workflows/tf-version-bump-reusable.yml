@@ -328,6 +328,7 @@ jobs:
           RECONCILE_REF_HASH: ${{ matrix.ref_hash }}
           RECONCILE_VERIFIED_RESULT_DIR: ${{ runner.temp }}/verified-result
           RECONCILE_TARGET_CHECKOUT: ${{ github.workspace }}/target
+          RECONCILE_TERRAFORM_ROOTS: ${{ inputs.terraform_directories }}
           RECONCILE_GIT_REMOTE: ${{ github.server_url }}/${{ github.repository }}.git
           RECONCILE_REPOSITORY: ${{ github.repository }}
           RECONCILE_DRY_RUN: ${{ inputs.dry_run }}

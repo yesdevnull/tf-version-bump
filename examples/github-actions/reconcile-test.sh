@@ -288,6 +288,7 @@ run_publish() {
         RECONCILE_REF_HASH="$(ref_hash)" \
         RECONCILE_VERIFIED_RESULT_DIR="$FIXTURE_VERIFIED" \
         RECONCILE_TARGET_CHECKOUT="$FIXTURE_CHECKOUT" \
+        RECONCILE_TERRAFORM_ROOTS=${RECONCILE_TERRAFORM_ROOTS-root} \
         RECONCILE_GIT_REMOTE="$FIXTURE_REMOTE" \
         RECONCILE_REPOSITORY=yesdevnull/reconciliation-test \
         RECONCILE_DRY_RUN=${RECONCILE_DRY_RUN-true} \
@@ -793,8 +794,8 @@ test_publication_rejects_ambiguous_verified_results() {
 test_publication_rejects_verified_unsafe_path() {
     # Production breaks caught: publication materialises a digest-consistent path outside the
     # configured roots or beneath .terraform, or creates the first commit before rejecting format.
-    local unsafe_path case_name stage
-    while IFS='|' read -r unsafe_path case_name; do
+    local unsafe_path case_name forged_root expected_diagnostic stage
+    while IFS='|' read -r unsafe_path case_name forged_root expected_diagnostic; do
         for stage in updates formatting; do
             prepare_publication_fixture
             local candidate="$FIXTURE_ROOT/$case_name-$stage-candidate"
@@ -817,7 +818,7 @@ test_publication_rejects_verified_unsafe_path() {
                     >"$FIXTURE_VERIFIED/update.patch"
                 patch_digest=$(sha256_file "$FIXTURE_VERIFIED/update.patch")
                 jq --arg patch_digest "$patch_digest" --arg unsafe_digest "$unsafe_digest" \
-                    --arg unsafe_path "$unsafe_path" '
+                    --arg unsafe_path "$unsafe_path" --arg forged_root "$forged_root" '
                     .updates.patch_sha256 = $patch_digest |
                     .updates.changed_files += [
                         {path: $unsafe_path, mode: "100644", sha256: $unsafe_digest}
@@ -826,7 +827,8 @@ test_publication_rejects_verified_unsafe_path() {
                     .final_changed_files += [
                         {path: $unsafe_path, mode: "100644", sha256: $unsafe_digest}
                     ] |
-                    .final_changed_files |= sort_by(.path)
+                    .final_changed_files |= sort_by(.path) |
+                    if $forged_root == "" then . else .roots += [{path: $forged_root}] end
                 ' "$FIXTURE_VERIFIED/manifest.json" \
                     >"$FIXTURE_ROOT/unsafe-path-manifest.json"
             else
@@ -836,7 +838,7 @@ test_publication_rejects_verified_unsafe_path() {
                     "$update_tree" "$final_tree" >"$FIXTURE_VERIFIED/format.patch"
                 patch_digest=$(sha256_file "$FIXTURE_VERIFIED/format.patch")
                 jq --arg patch_digest "$patch_digest" --arg unsafe_digest "$unsafe_digest" \
-                    --arg unsafe_path "$unsafe_path" '
+                    --arg unsafe_path "$unsafe_path" --arg forged_root "$forged_root" '
                     .formatting.patch_sha256 = $patch_digest |
                     .formatting.changed_files += [
                         {path: $unsafe_path, mode: "100644", sha256: $unsafe_digest}
@@ -845,7 +847,8 @@ test_publication_rejects_verified_unsafe_path() {
                     .final_changed_files += [
                         {path: $unsafe_path, mode: "100644", sha256: $unsafe_digest}
                     ] |
-                    .final_changed_files |= sort_by(.path)
+                    .final_changed_files |= sort_by(.path) |
+                    if $forged_root == "" then . else .roots += [{path: $forged_root}] end
                 ' "$FIXTURE_VERIFIED/manifest.json" \
                     >"$FIXTURE_ROOT/unsafe-path-manifest.json"
             fi
@@ -855,7 +858,7 @@ test_publication_rejects_verified_unsafe_path() {
                 2>"$FIXTURE_ROOT/unsafe-path.stderr"; then
                 fail "publication accepted a verified $stage $case_name path"
             fi
-            grep -F 'reconciliation error: candidate contains an undeclared or unsafe path' \
+            grep -F "reconciliation error: $expected_diagnostic" \
                 "$FIXTURE_ROOT/unsafe-path.stderr" >/dev/null \
                 || fail "publication rejected the $stage $case_name path for the wrong reason: $(<"$FIXTURE_ROOT/unsafe-path.stderr")"
             [[ "$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" rev-parse HEAD)" \
@@ -868,8 +871,9 @@ test_publication_rejects_verified_unsafe_path() {
                 || fail "rejected $stage $case_name path invoked GitHub lifecycle commands"
         done
     done <<'EOF'
-root/.terraform/unsafe.tf|dot-terraform
-outside-root/unsafe.tf|outside-root
+root/.terraform/unsafe.tf|dot-terraform||candidate contains an undeclared or unsafe path
+outside-root/unsafe.tf|outside-root||candidate contains an undeclared or unsafe path
+forged-root/unsafe.tf|forged-root|forged-root|verified result roots do not match configured Terraform roots
 EOF
 }
 

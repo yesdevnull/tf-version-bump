@@ -695,6 +695,48 @@ commit_staged_change() {
     rm -f -- "$message_file"
 }
 
+verify_manifest_roots_match_configuration() {
+    local manifest=$1 checkout=$2
+    : "${RECONCILE_TERRAFORM_ROOTS:?RECONCILE_TERRAFORM_ROOTS must be set}"
+    local canonical_checkout
+    canonical_checkout=$(realpath "$checkout") \
+        || reconcile_error "publication checkout could not be resolved"
+
+    local -a configured_roots=() canonical_roots=() relative_roots=()
+    readarray -t configured_roots < <(printf '%s' "$RECONCILE_TERRAFORM_ROOTS")
+    local configured_root canonical_root existing_root
+    for configured_root in "${configured_roots[@]}"; do
+        [[ -n "$configured_root" ]] \
+            || reconcile_error "Terraform root entry must not be empty"
+        [[ "$configured_root" != /* && "/$configured_root/" != *"/../"* ]] \
+            || reconcile_error "Terraform root must be a safe repository-relative path"
+        canonical_root=$(realpath "$canonical_checkout/$configured_root" 2>/dev/null) \
+            || reconcile_error "Terraform root does not exist"
+        [[ -d "$canonical_root" ]] \
+            || reconcile_error "Terraform root is not a directory"
+        [[ "$canonical_root" == "$canonical_checkout" \
+            || "$canonical_root" == "$canonical_checkout/"* ]] \
+            || reconcile_error "Terraform root resolves outside publication checkout"
+        for existing_root in "${canonical_roots[@]}"; do
+            [[ "$canonical_root" != "$existing_root" ]] \
+                || reconcile_error "duplicate canonical Terraform root"
+        done
+        canonical_roots+=("$canonical_root")
+        if [[ "$canonical_root" == "$canonical_checkout" ]]; then
+            relative_roots+=(".")
+        else
+            relative_roots+=("${canonical_root#"$canonical_checkout"/}")
+        fi
+    done
+
+    local configured_roots_json manifest_roots_json
+    configured_roots_json=$(jq -cn '$ARGS.positional | map({path: .})' \
+        --args -- "${relative_roots[@]}")
+    manifest_roots_json=$(jq -c '.roots' "$manifest")
+    [[ "$manifest_roots_json" == "$configured_roots_json" ]] \
+        || reconcile_error "verified result roots do not match configured Terraform roots"
+}
+
 construct_update_commits() {
     : "${RECONCILE_TARGET_CHECKOUT:?RECONCILE_TARGET_CHECKOUT must be set}"
     : "${RECONCILE_COMMIT_AUTHOR_NAME:?RECONCILE_COMMIT_AUTHOR_NAME must be set}"
@@ -709,6 +751,7 @@ construct_update_commits() {
     local update_patch="$RECONCILE_VERIFIED_RESULT_DIR/update.patch"
     local format_patch="$RECONCILE_VERIFIED_RESULT_DIR/format.patch"
     local verified_manifest="$RECONCILE_VERIFIED_RESULT_DIR/manifest.json"
+    verify_manifest_roots_match_configuration "$verified_manifest" "$checkout"
     verify_declared_stage_paths "$verified_manifest" updates path_is_declared_direct_file
     verify_declared_stage_paths "$verified_manifest" formatting path_is_declared_formatting_file
     verify_declared_stage_paths "$verified_manifest" final path_is_declared_final_file
