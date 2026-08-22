@@ -685,7 +685,8 @@ update_commit_subject() {
 path_is_verified_file() {
     local _manifest=$1 relative_path=$2 filename
     [[ -n "$relative_path" && "$relative_path" != /* \
-        && "/$relative_path/" != *"/../"* ]] || return 1
+        && "/$relative_path/" != *"/../"* \
+        && "/$relative_path/" != *"/.terraform/"* ]] || return 1
     filename=${relative_path##*/}
     [[ "$filename" == *.tf || "$filename" == ".terraform.lock.hcl" ]]
 }
