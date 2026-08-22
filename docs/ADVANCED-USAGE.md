@@ -26,6 +26,11 @@ accidental or non-adversarial mutation. Untrusted provider or module code requir
 verification or isolation. Read the example's limits and operator-run disposable-repository battle
 test before enabling publication.
 
+The supplied callers require a repository Actions secret named `TF_API_TOKEN` containing an HCP
+Terraform token with read access to the private modules and providers used by the configured roots.
+The reusable workflow maps it to `TF_TOKEN_app_terraform_io` only for the prepare and validate
+helpers; publication does not receive the registry token in its environment.
+
 `terraform_fmt` defaults to `false`; both callers opt in with `terraform_fmt: true`. For every
 configured root, preparation runs the updater and `terraform init -upgrade` before formatting is
 eligible, then an eligible changed candidate runs `terraform fmt -recursive` in every configured

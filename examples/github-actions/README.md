@@ -41,6 +41,11 @@ change either file.
 
 Configure Actions to permit the workflow's `contents`, `pull-requests`, and `issues` write permissions. Before live publication, enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** for the repository or organisation.
 
+Create a repository Actions secret named `TF_API_TOKEN` containing an HCP Terraform token with
+read access to the private modules and providers used by the configured roots. The supplied callers
+pass it to the reusable workflow, which exposes it as `TF_TOKEN_app_terraform_io` only while the
+prepare and validate helpers run. The publish job does not receive the token in its environment.
+
 `actions/checkout` manages the built-in token only for discovery's read-only control checkout and publication's write-capable target checkout. Terraform checkouts disable persisted credentials, and the validate job performs validation and verification in its one target checkout; no custom token files, App, or PAT credentials are used.
 The reconciliation helper owns its exact-ref fetches and exact-lease publication directly; the
 processing helper only prepares and validates candidates.

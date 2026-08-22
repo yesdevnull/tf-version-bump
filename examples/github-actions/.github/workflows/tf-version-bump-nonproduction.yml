@@ -32,6 +32,8 @@ jobs:
   automation:
     if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     uses: ./.github/workflows/tf-version-bump-reusable.yml
+    secrets:
+      TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
     with:
       automation_policy_id: nonproduction
       allowed_branch_prefixes: |

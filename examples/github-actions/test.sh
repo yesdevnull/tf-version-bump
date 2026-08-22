@@ -974,6 +974,10 @@ test_operator_documentation_describes_stage_two_contract() {
             || fail "operator documentation overstates post-Terraform mutation detection: $document"
         [[ "$normalised_document" == *"Untrusted provider or module code requires independent verification or isolation"* ]] \
             || fail "operator documentation omits the untrusted-code isolation warning: $document"
+        grep -F '`TF_API_TOKEN`' "$document" >/dev/null \
+            || fail "operator documentation omits the required HCP Terraform secret: $document"
+        grep -F '`TF_TOKEN_app_terraform_io`' "$document" >/dev/null \
+            || fail "operator documentation omits the Terraform token mapping: $document"
         grep -F 'chore: run Terraform fmt' "$document" >/dev/null \
             || fail "operator documentation omits the formatting commit subject: $document"
         grep -F 'Module blocks updated' "$document" >/dev/null \
@@ -1048,8 +1052,9 @@ test_reusable_workflow_declares_lean_interface() {
         .commit_author_email == {type: "string", default: ""}
     ' >/dev/null || fail "reusable workflow inputs do not match the typed contract"
 
-    yq -o=json '.on.workflow_call | has("secrets")' "$REUSABLE_WORKFLOW" | jq -e '. == false' \
-        >/dev/null || fail "reusable workflow declares publication secrets"
+    yq -o=json '.on.workflow_call.secrets' "$REUSABLE_WORKFLOW" | jq -e '
+        . == {TF_API_TOKEN: {required: true}}
+    ' >/dev/null || fail "reusable workflow does not require the HCP Terraform token"
 
     yq -o=json '.jobs' "$REUSABLE_WORKFLOW" | jq -e '
         keys == ["discover", "prepare", "publish", "validate"] and
@@ -1063,6 +1068,12 @@ test_reusable_workflow_declares_lean_interface() {
         ((.publish | tostring | contains("signing")) | not) and
         any(.publish.steps[]; .name == "Publish verified result" and
             .env.GH_TOKEN == "${{ github.token }}") and
+        any(.prepare.steps[]; .name == "Prepare candidate" and
+            .env.TF_TOKEN_app_terraform_io == "${{ secrets.TF_API_TOKEN }}") and
+        any(.validate.steps[]; .name == "Validate candidate" and
+            .env.TF_TOKEN_app_terraform_io == "${{ secrets.TF_API_TOKEN }}") and
+        ((.discover | tostring | contains("TF_API_TOKEN")) | not) and
+        ((.publish | tostring | contains("TF_API_TOKEN")) | not) and
         (. | tostring | contains("GIT_AUTH_TOKEN") | not) and
         ([.publish.steps[] | select((.uses // "") |
             startswith("hashicorp/setup-terraform@"))] | length == 0) and
@@ -1168,7 +1179,8 @@ test_callers_define_weekly_policies_and_tool_pins() {
         .jobs.automation.with.allowed_branch_prefixes == "state/nonproduction/\nstate/staging/\naws-state/nonproduction/\naws-state/staging/\n" and
         .jobs.automation.with.branch_prefix == "${{ github.event_name == '"'"'workflow_dispatch'"'"' && inputs.branch_prefix || '"'"''"'"' }}" and
         .jobs.automation.with.dry_run == "${{ github.event_name == '"'"'workflow_dispatch'"'"' && inputs.dry_run || false }}" and
-        .jobs.automation.with.config_path == ".github/tf-version-bump/nonproduction.yml"
+        .jobs.automation.with.config_path == ".github/tf-version-bump/nonproduction.yml" and
+        .jobs.automation.secrets.TF_API_TOKEN == "${{ secrets.TF_API_TOKEN }}"
     ' >/dev/null || fail "non-production caller policy is not the approved weekly policy"
 
     yq -o=json '.' "$PRODUCTION_WORKFLOW" | jq -e '
@@ -1176,7 +1188,8 @@ test_callers_define_weekly_policies_and_tool_pins() {
         .on.schedule == [{cron: "43 4 * * 0", timezone: "Australia/Melbourne"}] and
         .jobs.automation.if == "${{ github.ref == format('"'"'refs/heads/{0}'"'"', github.event.repository.default_branch) }}" and
         .jobs.automation.with.allowed_branch_prefixes == "state/production/\naws-state/production/\n" and
-        .jobs.automation.with.config_path == ".github/tf-version-bump/production.yml"
+        .jobs.automation.with.config_path == ".github/tf-version-bump/production.yml" and
+        .jobs.automation.secrets.TF_API_TOKEN == "${{ secrets.TF_API_TOKEN }}"
     ' >/dev/null || fail "production caller policy is not the approved weekly policy"
 
     for workflow in "$NONPRODUCTION_WORKFLOW" "$PRODUCTION_WORKFLOW"; do
@@ -1248,8 +1261,8 @@ test_config_validation_workflow_is_read_only() {
 }
 
 test_workflows_keep_representative_execution_boundaries() {
-    # Production break caught: credentials reach a local Terraform stage, an action floats from its
-    # reviewed commit, or setup consumes the branch deadline without its fixed step timeout.
+    # Production break caught: registry credentials escape the Terraform stages, an action floats
+    # from its reviewed commit, or setup consumes the branch deadline without a fixed timeout.
     yq -o=json '.jobs' "$REUSABLE_WORKFLOW" | jq -e '
         ([.[] | .steps[]? | .uses // empty] | unique) == [
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
@@ -1262,8 +1275,8 @@ test_workflows_keep_representative_execution_boundaries() {
         all(.prepare.steps[], .validate.steps[];
             if .uses then .["timeout-minutes"] == 10 else true end) and
         ((.discover | tostring | contains("secrets.")) | not) and
-        ((.prepare | tostring | contains("secrets.")) | not) and
-        ((.validate | tostring | contains("secrets.")) | not) and
+        (.prepare | tostring | contains("secrets.TF_API_TOKEN")) and
+        (.validate | tostring | contains("secrets.TF_API_TOKEN")) and
         ((.publish | tostring | contains("secrets.")) | not) and
         ((.publish | tostring | contains("github_app")) | not) and
         ((.publish | tostring | contains("signing")) | not) and

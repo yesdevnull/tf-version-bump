@@ -513,6 +513,7 @@ write_verified_result() {
             {validation_outcome_sha256: $outcome_digest} end
         + if $classification == "success" or $classification == "no-change" then
             {terraform_fmt: $preparation[0].terraform_fmt,
+             roots: $preparation[0].roots,
              updates: $preparation[0].updates,
              formatting: $preparation[0].formatting,
              final_changed_files: $preparation[0].final_changed_files}
@@ -681,16 +682,6 @@ update_commit_subject() {
     fi
 }
 
-# shellcheck disable=SC2329 # Invoked by name as a verified-result path policy.
-path_is_verified_file() {
-    local _manifest=$1 relative_path=$2 filename
-    [[ -n "$relative_path" && "$relative_path" != /* \
-        && "/$relative_path/" != *"/../"* \
-        && "/$relative_path/" != *"/.terraform/"* ]] || return 1
-    filename=${relative_path##*/}
-    [[ "$filename" == *.tf || "$filename" == ".terraform.lock.hcl" ]]
-}
-
 commit_staged_change() {
     local checkout=$1 subject=$2 commit_date=$3
     local message_file="$checkout/.git/tf-version-bump-commit-message"
@@ -718,9 +709,9 @@ construct_update_commits() {
     local update_patch="$RECONCILE_VERIFIED_RESULT_DIR/update.patch"
     local format_patch="$RECONCILE_VERIFIED_RESULT_DIR/format.patch"
     local verified_manifest="$RECONCILE_VERIFIED_RESULT_DIR/manifest.json"
-    verify_declared_stage_paths "$verified_manifest" updates path_is_verified_file
-    verify_declared_stage_paths "$verified_manifest" formatting path_is_verified_file
-    verify_declared_stage_paths "$verified_manifest" final path_is_verified_file
+    verify_declared_stage_paths "$verified_manifest" updates path_is_declared_direct_file
+    verify_declared_stage_paths "$verified_manifest" formatting path_is_declared_formatting_file
+    verify_declared_stage_paths "$verified_manifest" final path_is_declared_final_file
     [[ -f "$update_patch" && ! -L "$update_patch" ]] \
         || reconcile_error "verified candidate patch must be a regular file"
     [[ "$(sha256_file "$update_patch")" \
@@ -733,7 +724,7 @@ construct_update_commits() {
     git -C "$checkout" apply --index --binary "$update_patch" >/dev/null \
         || reconcile_error "verified candidate patch could not be applied"
     verify_declared_stage "$verified_manifest" "$checkout" "$base_tree" updates \
-        path_is_verified_file
+        path_is_declared_direct_file
 
     git -C "$checkout" config --local user.name "$RECONCILE_COMMIT_AUTHOR_NAME"
     git -C "$checkout" config --local user.email "$RECONCILE_COMMIT_AUTHOR_EMAIL"
@@ -755,12 +746,12 @@ construct_update_commits() {
         git -C "$checkout" apply --index --binary "$format_patch" >/dev/null \
             || reconcile_error "verified format patch could not be applied"
         verify_declared_stage "$verified_manifest" "$checkout" "$update_tree" formatting \
-            path_is_verified_file
+            path_is_declared_formatting_file
         commit_staged_change "$checkout" 'chore: run Terraform fmt' "$commit_date"
     fi
 
     verify_declared_stage "$verified_manifest" "$checkout" "$base_tree" final \
-        path_is_verified_file
+        path_is_declared_final_file
     [[ -z "$(git -C "$checkout" status --porcelain=v1 --untracked-files=all \
         --ignored=matching)" ]] \
         || reconcile_error "constructed Terraform commits left a dirty checkout"
@@ -847,10 +838,13 @@ verified_manifest_is_valid() {
         if .classification == "success" or .classification == "no-change" then
             keys == ["automation_policy_id", "base_oid", "classification", "control_oid",
                      "final_changed_files", "formatting", "preparation_manifest_sha256",
-                     "ref_hash", "run_attempt", "run_id", "schema_version", "state_branch",
-                     "terraform_fmt", "updates", "validation_outcome_sha256"] and
+                     "ref_hash", "roots", "run_attempt", "run_id", "schema_version",
+                     "state_branch", "terraform_fmt", "updates",
+                     "validation_outcome_sha256"] and
             (.validation_outcome_sha256 | digest) and
             (.terraform_fmt | type == "boolean") and
+            (.roots | type == "array" and length > 0 and
+                all(.[]; keys == ["path"] and (.path | type == "string" and length > 0))) and
             (.updates.module_blocks_updated | type == "number" and . >= 0 and floor == .) and
             (.updates.provider_blocks_updated | type == "number" and . >= 0 and floor == .) and
             (.updates.changed_files | changed_files) and

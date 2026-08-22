@@ -42,6 +42,9 @@ on:
       commit_author_email:
         type: string
         default: ""
+    secrets:
+      TF_API_TOKEN:
+        required: true
 
 jobs:
   discover:
@@ -133,6 +136,7 @@ jobs:
           PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256: ${{ inputs.tf_version_bump_archive_sha256 }}
           PROCESS_TERRAFORM_VERSION: ${{ inputs.terraform_version }}
           PROCESS_PREPARATION_BUNDLE_DIR: ${{ runner.temp }}/preparation-bundle
+          TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
         run: '"$CONTROL_CHECKOUT/.github/scripts/process-state-branch.sh" prepare'
       - name: Upload preparation bundle
         if: ${{ always() }}
@@ -217,6 +221,7 @@ jobs:
           PROCESS_TF_VERSION_BUMP_VERSION: ${{ inputs.tf_version_bump_version }}
           PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256: ${{ inputs.tf_version_bump_archive_sha256 }}
           PROCESS_TERRAFORM_VERSION: ${{ inputs.terraform_version }}
+          TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
         run: |
           classification=$(jq -er '.classification' "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json")
           if [[ "$classification" == "success" || "$classification" == "no-change" ]]; then
