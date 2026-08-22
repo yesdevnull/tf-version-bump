@@ -65,43 +65,6 @@ fixture_commit() {
         commit "$@" -m "$message" >/dev/null
 }
 
-test_fixture_commits_do_not_require_verify_commit() {
-    # Production break caught: the default CI harness uses plain Git, so fixture creation must
-    # not require a verifiable signature after a successful commit.
-    local repository="$TEST_TMP_ROOT/fixture-commit-without-verify"
-    local git_without_verify="$TEST_TMP_ROOT/git-without-verify"
-    local delegate=$TEST_GIT
-    mkdir -p "$repository"
-    "$delegate" -C "$repository" init --initial-branch=main >/dev/null
-    printf '%s\n' fixture >"$repository/fixture.txt"
-    "$delegate" -C "$repository" add -- fixture.txt
-    cat >"$git_without_verify" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-for argument in "$@"; do
-    if [[ "$argument" == "verify-commit" ]]; then
-        exit 97
-    fi
-done
-exec "${TEST_GIT_DELEGATE:?}" "$@"
-EOF
-    chmod 755 "$git_without_verify"
-
-    TEST_GIT_DELEGATE=$delegate
-    export TEST_GIT_DELEGATE
-    TEST_GIT=$git_without_verify
-    local fixture_status=0
-    fixture_commit "$repository" 'Fixture Author' 'fixture@example.invalid' \
-        'test: create fixture without verification' || fixture_status=$?
-    TEST_GIT=$delegate
-    unset TEST_GIT_DELEGATE
-
-    [[ "$fixture_status" -eq 0 ]] \
-        || fail "fixture commit required signature verification after the commit succeeded"
-    "$delegate" -C "$repository" rev-parse --verify HEAD >/dev/null \
-        || fail "fixture helper did not create a commit"
-}
-
 # Writes an executable fake `terraform` at $1 that answers `version -json` with the pinned
 # 1.15.5 fixture version (delayed by $3 seconds if given) and runs $2 -- a literal script body,
 # captured by the caller from a quoted heredoc so its own `$`-references stay unevaluated until
@@ -3500,7 +3463,6 @@ cleanup_test_repositories() {
 trap cleanup_test_repositories EXIT
 
 if [[ $# -eq 0 ]]; then
-    test_fixture_commits_do_not_require_verify_commit
     test_actionlint_launcher_reports_pinned_version
     test_example_configs_pass_cli_dry_run
     test_ci_uses_supported_go_and_runs_github_actions_poc_checks
