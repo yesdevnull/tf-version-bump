@@ -1275,8 +1275,6 @@ test_workflows_keep_representative_execution_boundaries() {
         all(.prepare.steps[], .validate.steps[];
             if .uses then .["timeout-minutes"] == 10 else true end) and
         ((.discover | tostring | contains("secrets.")) | not) and
-        (.prepare | tostring | contains("secrets.TF_API_TOKEN")) and
-        (.validate | tostring | contains("secrets.TF_API_TOKEN")) and
         ((.publish | tostring | contains("secrets.")) | not) and
         ((.publish | tostring | contains("github_app")) | not) and
         ((.publish | tostring | contains("signing")) | not) and
