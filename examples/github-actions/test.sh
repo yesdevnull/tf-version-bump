@@ -974,6 +974,72 @@ test_copyable_workflow_layout() {
         || fail "operator copy command nested the .github directory"
 }
 
+test_operator_documentation_describes_stage_two_contract() {
+    # Production break caught: operators copy a stage-one guide that omits the formatting,
+    # verification, publication, and trusted-provider contracts enforced by this workflow.
+    local readme="$SCRIPT_DIR/README.md"
+    local advanced_usage="$REPOSITORY_ROOT/docs/ADVANCED-USAGE.md"
+
+    for document in "$readme" "$advanced_usage"; do
+        [[ -f "$document" ]] || fail "operator documentation is missing: $document"
+        grep -F '`terraform_fmt` defaults to `false`' "$document" >/dev/null \
+            || fail "operator documentation omits the terraform_fmt default: $document"
+        grep -F '`discover`, `prepare`, `validate`, and `publish`' "$document" >/dev/null \
+            || fail "operator documentation omits the four-job topology: $document"
+        grep -F 'v1.0.0-rc.9' "$document" >/dev/null \
+            || fail "operator documentation omits the rc.9 pin: $document"
+        grep -F '38428a229a77671fd192fd6a18f5d1f9c404b5557124883f04e6a8bec154b1d2' \
+            "$document" >/dev/null \
+            || fail "operator documentation omits the pinned archive SHA-256: $document"
+        grep -F 'private and first-party providers are trusted code' "$document" >/dev/null \
+            || fail "operator documentation omits the trusted-provider limitation: $document"
+        grep -F 'chore: run Terraform fmt' "$document" >/dev/null \
+            || fail "operator documentation omits the formatting commit subject: $document"
+        grep -F 'Module blocks updated' "$document" >/dev/null \
+            || fail "operator documentation omits module block PR counts: $document"
+        grep -F 'Provider blocks updated' "$document" >/dev/null \
+            || fail "operator documentation omits provider block PR counts: $document"
+        grep -F 'Dependency and lock-file changes' "$document" >/dev/null \
+            || fail "operator documentation omits dependency file lists: $document"
+        grep -F 'Formatting changes' "$document" >/dev/null \
+            || fail "operator documentation omits formatting file lists: $document"
+    done
+
+    grep -F 'both supplied callers set `terraform_fmt: true`' "$readme" >/dev/null \
+        || fail "example README omits caller formatting opt-in"
+    grep -F 'updater and `terraform init -upgrade` before formatting is eligible' "$readme" >/dev/null \
+        || fail "example README omits per-root update and initialisation ordering"
+    grep -F '`terraform fmt -recursive` in every configured root' "$readme" >/dev/null \
+        || fail "example README omits recursive configured-root formatting semantics"
+    grep -F 'Validation and verification use one target checkout in `validate`' "$readme" >/dev/null \
+        || fail "example README claims a separate verification checkout"
+    grep -F '`preparation-*` and `verified-*` artefacts' "$readme" >/dev/null \
+        || fail "example README omits retained stage-two artefacts"
+    grep -F 'no separate validation artefact or verification job' "$readme" >/dev/null \
+        || fail "example README does not remove the validation artefact/verification job"
+    grep -F 'one dynamic dependency commit' "$readme" >/dev/null \
+        || fail "example README omits the dynamic dependency commit"
+    grep -F 'chore: bump Terraform provider and module versions' "$readme" >/dev/null \
+        || fail "example README omits the dependency commit subject"
+    grep -F 'A `branch-format` result means' "$readme" >/dev/null \
+        || fail "example README omits the branch-format result"
+    grep -F 'no format patch and no `chore: run Terraform fmt` commit' "$readme" >/dev/null \
+        || fail "example README omits net-zero formatting behaviour"
+    grep -F 'does not push a branch or create or update a pull request or issue' "$readme" >/dev/null \
+        || fail "example README omits dry-run publication behaviour"
+    grep -F 'inspect the `preparation-*` and `verified-*` artefacts' "$readme" >/dev/null \
+        || fail "example README omits operator artefact inspection"
+
+    grep -F 'both callers opt in with `terraform_fmt: true`' "$advanced_usage" >/dev/null \
+        || fail "advanced usage omits caller formatting opt-in"
+    grep -F 'Validation and verification use one target checkout in `validate`' "$advanced_usage" >/dev/null \
+        || fail "advanced usage claims a separate verification checkout"
+    grep -F 'one dynamic dependency commit' "$advanced_usage" >/dev/null \
+        || fail "advanced usage omits the dynamic dependency commit"
+    grep -F 'no separate validation artefact' "$advanced_usage" >/dev/null \
+        || fail "advanced usage does not remove the validation artefact"
+}
+
 test_reusable_workflow_declares_lean_interface() {
     # Production break caught: a caller input, credential boundary, timeout, or action safety
     # setting drifts from the copyable reusable-workflow contract.
@@ -3430,6 +3496,7 @@ if [[ $# -eq 0 ]]; then
     test_ci_uses_supported_go_and_runs_github_actions_poc_checks
     test_modules_require_supported_go_version
     test_copyable_workflow_layout
+    test_operator_documentation_describes_stage_two_contract
     test_reusable_workflow_declares_lean_interface
     test_reusable_workflow_wires_current_attempt_pipeline
     test_callers_define_weekly_policies_and_tool_pins
