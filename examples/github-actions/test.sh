@@ -212,8 +212,7 @@ EOF
     TF_CLI_CONFIG_FILE="$PROCESS_VALIDATION_FIXTURE_ROOT/terraform.rc"
 }
 
-configure_validation_provider_base() {
-    build_validation_provider_fixture
+write_validation_provider_configuration() {
     cat >"$PROCESS_TARGET_CHECKOUT/root/main.tf" <<'EOF'
 terraform {
   required_version = ">= 1.0"
@@ -226,6 +225,11 @@ terraform {
   }
 }
 EOF
+}
+
+configure_validation_provider_base() {
+    build_validation_provider_fixture
+    write_validation_provider_configuration
 
     local lock_data="$PROCESS_RUNNER_TEMP/lock-data"
     mkdir -m 700 "$lock_data"
@@ -247,11 +251,39 @@ EOF
     fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add validation provider"
 }
 
+configure_validation_provider_base_without_lock() {
+    build_validation_provider_fixture
+    write_validation_provider_configuration
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/main.tf"
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
+        "processing-test@example.invalid" "test: add lock-free validation provider"
+}
+
 create_validation_candidate_bundle() {
+    local add_provider_lock=${1-false}
     local candidate_checkout="$PROCESS_TMP_ROOT/candidate"
     "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$candidate_checkout"
     sed -i.bak 's/>= 1\.0/>= 1.15.0/' "$candidate_checkout/root/main.tf"
     rm "$candidate_checkout/root/main.tf.bak"
+    if [[ "$add_provider_lock" == "true" ]]; then
+        local lock_data="$PROCESS_RUNNER_TEMP/candidate-lock-data"
+        mkdir -m 700 "$lock_data"
+        docker run --rm \
+            --platform linux/amd64 \
+            --user "$(id -u):$(id -g)" \
+            --volume "$candidate_checkout:/workspace" \
+            --volume "$lock_data:/terraform-data" \
+            --volume "$PROCESS_VALIDATION_FIXTURE_ROOT:$PROCESS_VALIDATION_FIXTURE_ROOT:ro" \
+            --env TF_DATA_DIR=/terraform-data \
+            --env "TF_CLI_CONFIG_FILE=$PROCESS_VALIDATION_FIXTURE_ROOT/terraform.rc" \
+            --entrypoint terraform \
+            "$TERRAFORM_IMAGE" \
+            -chdir=/workspace/root init -backend=false -input=false -no-color \
+            >"$PROCESS_TMP_ROOT/candidate-lock-init.stdout" \
+            2>"$PROCESS_TMP_ROOT/candidate-lock-init.stderr"
+        rm -rf "$lock_data"
+        "$TEST_GIT" -C "$candidate_checkout" add -N -- "root/.terraform.lock.hcl"
+    fi
 
     mkdir -m 700 "$PROCESS_PREPARATION_BUNDLE_DIR"
     "$TEST_GIT" -C "$candidate_checkout" diff --binary --full-index --no-color \
@@ -260,6 +292,10 @@ create_validation_candidate_bundle() {
     patch_sha256=$(sha256_file "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch")
     local main_sha256
     main_sha256=$(sha256_file "$candidate_checkout/root/main.tf")
+    local lock_sha256=""
+    if [[ "$add_provider_lock" == "true" ]]; then
+        lock_sha256=$(sha256_file "$candidate_checkout/root/.terraform.lock.hcl")
+    fi
     local ref_hash
     ref_hash=$(processing_ref_hash)
     jq -n \
@@ -272,6 +308,7 @@ create_validation_candidate_bundle() {
         --arg ref_hash "$ref_hash" \
         --arg patch_sha256 "$patch_sha256" \
         --arg main_sha256 "$main_sha256" \
+        --arg lock_sha256 "$lock_sha256" \
         --arg tf_version_bump_version "$TF_VERSION_BUMP_VERSION" \
         --arg tf_version_bump_archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" \
         '{schema_version: 2,
@@ -297,11 +334,19 @@ create_validation_candidate_bundle() {
           updates: {
             module_blocks_updated: 0,
             provider_blocks_updated: 0,
-            changed_files: [{path: "root/main.tf", mode: "100644", sha256: $main_sha256}],
+            changed_files:
+              (if $lock_sha256 == "" then [] else
+                 [{path: "root/.terraform.lock.hcl", mode: "100644", sha256: $lock_sha256}]
+               end) +
+              [{path: "root/main.tf", mode: "100644", sha256: $main_sha256}],
             patch_sha256: $patch_sha256
           },
           formatting: {ran: false, changed_files: []},
-          final_changed_files: [{path: "root/main.tf", mode: "100644", sha256: $main_sha256}]}' \
+          final_changed_files:
+            (if $lock_sha256 == "" then [] else
+               [{path: "root/.terraform.lock.hcl", mode: "100644", sha256: $lock_sha256}]
+             end) +
+            [{path: "root/main.tf", mode: "100644", sha256: $main_sha256}]}' \
         >"$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
     chmod 444 \
         "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" \
@@ -2224,6 +2269,26 @@ test_processing_validation_runs_provider_root() {
         || fail "provider execution replaced the read-only disposable lock file"
 }
 
+test_processing_validation_accepts_update_patch_with_added_lock_file() {
+    # Production break caught: applying the update patch only to the worktree leaves a newly added
+    # provider lockfile untracked, so raw-diff verification omits it and rejects a valid manifest.
+    setup_processing_workspace
+    configure_validation_provider_base_without_lock
+    create_validation_candidate_bundle true
+    [[ ! -e "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" ]] \
+        || fail "added-lock validation fixture already contained the candidate lockfile"
+
+    local stdout_file="$PROCESS_TMP_ROOT/added-lock-validation.stdout"
+    local stderr_file="$PROCESS_TMP_ROOT/added-lock-validation.stderr"
+    assert_silent_success "validation with added provider lockfile" \
+        "$stdout_file" "$stderr_file" run_processing_validate
+    [[ -f "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" ]] \
+        || fail "validation did not apply the added provider lockfile"
+    jq -e '.classification == "success" and .command_status == 0' \
+        "$PROCESS_VALIDATION_OUTCOME_DIR/manifest.json" >/dev/null \
+        || fail "added-lock validation did not produce a successful outcome"
+}
+
 test_processing_validation_allows_provider_free_root_without_lock() {
     # Production break caught: a provider-free root without a lock is rejected. Terraform 1.15.5
     # tolerates readonly mode without a lock, so this test honestly proves acceptance, not omission.
@@ -2258,7 +2323,7 @@ test_processing_validation_runs_directly_without_docker_executable() {
         "$stdout_file" "$stderr_file" run_processing_validate
     [[ ! -e "$PROCESS_TARGET_CHECKOUT/root/.terraform" ]] \
         || fail "direct Terraform validation left a .terraform directory in the candidate checkout"
-    [[ "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" diff --name-only)" == "root/main.tf" ]] \
+    [[ "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" diff HEAD --name-only)" == "root/main.tf" ]] \
         || fail "direct Terraform validation changed files outside the immutable candidate patch"
     jq -e '.classification == "success" and .command_status == 0' \
         "$PROCESS_VALIDATION_OUTCOME_DIR/manifest.json" >/dev/null \
@@ -2351,6 +2416,7 @@ EOF
 test_processing_validation() {
     test_processing_validation_runs_directly_without_docker_executable
     test_processing_validation_runs_provider_root
+    test_processing_validation_accepts_update_patch_with_added_lock_file
     test_processing_validation_allows_provider_free_root_without_lock
     test_processing_validation_rejects_installed_version_mismatch_before_candidate_apply
     test_processing_validation_produces_bounded_outcome_when_deadline_expires_before_first_log
