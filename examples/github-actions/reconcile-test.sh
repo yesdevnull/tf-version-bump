@@ -83,9 +83,9 @@ setup_success_fixture() {
 
     mkdir -p "$FIXTURE_BUNDLE/logs" "$FIXTURE_OUTCOME/logs"
     "$TEST_GIT" -C "$candidate" diff --binary --full-index --no-color \
-        >"$FIXTURE_BUNDLE/candidate.patch"
+        >"$FIXTURE_BUNDLE/update.patch"
     local patch_digest file_digest branch_hash
-    patch_digest=$(sha256_file "$FIXTURE_BUNDLE/candidate.patch")
+    patch_digest=$(sha256_file "$FIXTURE_BUNDLE/update.patch")
     file_digest=$(sha256_file "$candidate/$FIXTURE_TERRAFORM_PATH")
     branch_hash=$(ref_hash)
     jq -n \
@@ -96,13 +96,23 @@ setup_success_fixture() {
         --arg changed_path "$FIXTURE_TERRAFORM_PATH" \
         --arg patch_digest "$patch_digest" \
         --arg file_digest "$file_digest" \
-        '{schema_version: 1, run_id: "100", run_attempt: "1",
+        '{schema_version: 2, run_id: "100", run_attempt: "1",
           automation_policy_id: "nonproduction", control_oid: $control_oid,
           state_branch: $state_branch, base_oid: $base_oid,
-          ref_hash: $ref_hash, classification: "success",
+          ref_hash: $ref_hash,
+          artifact_name: ("preparation-100-1-nonproduction-" + $ref_hash),
+          classification: "success", terraform_fmt: false,
+          tools: {terraform: {version: "1.15.5"},
+                  tf_version_bump: {version: "v1.0.0-rc.9",
+                                    archive_sha256: "38428a229a77671fd192fd6a18f5d1f9c404b5557124883f04e6a8bec154b1d2"}},
+          config_path: ".github/tf-version-bump/nonproduction.yml",
           roots: [{path: "root"}],
-          changed_files: [{path: $changed_path, mode: "100644", sha256: $file_digest}],
-          patch_sha256: $patch_digest}' >"$FIXTURE_BUNDLE/manifest.json"
+          updates: {module_blocks_updated: 1, provider_blocks_updated: 1,
+                    changed_files: [{path: $changed_path, mode: "100644", sha256: $file_digest}],
+                    patch_sha256: $patch_digest},
+          formatting: {ran: false, changed_files: []},
+          final_changed_files: [{path: $changed_path, mode: "100644", sha256: $file_digest}]}' \
+        >"$FIXTURE_BUNDLE/manifest.json"
     local manifest_digest
     manifest_digest=$(sha256_file "$FIXTURE_BUNDLE/manifest.json")
     jq -n \
@@ -111,11 +121,11 @@ setup_success_fixture() {
         --arg ref_hash "$branch_hash" \
         --arg state_branch "$FIXTURE_STATE_BRANCH" \
         --arg manifest_digest "$manifest_digest" \
-        '{schema_version: 1, run_id: "100", run_attempt: "1",
+        '{schema_version: 2, run_id: "100", run_attempt: "1",
           automation_policy_id: "nonproduction", control_oid: $control_oid,
           state_branch: $state_branch, base_oid: $base_oid,
           ref_hash: $ref_hash, classification: "success",
-          candidate_manifest_sha256: $manifest_digest}' \
+          candidate_manifest_sha256: $manifest_digest, command_status: 0}' \
         >"$FIXTURE_OUTCOME/manifest.json"
 }
 
@@ -219,10 +229,11 @@ mutate_bundle_into_branch_update_failure() {
     local root=${1-root}
     jq --arg root "$root" \
         '.classification = "branch-update" |
-         .failure = {stage: "tf-version-bump", root: $root, command: "tf-version-bump", status: 1}' \
+         .failure = {stage: "tf-version-bump", root: $root, command: "tf-version-bump", status: 1} |
+         del(.updates, .formatting, .final_changed_files)' \
         "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/failure.json"
     mv "$FIXTURE_ROOT/failure.json" "$FIXTURE_BUNDLE/manifest.json"
-    rm -rf "$FIXTURE_OUTCOME" "$FIXTURE_BUNDLE/candidate.patch"
+    rm -rf "$FIXTURE_OUTCOME" "$FIXTURE_BUNDLE/update.patch"
     RECONCILE_VALIDATION_OUTCOME_DIR="" run_verify
 }
 
@@ -237,14 +248,19 @@ test_verifies_successful_candidate_without_credentials() {
     jq -e \
         --arg manifest_digest "$(sha256_file "$FIXTURE_BUNDLE/manifest.json")" \
         --arg outcome_digest "$(sha256_file "$FIXTURE_OUTCOME/manifest.json")" \
-        --arg patch_digest "$(sha256_file "$FIXTURE_BUNDLE/candidate.patch")" \
-        '.schema_version == 1 and .classification == "success" and
+        --arg patch_digest "$(sha256_file "$FIXTURE_BUNDLE/update.patch")" \
+        '.schema_version == 2 and .classification == "success" and
          .run_id == "100" and .run_attempt == "1" and
          .preparation_manifest_sha256 == $manifest_digest and
          .validation_outcome_sha256 == $outcome_digest and
-         .patch_sha256 == $patch_digest' "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
+         .updates.module_blocks_updated == 1 and
+         .updates.provider_blocks_updated == 1 and
+         .updates.patch_sha256 == $patch_digest and
+         .formatting == {ran: false, changed_files: []} and
+         .final_changed_files == .updates.changed_files' \
+        "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
         || fail "verified success result did not bind the candidate artefacts"
-    cmp "$FIXTURE_BUNDLE/candidate.patch" "$FIXTURE_VERIFIED/candidate.patch" \
+    cmp "$FIXTURE_BUNDLE/update.patch" "$FIXTURE_VERIFIED/update.patch" \
         || fail "verified candidate patch differs from the prepared patch"
 }
 
@@ -284,7 +300,7 @@ test_rejects_mismatched_or_corrupt_candidates() {
                 RECONCILE_RUN_ATTEMPT=2
                 ;;
             corrupt-patch)
-                printf '%s\n' '# corrupt' >>"$FIXTURE_BUNDLE/candidate.patch"
+                printf '%s\n' '# corrupt' >>"$FIXTURE_BUNDLE/update.patch"
                 ;;
             undeclared-patch-path)
                 local candidate="$FIXTURE_ROOT/extra-candidate"
@@ -294,10 +310,10 @@ test_rejects_mismatched_or_corrupt_candidates() {
                 printf '%s\n' 'terraform {}' >"$candidate/undeclared.tf"
                 "$TEST_GIT" -C "$candidate" add -N -- undeclared.tf
                 "$TEST_GIT" -C "$candidate" diff --binary --full-index --no-color \
-                    >"$FIXTURE_BUNDLE/candidate.patch"
+                    >"$FIXTURE_BUNDLE/update.patch"
                 local digest
-                digest=$(sha256_file "$FIXTURE_BUNDLE/candidate.patch")
-                jq --arg digest "$digest" '.patch_sha256 = $digest' \
+                digest=$(sha256_file "$FIXTURE_BUNDLE/update.patch")
+                jq --arg digest "$digest" '.updates.patch_sha256 = $digest' \
                     "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/manifest.json"
                 mv "$FIXTURE_ROOT/manifest.json" "$FIXTURE_BUNDLE/manifest.json"
                 digest=$(sha256_file "$FIXTURE_BUNDLE/manifest.json")
@@ -331,15 +347,16 @@ test_verifies_deleting_candidate_reports_a_classified_digest_error() {
     "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$candidate"
     rm -f "$candidate/$extra_path"
     "$TEST_GIT" -C "$candidate" diff --binary --full-index --no-color \
-        >"$FIXTURE_BUNDLE/candidate.patch"
+        >"$FIXTURE_BUNDLE/update.patch"
 
     local patch_digest
-    patch_digest=$(sha256_file "$FIXTURE_BUNDLE/candidate.patch")
+    patch_digest=$(sha256_file "$FIXTURE_BUNDLE/update.patch")
     jq --arg base_oid "$FIXTURE_BASE_OID" \
         --arg patch_digest "$patch_digest" \
         --arg extra_path "$extra_path" \
-        '.base_oid = $base_oid | .patch_sha256 = $patch_digest |
-         .changed_files = [{path: $extra_path, mode: "100644", sha256: ("0" * 64)}]' \
+        '.base_oid = $base_oid | .updates.patch_sha256 = $patch_digest |
+         .updates.changed_files = [{path: $extra_path, mode: "100644", sha256: ("0" * 64)}] |
+         .final_changed_files = .updates.changed_files' \
         "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/deleting-manifest.json"
     mv "$FIXTURE_ROOT/deleting-manifest.json" "$FIXTURE_BUNDLE/manifest.json"
     local manifest_digest
@@ -370,15 +387,17 @@ test_verifies_only_bounded_branch_failures_without_a_patch() {
             expected_stage="terraform init"
             expected_status=7
             jq '.classification = "branch-init" |
-                .failure = {stage: "terraform init", root: "root", command: "terraform init", status: 7}' \
+                .failure = {stage: "terraform init", root: "root", command: "terraform init", status: 7} |
+                del(.updates, .formatting, .final_changed_files)' \
                 "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/failure.json"
             mv "$FIXTURE_ROOT/failure.json" "$FIXTURE_BUNDLE/manifest.json"
-            rm -rf "$FIXTURE_OUTCOME" "$FIXTURE_BUNDLE/candidate.patch"
+            rm -rf "$FIXTURE_OUTCOME" "$FIXTURE_BUNDLE/update.patch"
             RECONCILE_VALIDATION_OUTCOME_DIR=""
         else
             expected_stage="terraform validate"
             expected_status=9
             jq '.classification = "branch-validation" |
+                .command_status = 9 |
                 .failure = {stage: "terraform validate", root: "root", status: 9}' \
                 "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/failure.json"
             mv "$FIXTURE_ROOT/failure.json" "$FIXTURE_OUTCOME/manifest.json"
@@ -388,8 +407,12 @@ test_verifies_only_bounded_branch_failures_without_a_patch() {
             fail "$classification verification failed: $(<"$FIXTURE_ROOT/failure.stderr")"
         fi
         jq -e --arg classification "$classification" \
-            '.schema_version == 1 and .classification == $classification and
-             has("patch_sha256") == false' "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
+            '.schema_version == 2 and .classification == $classification and
+             if $classification == "branch-validation" then
+                 (.updates.patch_sha256 | type == "string") and
+                 .final_changed_files == .updates.changed_files
+             else has("updates") == false end' \
+            "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
             || fail "$classification did not produce a bounded verified failure"
         jq -e \
             --arg stage "$expected_stage" \
@@ -398,7 +421,7 @@ test_verifies_only_bounded_branch_failures_without_a_patch() {
              .run_url == "https://github.example/yesdevnull/reconciliation-test/actions/runs/100"' \
             "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
             || fail "$classification did not preserve bounded failure details and run URL"
-        [[ ! -e "$FIXTURE_VERIFIED/candidate.patch" ]] \
+        [[ ! -e "$FIXTURE_VERIFIED/update.patch" ]] \
             || fail "$classification retained a publishable patch"
 
         setup_gh_capture

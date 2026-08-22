@@ -33,8 +33,8 @@ prepare validates the workspace, creates the pre-provider candidate, and require
 
 prepare downloads and verifies the released updater, verifies Terraform, updates and initialises
 roots sequentially using fresh trusted TF_DATA_DIR paths and the one remaining deadline, then emits
-no output. A successful bundle contains manifest.json, logs, and candidate.patch. A bounded update
-or init failure contains manifest.json and logs but never candidate.patch.
+no output. A successful bundle contains manifest.json, logs, and update.patch. A bounded update
+or init failure contains manifest.json and logs but never update.patch.
 
 validate verifies a successful preparation bundle, applies its immutable patch only to a fresh
 exact-base disposable checkout, then validates every manifest-declared root with the exact
@@ -80,10 +80,12 @@ PREPARATION_BUNDLE_STAGE=""
 PREPARATION_CANDIDATE_INDEX=""
 PREPARATION_TF_VERSION_BUMP_BINARY=""
 PREPARATION_REF_HASH=""
+PREPARATION_MODULE_BLOCKS_UPDATED=0
+PREPARATION_PROVIDER_BLOCKS_UPDATED=0
 
 VALIDATION_TARGET_CHECKOUT=""
 VALIDATION_MANIFEST=""
-VALIDATION_PATCH=""
+VALIDATION_UPDATE_PATCH=""
 VALIDATION_MANIFEST_SHA256=""
 VALIDATION_DATA_ROOT=""
 VALIDATION_CANDIDATE_STATUS=""
@@ -253,13 +255,29 @@ copy_preparation_logs() {
     done
 }
 
+accumulate_update_report() {
+    local report=$1 relative_root=$2
+    jq -e '
+        type == "object" and
+        (keys == ["module_blocks_updated", "provider_blocks_updated", "schema_version"]) and
+        .schema_version == 1 and
+        (.module_blocks_updated | type == "number" and . >= 0 and floor == .) and
+        (.provider_blocks_updated | type == "number" and . >= 0 and floor == .)
+    ' "$report" >/dev/null || return 1
+    local module_count provider_count
+    module_count=$(jq -er '.module_blocks_updated' "$report")
+    provider_count=$(jq -er '.provider_blocks_updated' "$report")
+    PREPARATION_MODULE_BLOCKS_UPDATED=$((PREPARATION_MODULE_BLOCKS_UPDATED + module_count))
+    PREPARATION_PROVIDER_BLOCKS_UPDATED=$((PREPARATION_PROVIDER_BLOCKS_UPDATED + provider_count))
+}
+
 preparation_identity_json() {
     jq -cn \
         --arg run_id "$PROCESS_RUN_ID" --arg run_attempt "$PROCESS_RUN_ATTEMPT" \
         --arg policy "$PROCESS_AUTOMATION_POLICY_ID" --arg control_oid "$PROCESS_CONTROL_OID" \
         --arg branch "$PROCESS_STATE_BRANCH" --arg base_oid "$PROCESS_BASE_OID" \
         --arg ref_hash "$PREPARATION_REF_HASH" \
-        '{schema_version: 1, run_id: $run_id, run_attempt: $run_attempt,
+        '{schema_version: 2, run_id: $run_id, run_attempt: $run_attempt,
           automation_policy_id: $policy, control_oid: $control_oid,
           state_branch: $branch, base_oid: $base_oid, ref_hash: $ref_hash,
           artifact_name: ("preparation-" + $run_id + "-" + $run_attempt + "-" +
@@ -274,8 +292,15 @@ finalise_preparation_bundle() {
             chmod 444 -- "$log_file"
         fi
     done
-    [[ ! -e "$PREPARATION_BUNDLE_STAGE/candidate.patch" ]] \
-        || chmod 444 "$PREPARATION_BUNDLE_STAGE/candidate.patch"
+    local bundle_entry
+    while IFS= read -r -d '' bundle_entry; do
+        case "${bundle_entry##*/}" in
+            logs|manifest.json|update.patch) ;;
+            *) processing_status_error "preparation bundle contains an unexpected entry" ;;
+        esac
+    done < <(find "$PREPARATION_BUNDLE_STAGE" -mindepth 1 -maxdepth 1 -print0)
+    [[ ! -e "$PREPARATION_BUNDLE_STAGE/update.patch" ]] \
+        || chmod 444 "$PREPARATION_BUNDLE_STAGE/update.patch"
     chmod 555 "$PREPARATION_BUNDLE_STAGE/logs"
     mv -- "$PREPARATION_BUNDLE_STAGE" "$PROCESS_PREPARATION_BUNDLE_DIR"
     chmod 555 "$PROCESS_PREPARATION_BUNDLE_DIR"
@@ -320,8 +345,8 @@ write_preparation_candidate_bundle() {
     elif [[ "$diff_status" -eq 1 ]]; then
         GIT_INDEX_FILE="$PREPARATION_CANDIDATE_INDEX" \
             git -C "$PREPARATION_TARGET_CHECKOUT" diff --cached --binary --full-index --no-color \
-            >"$PREPARATION_BUNDLE_STAGE/candidate.patch"
-        patch_sha256=$(sha256sum "$PREPARATION_BUNDLE_STAGE/candidate.patch")
+            >"$PREPARATION_BUNDLE_STAGE/update.patch"
+        patch_sha256=$(sha256sum "$PREPARATION_BUNDLE_STAGE/update.patch")
         patch_sha256=${patch_sha256%% *}
     else
         processing_status_error "could not inspect candidate index changes"
@@ -377,19 +402,28 @@ write_preparation_candidate_bundle() {
         --arg terraform_version "$PROCESS_TERRAFORM_VERSION" \
         --argjson roots "$roots_json" \
         --argjson changed_files "$changed_files_json" \
+        --argjson module_blocks_updated "$PREPARATION_MODULE_BLOCKS_UPDATED" \
+        --argjson provider_blocks_updated "$PREPARATION_PROVIDER_BLOCKS_UPDATED" \
         --arg patch_sha256 "$patch_sha256" \
         --arg classification "$classification" \
-        '. + {config_path: $config_path, tools: {
-            tf_version_bump: {
-              version: $tf_version_bump_version,
-              archive_sha256: $tf_version_bump_archive_sha256
-            },
+        '. + {
+          classification: $classification,
+          terraform_fmt: false,
+          tools: {
+            tf_version_bump: {version: $tf_version_bump_version,
+                              archive_sha256: $tf_version_bump_archive_sha256},
             terraform: {version: $terraform_version}
           },
+          config_path: $config_path,
           roots: $roots,
-          changed_files: $changed_files,
-          classification: $classification}
-          + if $patch_sha256 == "" then {} else {patch_sha256: $patch_sha256} end' \
+          updates: {
+            module_blocks_updated: $module_blocks_updated,
+            provider_blocks_updated: $provider_blocks_updated,
+            changed_files: $changed_files
+          } + if $patch_sha256 == "" then {} else {patch_sha256: $patch_sha256} end,
+          formatting: {ran: false, changed_files: []},
+          final_changed_files: $changed_files
+        }' \
         >"$PREPARATION_BUNDLE_STAGE/manifest.json"
     finalise_preparation_bundle
 }
@@ -687,31 +721,61 @@ validation_contract() {
     [[ -d "$PROCESS_PREPARATION_BUNDLE_DIR" ]] \
         || processing_path_error "preparation bundle must be a directory"
     VALIDATION_MANIFEST="$(realpath "$PROCESS_PREPARATION_BUNDLE_DIR")/manifest.json"
-    VALIDATION_PATCH="$(realpath "$PROCESS_PREPARATION_BUNDLE_DIR")/candidate.patch"
+    VALIDATION_UPDATE_PATCH="$(realpath "$PROCESS_PREPARATION_BUNDLE_DIR")/update.patch"
     [[ -f "$VALIDATION_MANIFEST" && ! -L "$VALIDATION_MANIFEST" ]] \
         || processing_status_error "candidate manifest must be a regular file"
-    jq -e '.schema_version == 1 and
+    jq -e '.schema_version == 2 and
+         keys == ["artifact_name", "automation_policy_id", "base_oid", "classification",
+                  "config_path", "control_oid", "final_changed_files", "formatting", "ref_hash",
+                  "roots", "run_attempt", "run_id", "schema_version", "state_branch",
+                  "terraform_fmt", "tools", "updates"] and
          (.classification == "success" or .classification == "no-change") and
          .run_id == env.PROCESS_RUN_ID and .run_attempt == env.PROCESS_RUN_ATTEMPT and
          .automation_policy_id == env.PROCESS_AUTOMATION_POLICY_ID and
          .control_oid == env.PROCESS_CONTROL_OID and .state_branch == env.PROCESS_STATE_BRANCH and
          .base_oid == env.PROCESS_BASE_OID and .ref_hash == env.PROCESS_REF_HASH and
-         .tools.terraform.version == env.PROCESS_TERRAFORM_VERSION and (.roots | length > 0)' \
+         .terraform_fmt == false and
+         (.tools | keys) == ["terraform", "tf_version_bump"] and
+         (.tools.terraform | keys) == ["version"] and
+         (.tools.tf_version_bump | keys) == ["archive_sha256", "version"] and
+         .tools.terraform.version == env.PROCESS_TERRAFORM_VERSION and
+         (.roots | type == "array" and length > 0 and
+             all(.[]; keys == ["path"] and (.path | type == "string" and length > 0))) and
+         (.updates.module_blocks_updated | type == "number" and . >= 0 and floor == .) and
+         (.updates.provider_blocks_updated | type == "number" and . >= 0 and floor == .) and
+         (.updates.changed_files | type == "array" and
+             all(.[]; keys == ["mode", "path", "sha256"] and
+                 (.path | type == "string" and length > 0) and
+                 (.mode | type == "string" and test("^[0-7]{6}$")) and
+                 (.sha256 | type == "string" and test("^[0-9a-f]{64}$")))) and
+         .formatting == {ran: false, changed_files: []} and
+         .final_changed_files == .updates.changed_files and
+         if .classification == "success" then
+             (.updates | keys) == ["changed_files", "module_blocks_updated", "patch_sha256",
+                                  "provider_blocks_updated"] and
+             (.updates.changed_files | length > 0) and
+             (.updates.patch_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+         else
+             (.updates | keys) == ["changed_files", "module_blocks_updated",
+                                  "provider_blocks_updated"] and
+             .updates.changed_files == [] and .final_changed_files == []
+         end' \
         "$VALIDATION_MANIFEST" >/dev/null \
         || processing_status_error "candidate manifest identity or schema is invalid"
     VALIDATION_PREPARATION_CLASSIFICATION=$(jq -er '.classification' "$VALIDATION_MANIFEST")
     read -r VALIDATION_MANIFEST_SHA256 _ < <(sha256sum "$VALIDATION_MANIFEST")
     if [[ "$VALIDATION_PREPARATION_CLASSIFICATION" == "success" ]]; then
-        [[ -f "$VALIDATION_PATCH" && ! -L "$VALIDATION_PATCH" ]] \
+        [[ -f "$VALIDATION_UPDATE_PATCH" && ! -L "$VALIDATION_UPDATE_PATCH" ]] \
             || processing_status_error "candidate patch must be a regular file"
         local patch_sha256
-        read -r patch_sha256 _ < <(sha256sum "$VALIDATION_PATCH")
-        [[ "$patch_sha256" == "$(jq -er '.patch_sha256' "$VALIDATION_MANIFEST")" ]] \
+        read -r patch_sha256 _ < <(sha256sum "$VALIDATION_UPDATE_PATCH")
+        [[ "$patch_sha256" == "$(jq -er '.updates.patch_sha256' "$VALIDATION_MANIFEST")" ]] \
             || processing_status_error "candidate patch SHA-256 does not match manifest"
     else
-        [[ ! -e "$VALIDATION_PATCH" && ! -L "$VALIDATION_PATCH" ]] \
+        [[ ! -e "$VALIDATION_UPDATE_PATCH" && ! -L "$VALIDATION_UPDATE_PATCH" ]] \
             || processing_status_error "no-change candidate must not contain a patch"
-        jq -e '.changed_files == [] and (has("patch_sha256") | not)' \
+        jq -e '.updates.changed_files == [] and
+            (.updates | has("patch_sha256") | not) and .final_changed_files == []' \
             "$VALIDATION_MANIFEST" >/dev/null \
             || processing_status_error "no-change candidate manifest is invalid"
     fi
@@ -751,7 +815,7 @@ write_validation_outcome() {
         --argjson command_status "$command_status" \
         --arg failure_stage "$failure_stage" \
         --arg failure_root "$failure_root" \
-        '{schema_version, run_id, run_attempt, automation_policy_id, control_oid,
+        '{schema_version: 2, run_id, run_attempt, automation_policy_id, control_oid,
           state_branch, base_oid, ref_hash,
           candidate_manifest_sha256: $candidate_manifest_sha256,
           classification: $classification,
@@ -816,8 +880,39 @@ validate_candidate_roots() {
 }
 
 apply_validation_candidate() {
-    git -C "$VALIDATION_TARGET_CHECKOUT" apply --check --binary "$VALIDATION_PATCH" || processing_status_error "candidate patch does not apply to exact base"
-    git -C "$VALIDATION_TARGET_CHECKOUT" apply --binary "$VALIDATION_PATCH" || processing_status_error "candidate patch could not be applied"
+    git -C "$VALIDATION_TARGET_CHECKOUT" apply --check --binary "$VALIDATION_UPDATE_PATCH" || processing_status_error "candidate patch does not apply to exact base"
+    git -C "$VALIDATION_TARGET_CHECKOUT" apply --binary "$VALIDATION_UPDATE_PATCH" || processing_status_error "candidate patch could not be applied"
+
+    local -a relative_paths=() git_modes=() file_sha256s=()
+    local raw_entry relative_path new_mode sha_line
+    while IFS= read -r -d '' raw_entry && IFS= read -r -d '' relative_path; do
+        read -r _ new_mode _ _ _ <<<"$raw_entry"
+        relative_paths+=("$relative_path")
+        git_modes+=("$new_mode")
+    done < <(git -C "$VALIDATION_TARGET_CHECKOUT" diff --raw -z --no-renames)
+    if [[ ${#relative_paths[@]} -gt 0 ]]; then
+        while IFS= read -r sha_line; do
+            file_sha256s+=("${sha_line%% *}")
+        done < <(cd "$VALIDATION_TARGET_CHECKOUT" && sha256sum -- "${relative_paths[@]}" 2>/dev/null)
+        [[ ${#file_sha256s[@]} -eq ${#relative_paths[@]} ]] \
+            || processing_status_error "candidate file digest does not match manifest"
+    fi
+    local -a interleaved=()
+    local index
+    for index in "${!relative_paths[@]}"; do
+        interleaved+=("${relative_paths[$index]}" "${git_modes[$index]}" "${file_sha256s[$index]}")
+    done
+    local actual_changed_files='[]'
+    if [[ ${#interleaved[@]} -gt 0 ]]; then
+        actual_changed_files=$(jq -cn \
+            '$ARGS.positional | [range(0; length; 3) as $i |
+                {path: .[$i], mode: .[$i + 1], sha256: .[$i + 2]}]' \
+            --args -- "${interleaved[@]}")
+    fi
+    jq -e --argjson actual "$actual_changed_files" '
+        .updates.changed_files == $actual and .final_changed_files == $actual
+    ' "$VALIDATION_MANIFEST" >/dev/null \
+        || processing_status_error "candidate paths, modes, or digests do not match manifest"
     VALIDATION_CANDIDATE_STATUS=$(git -C "$VALIDATION_TARGET_CHECKOUT" status --porcelain=v1 --untracked-files=all)
 }
 
@@ -892,17 +987,20 @@ prepare_candidate_roots() {
     local update_status
     local data_directory
     local relative_root
+    local update_report
     local lock_file
     local init_status
     for terraform_root in "${PREPARATION_TERRAFORM_ROOTS[@]}"; do
         root_index=$((root_index + 1))
         update_status=0
+        relative_root=$(relative_terraform_root "$terraform_root")
+        update_report="$PREPARATION_DATA_ROOT/report-$root_index.json"
         (cd "$terraform_root" && run_before_preparation_deadline \
             "$PREPARATION_DATA_ROOT/update-$root_index.log" \
-            "$PREPARATION_TF_VERSION_BUMP_BINARY" -pattern '*.tf' -config "$PREPARATION_CONFIG_PATH") \
+            "$PREPARATION_TF_VERSION_BUMP_BINARY" -pattern '*.tf' \
+            -config "$PREPARATION_CONFIG_PATH" -report-file "$update_report") \
             || update_status=$?
         if [[ "$update_status" -ne 0 ]]; then
-            relative_root=$(relative_terraform_root "$terraform_root")
             write_preparation_failure_bundle \
                 "branch-update" \
                 "tf-version-bump" \
@@ -913,6 +1011,15 @@ prepare_candidate_roots() {
                 processing_status_error "tf-version-bump timed out for Terraform root $relative_root"
             fi
             processing_status_error "tf-version-bump failed for Terraform root $relative_root"
+        fi
+        if ! accumulate_update_report "$update_report" "$relative_root"; then
+            write_preparation_failure_bundle \
+                "automation" \
+                "tf-version-bump report" \
+                "$relative_root" \
+                "tf-version-bump -pattern *.tf -config $PROCESS_CONFIG_PATH -report-file" \
+                1
+            processing_status_error "tf-version-bump returned an invalid report for Terraform root $relative_root"
         fi
         data_directory=${PREPARATION_TF_DATA_DIRECTORIES[$((root_index - 1))]}
         init_status=0
