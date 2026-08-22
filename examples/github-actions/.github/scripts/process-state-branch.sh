@@ -28,16 +28,18 @@ prepare validates the workspace, creates the pre-provider candidate, and require
   PROCESS_TF_VERSION_BUMP_VERSION  exact v-prefixed release tag
   PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256  Linux x86-64 release archive digest
   PROCESS_TERRAFORM_VERSION exact installed Terraform version
+  PROCESS_TERRAFORM_FMT     exact true or false formatting request
   PROCESS_PREPARATION_DEADLINE_EPOCH  absolute deadline recorded before workflow setup
   PROCESS_PREPARATION_BUNDLE_DIR  previously absent destination below RUNNER_TEMP
 
 prepare downloads and verifies the released updater, verifies Terraform, updates and initialises
 roots sequentially using fresh trusted TF_DATA_DIR paths and the one remaining deadline, then emits
-no output. A successful bundle contains manifest.json, logs, and candidate.patch. A bounded update
-or init failure contains manifest.json and logs but never candidate.patch.
+no output. A successful bundle contains manifest.json, logs, update.patch, and optional
+format.patch when recursive formatting changes files. A bounded update, init, or formatting failure
+contains manifest.json and logs but never either patch.
 
-validate verifies a successful preparation bundle, applies its immutable patch only to a fresh
-exact-base disposable checkout, then validates every manifest-declared root with the exact
+validate verifies a successful preparation bundle, applies its immutable staged patches in order
+only to a fresh exact-base disposable checkout, then validates every manifest-declared root with the exact
 Terraform CLI installed by the workflow, and requires:
   PROCESS_TARGET_CHECKOUT   absolute, clean, exact-base disposable Git-checkout root
   PROCESS_PREPARATION_BUNDLE_DIR  directory holding the preparation manifest and patch
@@ -50,6 +52,9 @@ Terraform CLI installed by the workflow, and requires:
   PROCESS_STATE_BRANCH      complete state-branch name, matched against the manifest
   PROCESS_BASE_OID          immutable state-branch revision, matched against the manifest
   PROCESS_REF_HASH          SHA-256 of the complete state ref, matched against the manifest
+  PROCESS_CONFIG_PATH       config path, matched against the preparation manifest
+  PROCESS_TF_VERSION_BUMP_VERSION  updater version, matched against the manifest
+  PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256  updater archive digest, matched against the manifest
   PROCESS_TERRAFORM_VERSION exact installed Terraform version, matched against the manifest
   PROCESS_VALIDATION_DEADLINE_EPOCH  absolute deadline recorded before workflow setup
 EOF
@@ -78,16 +83,27 @@ PREPARATION_TERRAFORM_ROOTS=()
 PREPARATION_TF_DATA_DIRECTORIES=()
 PREPARATION_BUNDLE_STAGE=""
 PREPARATION_CANDIDATE_INDEX=""
+PREPARATION_BASE_TREE=""
+PREPARATION_UPDATE_TREE=""
+PREPARATION_FORMATTING_RAN=false
 PREPARATION_TF_VERSION_BUMP_BINARY=""
 PREPARATION_REF_HASH=""
+PREPARATION_MODULE_BLOCKS_UPDATED=0
+PREPARATION_PROVIDER_BLOCKS_UPDATED=0
 
 VALIDATION_TARGET_CHECKOUT=""
 VALIDATION_MANIFEST=""
-VALIDATION_PATCH=""
+VALIDATION_UPDATE_PATCH=""
+VALIDATION_FORMAT_PATCH=""
 VALIDATION_MANIFEST_SHA256=""
 VALIDATION_DATA_ROOT=""
 VALIDATION_CANDIDATE_STATUS=""
 VALIDATION_PREPARATION_CLASSIFICATION=""
+VALIDATION_BASE_TREE=""
+VALIDATION_UPDATE_TREE=""
+VALIDATION_PREFLIGHT_UPDATE_TREE=""
+VALIDATION_PREFLIGHT_FINAL_TREE=""
+VALIDATION_TERRAFORM_ROOTS=()
 
 # shellcheck disable=SC2329 # Invoked by the validate-mode EXIT trap.
 cleanup_validation_temporaries() {
@@ -177,6 +193,7 @@ prepare_bundle_contract() {
     : "${PROCESS_STATE_BRANCH:?PROCESS_STATE_BRANCH must be set}"
     : "${PROCESS_BASE_OID:?PROCESS_BASE_OID must be set}"
     : "${PROCESS_REF_HASH:?PROCESS_REF_HASH must be set}"
+    : "${PROCESS_TERRAFORM_FMT:?PROCESS_TERRAFORM_FMT must be set}"
     : "${PROCESS_PREPARATION_BUNDLE_DIR:?PROCESS_PREPARATION_BUNDLE_DIR must be set}"
 
     [[ "$PROCESS_RUN_ID" =~ ^[1-9][0-9]*$ ]] \
@@ -191,6 +208,8 @@ prepare_bundle_contract() {
         || processing_setup_error "base OID must be 40 lowercase hexadecimal characters"
     [[ "$PROCESS_REF_HASH" =~ ^[0-9a-f]{64}$ ]] \
         || processing_setup_error "ref hash must be 64 lowercase hexadecimal characters"
+    [[ "$PROCESS_TERRAFORM_FMT" == "true" || "$PROCESS_TERRAFORM_FMT" == "false" ]] \
+        || processing_setup_error "Terraform formatting must be true or false"
     git check-ref-format "refs/heads/$PROCESS_STATE_BRANCH" >/dev/null 2>&1 \
         || processing_setup_error "state branch is not a valid branch name"
 
@@ -253,13 +272,29 @@ copy_preparation_logs() {
     done
 }
 
+accumulate_update_report() {
+    local report=$1 relative_root=$2
+    jq -e '
+        type == "object" and
+        (keys == ["module_blocks_updated", "provider_blocks_updated", "schema_version"]) and
+        .schema_version == 1 and
+        (.module_blocks_updated | type == "number" and . >= 0 and floor == .) and
+        (.provider_blocks_updated | type == "number" and . >= 0 and floor == .)
+    ' "$report" >/dev/null || return 1
+    local module_count provider_count
+    module_count=$(jq -er '.module_blocks_updated' "$report")
+    provider_count=$(jq -er '.provider_blocks_updated' "$report")
+    PREPARATION_MODULE_BLOCKS_UPDATED=$((PREPARATION_MODULE_BLOCKS_UPDATED + module_count))
+    PREPARATION_PROVIDER_BLOCKS_UPDATED=$((PREPARATION_PROVIDER_BLOCKS_UPDATED + provider_count))
+}
+
 preparation_identity_json() {
     jq -cn \
         --arg run_id "$PROCESS_RUN_ID" --arg run_attempt "$PROCESS_RUN_ATTEMPT" \
         --arg policy "$PROCESS_AUTOMATION_POLICY_ID" --arg control_oid "$PROCESS_CONTROL_OID" \
         --arg branch "$PROCESS_STATE_BRANCH" --arg base_oid "$PROCESS_BASE_OID" \
         --arg ref_hash "$PREPARATION_REF_HASH" \
-        '{schema_version: 1, run_id: $run_id, run_attempt: $run_attempt,
+        '{schema_version: 2, run_id: $run_id, run_attempt: $run_attempt,
           automation_policy_id: $policy, control_oid: $control_oid,
           state_branch: $branch, base_oid: $base_oid, ref_hash: $ref_hash,
           artifact_name: ("preparation-" + $run_id + "-" + $run_attempt + "-" +
@@ -274,8 +309,17 @@ finalise_preparation_bundle() {
             chmod 444 -- "$log_file"
         fi
     done
-    [[ ! -e "$PREPARATION_BUNDLE_STAGE/candidate.patch" ]] \
-        || chmod 444 "$PREPARATION_BUNDLE_STAGE/candidate.patch"
+    local bundle_entry
+    while IFS= read -r -d '' bundle_entry; do
+        case "${bundle_entry##*/}" in
+            format.patch|logs|manifest.json|update.patch) ;;
+            *) processing_status_error "preparation bundle contains an unexpected entry" ;;
+        esac
+    done < <(find "$PREPARATION_BUNDLE_STAGE" -mindepth 1 -maxdepth 1 -print0)
+    [[ ! -e "$PREPARATION_BUNDLE_STAGE/update.patch" ]] \
+        || chmod 444 "$PREPARATION_BUNDLE_STAGE/update.patch"
+    [[ ! -e "$PREPARATION_BUNDLE_STAGE/format.patch" ]] \
+        || chmod 444 "$PREPARATION_BUNDLE_STAGE/format.patch"
     chmod 555 "$PREPARATION_BUNDLE_STAGE/logs"
     mv -- "$PREPARATION_BUNDLE_STAGE" "$PROCESS_PREPARATION_BUNDLE_DIR"
     chmod 555 "$PROCESS_PREPARATION_BUNDLE_DIR"
@@ -304,27 +348,137 @@ write_preparation_failure_bundle() {
     finalise_preparation_bundle
 }
 
+capture_checkout_tree() {
+    local checkout=$1 index_file=$2
+    rm -f -- "$index_file"
+    GIT_INDEX_FILE="$index_file" git -C "$checkout" read-tree HEAD
+    GIT_INDEX_FILE="$index_file" git -C "$checkout" add --all --force -- .
+    GIT_INDEX_FILE="$index_file" git -C "$checkout" write-tree
+}
+
+changed_files_json_between_trees_internal() {
+    local checkout=$1 source_tree=$2 target_tree=$3 path_policy=$4 verify_worktree=$5
+    shift 5
+    local -a terraform_roots=("$@")
+    local -a interleaved=()
+    local raw_entry relative_path new_mode target_blob file_sha256
+
+    # The target blob comes from the tree boundary, not the later working tree. This preserves the
+    # intermediate digest when formatting changes a file that the update stage also changed.
+    while IFS= read -r -d '' raw_entry && IFS= read -r -d '' relative_path; do
+        read -r _ new_mode _ target_blob _ <<<"$raw_entry"
+        if [[ "$verify_worktree" == "true" ]]; then
+            validate_changed_tree_entry "$checkout" "$relative_path"
+        fi
+        validate_changed_tree_identity "$relative_path" "$new_mode"
+        "$path_policy" "$checkout" "$relative_path" "${terraform_roots[@]}"
+        if ! file_sha256=$(git -C "$checkout" cat-file blob "$target_blob" | sha256sum); then
+            processing_status_error "candidate tree is missing a changed blob"
+        fi
+        interleaved+=("$relative_path" "$new_mode" "${file_sha256%% *}")
+    done < <(git -C "$checkout" diff --raw -z --no-renames "$source_tree" "$target_tree")
+
+    if [[ ${#interleaved[@]} -eq 0 ]]; then
+        printf '%s\n' '[]'
+        return
+    fi
+    jq -cn \
+        '$ARGS.positional | [range(0; length; 3) as $i |
+            {path: .[$i], mode: .[$i + 1], sha256: .[$i + 2]}]' \
+        --args -- "${interleaved[@]}"
+}
+
+changed_files_json_between_trees() {
+    local checkout=$1 source_tree=$2 target_tree=$3 path_policy=$4
+    shift 4
+    changed_files_json_between_trees_internal \
+        "$checkout" "$source_tree" "$target_tree" "$path_policy" true "$@"
+}
+
+changed_files_json_between_index_trees() {
+    local checkout=$1 source_tree=$2 target_tree=$3 path_policy=$4
+    shift 4
+    changed_files_json_between_trees_internal \
+        "$checkout" "$source_tree" "$target_tree" "$path_policy" false "$@"
+}
+
+capture_preparation_update_tree() {
+    PREPARATION_BASE_TREE=$(git -C "$PREPARATION_TARGET_CHECKOUT" rev-parse 'HEAD^{tree}')
+    PREPARATION_CANDIDATE_INDEX="$PREPARATION_DATA_ROOT/update.index"
+    PREPARATION_UPDATE_TREE=$(capture_checkout_tree \
+        "$PREPARATION_TARGET_CHECKOUT" "$PREPARATION_CANDIDATE_INDEX")
+}
+
+format_candidate_roots() {
+    if [[ "$PROCESS_TERRAFORM_FMT" != "true" \
+        || "$PREPARATION_BASE_TREE" == "$PREPARATION_UPDATE_TREE" ]]; then
+        return
+    fi
+
+    PREPARATION_FORMATTING_RAN=true
+    local root_index=0 terraform_root relative_root format_status
+    for terraform_root in "${PREPARATION_TERRAFORM_ROOTS[@]}"; do
+        root_index=$((root_index + 1))
+        relative_root=$(relative_terraform_root "$terraform_root")
+        format_status=0
+        run_before_preparation_deadline "$PREPARATION_DATA_ROOT/format-$root_index.log" \
+            terraform -chdir="$terraform_root" fmt -recursive || format_status=$?
+        if [[ "$format_status" -ne 0 ]]; then
+            write_preparation_failure_bundle \
+                "branch-format" \
+                "terraform fmt" \
+                "$relative_root" \
+                "terraform -chdir=$relative_root fmt -recursive" \
+                "$format_status"
+            if [[ "$format_status" -eq 124 || "$format_status" -eq 137 ]]; then
+                processing_status_error "terraform fmt timed out for Terraform root $relative_root"
+            fi
+            processing_status_error "terraform fmt failed for Terraform root $relative_root"
+        fi
+    done
+}
+
 write_preparation_candidate_bundle() {
-    PREPARATION_CANDIDATE_INDEX="$PREPARATION_DATA_ROOT/candidate.index"
-    rm -f -- "$PREPARATION_CANDIDATE_INDEX"
-    GIT_INDEX_FILE="$PREPARATION_CANDIDATE_INDEX" \
-        git -C "$PREPARATION_TARGET_CHECKOUT" read-tree HEAD
-    GIT_INDEX_FILE="$PREPARATION_CANDIDATE_INDEX" \
-        git -C "$PREPARATION_TARGET_CHECKOUT" add --all -- .
-    local classification="success" patch_sha256="" diff_status=0
-    GIT_INDEX_FILE="$PREPARATION_CANDIDATE_INDEX" \
-        git -C "$PREPARATION_TARGET_CHECKOUT" diff --cached --quiet --exit-code \
-        || diff_status=$?
-    if [[ "$diff_status" -eq 0 ]]; then
+    reject_ignored_paths "$PREPARATION_TARGET_CHECKOUT"
+    local final_index="$PREPARATION_DATA_ROOT/final.index"
+    local final_tree
+    final_tree=$(capture_checkout_tree "$PREPARATION_TARGET_CHECKOUT" "$final_index")
+
+    local update_changed_files formatting_changed_files final_changed_files
+    update_changed_files=$(changed_files_json_between_trees \
+        "$PREPARATION_TARGET_CHECKOUT" "$PREPARATION_BASE_TREE" "$PREPARATION_UPDATE_TREE" \
+        validate_update_changed_path "${PREPARATION_TERRAFORM_ROOTS[@]}")
+    formatting_changed_files=$(changed_files_json_between_trees \
+        "$PREPARATION_TARGET_CHECKOUT" "$PREPARATION_UPDATE_TREE" "$final_tree" \
+        validate_formatting_changed_path "${PREPARATION_TERRAFORM_ROOTS[@]}")
+    final_changed_files=$(changed_files_json_between_trees \
+        "$PREPARATION_TARGET_CHECKOUT" "$PREPARATION_BASE_TREE" "$final_tree" \
+        validate_final_changed_path "${PREPARATION_TERRAFORM_ROOTS[@]}")
+
+    local classification="success" update_patch_sha256="" format_patch_sha256=""
+    if [[ "$PREPARATION_BASE_TREE" == "$final_tree" ]]; then
         classification="no-change"
-    elif [[ "$diff_status" -eq 1 ]]; then
-        GIT_INDEX_FILE="$PREPARATION_CANDIDATE_INDEX" \
-            git -C "$PREPARATION_TARGET_CHECKOUT" diff --cached --binary --full-index --no-color \
-            >"$PREPARATION_BUNDLE_STAGE/candidate.patch"
-        patch_sha256=$(sha256sum "$PREPARATION_BUNDLE_STAGE/candidate.patch")
-        patch_sha256=${patch_sha256%% *}
+        update_changed_files='[]'
+        formatting_changed_files='[]'
+        final_changed_files='[]'
     else
-        processing_status_error "could not inspect candidate index changes"
+        git -C "$PREPARATION_TARGET_CHECKOUT" diff --binary --full-index --no-color \
+            "$PREPARATION_BASE_TREE" "$PREPARATION_UPDATE_TREE" \
+            >"$PREPARATION_BUNDLE_STAGE/update.patch"
+        [[ -s "$PREPARATION_BUNDLE_STAGE/update.patch" ]] \
+            || processing_status_error "update tree differs without a patch"
+        update_patch_sha256=$(sha256sum "$PREPARATION_BUNDLE_STAGE/update.patch")
+        update_patch_sha256=${update_patch_sha256%% *}
+
+        git -C "$PREPARATION_TARGET_CHECKOUT" diff --binary --full-index --no-color \
+            "$PREPARATION_UPDATE_TREE" "$final_tree" \
+            >"$PREPARATION_BUNDLE_STAGE/format.patch"
+        if [[ -s "$PREPARATION_BUNDLE_STAGE/format.patch" ]]; then
+            format_patch_sha256=$(sha256sum "$PREPARATION_BUNDLE_STAGE/format.patch")
+            format_patch_sha256=${format_patch_sha256%% *}
+        else
+            rm -f -- "$PREPARATION_BUNDLE_STAGE/format.patch"
+        fi
     fi
     copy_preparation_logs
 
@@ -336,60 +490,45 @@ write_preparation_candidate_bundle() {
     local roots_json
     roots_json=$(jq -cn '$ARGS.positional | map({path: .})' --args -- "${relative_roots[@]}")
 
-    # Mode and path are read together from one raw diff so a glob metacharacter in a changed
-    # file's name (e.g. "a[5].tf") can never make a separate pathspec lookup read a sibling's
-    # mode. --no-renames keeps this a flat one-path-per-record stream.
-    local -a relative_paths=() git_modes=()
-    local raw_entry relative_path new_mode
-    while IFS= read -r -d '' raw_entry && IFS= read -r -d '' relative_path; do
-        read -r _ new_mode _ _ _ <<<"$raw_entry"
-        relative_paths+=("$relative_path")
-        git_modes+=("$new_mode")
-    done < <(
-        GIT_INDEX_FILE="$PREPARATION_CANDIDATE_INDEX" \
-            git -C "$PREPARATION_TARGET_CHECKOUT" diff --cached --raw -z --no-renames
-    )
-    local -a file_sha256s=()
-    if [[ ${#relative_paths[@]} -gt 0 ]]; then
-        local sha_line
-        while IFS= read -r sha_line; do
-            file_sha256s+=("${sha_line%% *}")
-        done < <(cd "$PREPARATION_TARGET_CHECKOUT" && sha256sum -- "${relative_paths[@]}" 2>/dev/null)
-        [[ ${#file_sha256s[@]} -eq ${#relative_paths[@]} ]] \
-            || processing_status_error "candidate index is missing a changed path"
-    fi
-    local -a interleaved=()
-    local index
-    for index in "${!relative_paths[@]}"; do
-        interleaved+=("${relative_paths[$index]}" "${git_modes[$index]}" "${file_sha256s[$index]}")
-    done
-    local changed_files_json='[]'
-    if [[ ${#interleaved[@]} -gt 0 ]]; then
-        changed_files_json=$(jq -cn \
-            '$ARGS.positional | [range(0; length; 3) as $i |
-                {path: .[$i], mode: .[$i + 1], sha256: .[$i + 2]}]' \
-            --args -- "${interleaved[@]}")
-    fi
     preparation_identity_json | jq \
         --arg config_path "$PROCESS_CONFIG_PATH" \
         --arg tf_version_bump_version "$PROCESS_TF_VERSION_BUMP_VERSION" \
         --arg tf_version_bump_archive_sha256 "$PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256" \
         --arg terraform_version "$PROCESS_TERRAFORM_VERSION" \
+        --argjson terraform_fmt "$PROCESS_TERRAFORM_FMT" \
         --argjson roots "$roots_json" \
-        --argjson changed_files "$changed_files_json" \
-        --arg patch_sha256 "$patch_sha256" \
+        --argjson update_changed_files "$update_changed_files" \
+        --argjson formatting_changed_files "$formatting_changed_files" \
+        --argjson final_changed_files "$final_changed_files" \
+        --argjson module_blocks_updated "$PREPARATION_MODULE_BLOCKS_UPDATED" \
+        --argjson provider_blocks_updated "$PREPARATION_PROVIDER_BLOCKS_UPDATED" \
+        --arg update_patch_sha256 "$update_patch_sha256" \
+        --arg format_patch_sha256 "$format_patch_sha256" \
+        --argjson formatting_ran "$PREPARATION_FORMATTING_RAN" \
         --arg classification "$classification" \
-        '. + {config_path: $config_path, tools: {
-            tf_version_bump: {
-              version: $tf_version_bump_version,
-              archive_sha256: $tf_version_bump_archive_sha256
-            },
+        '. + {
+          classification: $classification,
+          terraform_fmt: $terraform_fmt,
+          tools: {
+            tf_version_bump: {version: $tf_version_bump_version,
+                              archive_sha256: $tf_version_bump_archive_sha256},
             terraform: {version: $terraform_version}
           },
+          config_path: $config_path,
           roots: $roots,
-          changed_files: $changed_files,
-          classification: $classification}
-          + if $patch_sha256 == "" then {} else {patch_sha256: $patch_sha256} end' \
+          updates: {
+            module_blocks_updated: $module_blocks_updated,
+            provider_blocks_updated: $provider_blocks_updated,
+            changed_files: $update_changed_files
+          } + if $update_patch_sha256 == "" then {} else
+                {patch_sha256: $update_patch_sha256} end,
+          formatting: {
+            ran: $formatting_ran,
+            changed_files: $formatting_changed_files
+          } + if $format_patch_sha256 == "" then {} else
+                {patch_sha256: $format_patch_sha256} end,
+          final_changed_files: $final_changed_files
+        }' \
         >"$PREPARATION_BUNDLE_STAGE/manifest.json"
     finalise_preparation_bundle
 }
@@ -398,6 +537,107 @@ path_is_within() {
     local path=$1
     local root=$2
     [[ "$path" == "$root" || "$path" == "$root/"* ]]
+}
+
+validate_changed_tree_identity() {
+    local relative_path=$1 git_mode=$2
+    [[ -n "$relative_path" && "$relative_path" != /* && "/$relative_path/" != *"/../"* ]] \
+        || processing_status_error "changed path is unsafe"
+    if [[ "$relative_path" == *$'\n'* ]]; then
+        processing_status_error "changed path must not contain a newline"
+    fi
+    local raw_digest normalised_digest
+    raw_digest=$(printf '%s' "$relative_path" | sha256sum)
+    normalised_digest=$(printf '%s' "$relative_path" | jq -Rjsc . | sha256sum)
+    [[ "${raw_digest%% *}" == "${normalised_digest%% *}" ]] \
+        || processing_status_error "changed path is not valid UTF-8"
+    [[ "$git_mode" == "100644" ]] \
+        || processing_status_error "changed file mode must be 100644"
+}
+
+validate_changed_tree_entry() {
+    local target_checkout=$1 relative_path=$2
+    local changed_path="$target_checkout/$relative_path"
+    [[ -f "$changed_path" && ! -L "$changed_path" ]] \
+        || processing_status_error "changed path must be a regular non-symlink file"
+    local canonical_path
+    if ! canonical_path=$(realpath "$changed_path" 2>/dev/null) \
+        || ! path_is_within "$canonical_path" "$target_checkout"; then
+        processing_status_error "changed path resolves outside target checkout"
+    fi
+}
+
+# shellcheck disable=SC2329 # Invoked by name through changed_files_json_between_trees.
+validate_update_changed_path() {
+    local target_checkout=$1 relative_path=$2
+    shift 2
+    local -a terraform_roots=("$@")
+    local filename=${relative_path##*/} parent=${relative_path%/*}
+    [[ "$parent" != "$relative_path" ]] || parent="."
+    local owning_roots=0 terraform_root relative_root
+    for terraform_root in "${terraform_roots[@]}"; do
+        if [[ "$terraform_root" == "$target_checkout" ]]; then
+            relative_root="."
+        else
+            relative_root=${terraform_root#"$target_checkout/"}
+        fi
+        [[ "$parent" != "$relative_root" ]] || owning_roots=$((owning_roots + 1))
+    done
+    if [[ "$filename" == *.tf ]]; then
+        [[ "$owning_roots" -eq 1 ]] \
+            || processing_status_error "changed Terraform file must be directly within exactly one configured root"
+        return
+    fi
+    [[ "$filename" == ".terraform.lock.hcl" && "$owning_roots" -eq 1 ]] \
+        || processing_status_error "unexpected changed or untracked path"
+}
+
+# shellcheck disable=SC2329 # Invoked by name through changed_files_json_between_trees.
+validate_formatting_changed_path() {
+    local target_checkout=$1 relative_path=$2
+    shift 2
+    local -a terraform_roots=("$@")
+    [[ "$relative_path" == *.tf ]] \
+        || processing_status_error "formatting changed a non-Terraform path"
+    [[ "/$relative_path/" != *"/.terraform/"* ]] \
+        || processing_status_error "formatting changed a path beneath .terraform"
+
+    local terraform_root relative_root
+    for terraform_root in "${terraform_roots[@]}"; do
+        if [[ "$terraform_root" == "$target_checkout" ]]; then
+            relative_root="."
+        else
+            relative_root=${terraform_root#"$target_checkout/"}
+        fi
+        if [[ "$relative_root" == "." || "$relative_path" == "$relative_root/"* ]]; then
+            return
+        fi
+    done
+    processing_status_error "formatted Terraform file must be beneath a configured root"
+}
+
+# shellcheck disable=SC2329 # Invoked by name through changed_files_json_between_trees.
+validate_final_changed_path() {
+    local target_checkout=$1 relative_path=$2
+    shift 2
+    local -a terraform_roots=("$@")
+    local filename=${relative_path##*/} parent_path=${relative_path%/*}
+    [[ "$parent_path" != "$relative_path" ]] || parent_path="."
+    local terraform_root relative_root
+
+    if [[ "$filename" == ".terraform.lock.hcl" ]]; then
+        for terraform_root in "${terraform_roots[@]}"; do
+            if [[ "$terraform_root" == "$target_checkout" ]]; then
+                relative_root="."
+            else
+                relative_root=${terraform_root#"$target_checkout/"}
+            fi
+            [[ "$parent_path" != "$relative_root" ]] || return
+        done
+        processing_status_error "final candidate contains an undeclared lock file"
+    fi
+    validate_formatting_changed_path \
+        "$target_checkout" "$relative_path" "${terraform_roots[@]}"
 }
 
 validate_terraform_file() {
@@ -536,6 +776,17 @@ validate_git_status() {
         | validate_git_status_stream "$target_checkout" "$@"
 }
 
+reject_ignored_paths() {
+    local target_checkout=$1 ignored_path
+    if IFS= read -r -d '' ignored_path < <(
+        git -C "$target_checkout" ls-files --others --ignored --exclude-standard -z
+    ); then
+        [[ "/$ignored_path/" != *"/.terraform/"* ]] \
+            || processing_status_error "formatting changed a path beneath .terraform"
+        processing_status_error "ignored path is forbidden"
+    fi
+}
+
 prepare_workspace() {
     : "${PROCESS_CONTROL_CHECKOUT:?PROCESS_CONTROL_CHECKOUT must be set}"
     : "${PROCESS_TARGET_CHECKOUT:?PROCESS_TARGET_CHECKOUT must be set}"
@@ -663,6 +914,49 @@ prepare_workspace() {
     PREPARATION_TF_DATA_DIRECTORIES=("${tf_data_directories[@]}")
 }
 
+directory_has_exact_entries() {
+    local directory=$1
+    shift
+    local -a actual=() expected=("$@")
+    local entry
+    while IFS= read -r -d '' entry; do
+        actual+=("${entry##*/}")
+    done < <(find "$directory" -mindepth 1 -maxdepth 1 -print0)
+    local actual_json expected_json
+    actual_json=$(jq -cn '$ARGS.positional | sort' --args -- "${actual[@]}")
+    expected_json=$(jq -cn '$ARGS.positional | sort' --args -- "${expected[@]}")
+    [[ "$actual_json" == "$expected_json" ]]
+}
+
+preparation_logs_are_valid() {
+    local directory=$1 manifest=$2
+    [[ -d "$directory" && ! -L "$directory" ]] || return 1
+    local root_count formatting_ran
+    root_count=$(jq -er '.roots | length' "$manifest") || return 1
+    formatting_ran=$(jq -r '.formatting.ran' "$manifest") || return 1
+
+    local entry name index
+    while IFS= read -r -d '' entry; do
+        [[ -f "$entry" && ! -L "$entry" ]] || return 1
+        name=${entry##*/}
+        case "$name" in
+            download.log|terraform-version.json|tf-version-bump-version.log) ;;
+            update-*.log|init-*.log)
+                [[ "$name" =~ ^(update|init)-([1-9][0-9]*)\.log$ ]] || return 1
+                index=${BASH_REMATCH[2]}
+                ((index <= root_count)) || return 1
+                ;;
+            format-*.log)
+                [[ "$formatting_ran" == "true" \
+                    && "$name" =~ ^format-([1-9][0-9]*)\.log$ ]] || return 1
+                index=${BASH_REMATCH[1]}
+                ((index <= root_count)) || return 1
+                ;;
+            *) return 1 ;;
+        esac
+    done < <(find "$directory" -mindepth 1 -maxdepth 1 -print0)
+}
+
 validation_contract() {
     : "${PROCESS_TARGET_CHECKOUT:?PROCESS_TARGET_CHECKOUT must be set}"
     : "${PROCESS_RUN_ID:?PROCESS_RUN_ID must be set}"
@@ -672,6 +966,9 @@ validation_contract() {
     : "${PROCESS_STATE_BRANCH:?PROCESS_STATE_BRANCH must be set}"
     : "${PROCESS_BASE_OID:?PROCESS_BASE_OID must be set}"
     : "${PROCESS_REF_HASH:?PROCESS_REF_HASH must be set}"
+    : "${PROCESS_CONFIG_PATH:?PROCESS_CONFIG_PATH must be set}"
+    : "${PROCESS_TF_VERSION_BUMP_VERSION:?PROCESS_TF_VERSION_BUMP_VERSION must be set}"
+    : "${PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256:?PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256 must be set}"
     : "${PROCESS_TERRAFORM_VERSION:?PROCESS_TERRAFORM_VERSION must be set}"
     : "${PROCESS_PREPARATION_BUNDLE_DIR:?PROCESS_PREPARATION_BUNDLE_DIR must be set}"
     : "${PROCESS_VALIDATION_OUTCOME_DIR:?PROCESS_VALIDATION_OUTCOME_DIR must be set}"
@@ -686,35 +983,136 @@ validation_contract() {
         || processing_setup_error "validation checkout must be clean before candidate apply"
     [[ -d "$PROCESS_PREPARATION_BUNDLE_DIR" ]] \
         || processing_path_error "preparation bundle must be a directory"
-    VALIDATION_MANIFEST="$(realpath "$PROCESS_PREPARATION_BUNDLE_DIR")/manifest.json"
-    VALIDATION_PATCH="$(realpath "$PROCESS_PREPARATION_BUNDLE_DIR")/candidate.patch"
+    local bundle_directory
+    bundle_directory=$(realpath "$PROCESS_PREPARATION_BUNDLE_DIR")
+    VALIDATION_MANIFEST="$bundle_directory/manifest.json"
+    VALIDATION_UPDATE_PATCH="$bundle_directory/update.patch"
+    VALIDATION_FORMAT_PATCH="$bundle_directory/format.patch"
     [[ -f "$VALIDATION_MANIFEST" && ! -L "$VALIDATION_MANIFEST" ]] \
         || processing_status_error "candidate manifest must be a regular file"
-    jq -e '.schema_version == 1 and
+    jq -e '
+         def changed_files:
+             type == "array" and
+             all(.[]; keys == ["mode", "path", "sha256"] and
+                 (.path | type == "string" and length > 0) and
+                 (.mode | type == "string" and test("^[0-7]{6}$")) and
+                 (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))) and
+             ([.[].path] == ([.[].path] | sort)) and
+             (([.[].path] | unique | length) == length);
+         .schema_version == 2 and
+         keys == ["artifact_name", "automation_policy_id", "base_oid", "classification",
+                  "config_path", "control_oid", "final_changed_files", "formatting", "ref_hash",
+                  "roots", "run_attempt", "run_id", "schema_version", "state_branch",
+                  "terraform_fmt", "tools", "updates"] and
          (.classification == "success" or .classification == "no-change") and
          .run_id == env.PROCESS_RUN_ID and .run_attempt == env.PROCESS_RUN_ATTEMPT and
          .automation_policy_id == env.PROCESS_AUTOMATION_POLICY_ID and
          .control_oid == env.PROCESS_CONTROL_OID and .state_branch == env.PROCESS_STATE_BRANCH and
          .base_oid == env.PROCESS_BASE_OID and .ref_hash == env.PROCESS_REF_HASH and
-         .tools.terraform.version == env.PROCESS_TERRAFORM_VERSION and (.roots | length > 0)' \
+         .artifact_name == ("preparation-" + env.PROCESS_RUN_ID + "-" +
+             env.PROCESS_RUN_ATTEMPT + "-" + env.PROCESS_AUTOMATION_POLICY_ID + "-" +
+             env.PROCESS_REF_HASH) and
+         (.terraform_fmt | type == "boolean") and
+         (.tools | keys) == ["terraform", "tf_version_bump"] and
+         (.tools.terraform | keys) == ["version"] and
+         (.tools.tf_version_bump | keys) == ["archive_sha256", "version"] and
+         .tools.terraform.version == env.PROCESS_TERRAFORM_VERSION and
+         .tools.tf_version_bump.version == env.PROCESS_TF_VERSION_BUMP_VERSION and
+         .tools.tf_version_bump.archive_sha256 ==
+             env.PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256 and
+         .config_path == env.PROCESS_CONFIG_PATH and
+         (.roots | type == "array" and length > 0 and
+             all(.[]; keys == ["path"] and (.path | type == "string" and length > 0))) and
+         (.updates.module_blocks_updated | type == "number" and . >= 0 and floor == .) and
+         (.updates.provider_blocks_updated | type == "number" and . >= 0 and floor == .) and
+         (.updates.changed_files | changed_files) and
+         (.formatting.ran | type == "boolean") and
+         (.formatting.changed_files | changed_files) and
+         (.final_changed_files | changed_files) and
+         (.formatting.ran == false or .terraform_fmt == true) and
+         if .classification == "success" then
+             (.updates | keys) == ["changed_files", "module_blocks_updated", "patch_sha256",
+                                  "provider_blocks_updated"] and
+             (.updates.changed_files | length > 0) and
+             (.updates.patch_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+             (.final_changed_files | length > 0) and
+             (.formatting.ran == .terraform_fmt) and
+             if (.formatting | has("patch_sha256")) then
+                 (.formatting | keys) == ["changed_files", "patch_sha256", "ran"] and
+                 .formatting.ran == true and
+                 (.formatting.changed_files | length > 0) and
+                 (.formatting.patch_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+             else
+                 (.formatting | keys) == ["changed_files", "ran"] and
+                 .formatting.changed_files == []
+             end
+         else
+             (.updates | keys) == ["changed_files", "module_blocks_updated",
+                                  "provider_blocks_updated"] and
+             .updates.changed_files == [] and
+             (.formatting | keys) == ["changed_files", "ran"] and
+             .formatting.changed_files == [] and .final_changed_files == []
+         end' \
         "$VALIDATION_MANIFEST" >/dev/null \
         || processing_status_error "candidate manifest identity or schema is invalid"
     VALIDATION_PREPARATION_CLASSIFICATION=$(jq -er '.classification' "$VALIDATION_MANIFEST")
     read -r VALIDATION_MANIFEST_SHA256 _ < <(sha256sum "$VALIDATION_MANIFEST")
+    preparation_logs_are_valid "$bundle_directory/logs" "$VALIDATION_MANIFEST" \
+        || processing_status_error "preparation logs are invalid"
     if [[ "$VALIDATION_PREPARATION_CLASSIFICATION" == "success" ]]; then
-        [[ -f "$VALIDATION_PATCH" && ! -L "$VALIDATION_PATCH" ]] \
+        [[ -f "$VALIDATION_UPDATE_PATCH" && ! -L "$VALIDATION_UPDATE_PATCH" ]] \
             || processing_status_error "candidate patch must be a regular file"
         local patch_sha256
-        read -r patch_sha256 _ < <(sha256sum "$VALIDATION_PATCH")
-        [[ "$patch_sha256" == "$(jq -er '.patch_sha256' "$VALIDATION_MANIFEST")" ]] \
+        read -r patch_sha256 _ < <(sha256sum "$VALIDATION_UPDATE_PATCH")
+        [[ "$patch_sha256" == "$(jq -er '.updates.patch_sha256' "$VALIDATION_MANIFEST")" ]] \
             || processing_status_error "candidate patch SHA-256 does not match manifest"
+        if jq -e '.formatting | has("patch_sha256")' "$VALIDATION_MANIFEST" >/dev/null; then
+            directory_has_exact_entries "$bundle_directory" \
+                format.patch logs manifest.json update.patch \
+                || processing_status_error "preparation bundle contains unexpected entries"
+            [[ -f "$VALIDATION_FORMAT_PATCH" && ! -L "$VALIDATION_FORMAT_PATCH" ]] \
+                || processing_status_error "format patch must be a regular file"
+            read -r patch_sha256 _ < <(sha256sum "$VALIDATION_FORMAT_PATCH")
+            [[ "$patch_sha256" == "$(jq -er '.formatting.patch_sha256' "$VALIDATION_MANIFEST")" ]] \
+                || processing_status_error "format patch SHA-256 does not match manifest"
+        else
+            directory_has_exact_entries "$bundle_directory" logs manifest.json update.patch \
+                || processing_status_error "preparation bundle contains unexpected entries"
+            [[ ! -e "$VALIDATION_FORMAT_PATCH" && ! -L "$VALIDATION_FORMAT_PATCH" ]] \
+                || processing_status_error "undeclared format patch is forbidden"
+        fi
     else
-        [[ ! -e "$VALIDATION_PATCH" && ! -L "$VALIDATION_PATCH" ]] \
+        directory_has_exact_entries "$bundle_directory" logs manifest.json \
+            || processing_status_error "preparation bundle contains unexpected entries"
+        [[ ! -e "$VALIDATION_UPDATE_PATCH" && ! -L "$VALIDATION_UPDATE_PATCH" ]] \
             || processing_status_error "no-change candidate must not contain a patch"
-        jq -e '.changed_files == [] and (has("patch_sha256") | not)' \
+        jq -e '.updates.changed_files == [] and
+            (.updates | has("patch_sha256") | not) and
+            (.formatting | has("patch_sha256") | not) and .final_changed_files == []' \
             "$VALIDATION_MANIFEST" >/dev/null \
             || processing_status_error "no-change candidate manifest is invalid"
+        [[ ! -e "$VALIDATION_FORMAT_PATCH" && ! -L "$VALIDATION_FORMAT_PATCH" ]] \
+            || processing_status_error "no-change candidate must not contain a format patch"
     fi
+
+    VALIDATION_BASE_TREE=$(git -C "$VALIDATION_TARGET_CHECKOUT" rev-parse 'HEAD^{tree}')
+    local relative_root terraform_root existing_root
+    while IFS= read -r relative_root; do
+        if [[ "$relative_root" == /* || "/$relative_root/" == *"/../"* \
+            || "/$relative_root/" == *"/.terraform/"* ]]; then
+            processing_status_error "candidate contains an unsafe Terraform root"
+        fi
+        if ! terraform_root=$(realpath "$VALIDATION_TARGET_CHECKOUT/$relative_root" 2>/dev/null) \
+            || [[ ! -d "$terraform_root" ]] \
+            || ! path_is_within "$terraform_root" "$VALIDATION_TARGET_CHECKOUT"; then
+            processing_status_error "candidate contains an unsafe Terraform root"
+        fi
+        for existing_root in "${VALIDATION_TERRAFORM_ROOTS[@]}"; do
+            [[ "$terraform_root" != "$existing_root" ]] \
+                || processing_status_error "candidate contains duplicate Terraform roots"
+        done
+        VALIDATION_TERRAFORM_ROOTS+=("$terraform_root")
+    done < <(jq -er '.roots[].path' "$VALIDATION_MANIFEST")
     if [[ "$PROCESS_VALIDATION_OUTCOME_DIR" != /* ]]; then
         processing_setup_error "validation outcome directory must be absolute"
     fi
@@ -751,7 +1149,7 @@ write_validation_outcome() {
         --argjson command_status "$command_status" \
         --arg failure_stage "$failure_stage" \
         --arg failure_root "$failure_root" \
-        '{schema_version, run_id, run_attempt, automation_policy_id, control_oid,
+        '{schema_version: 2, run_id, run_attempt, automation_policy_id, control_oid,
           state_branch, base_oid, ref_hash,
           candidate_manifest_sha256: $candidate_manifest_sha256,
           classification: $classification,
@@ -815,10 +1213,107 @@ validate_candidate_roots() {
     finalise_validation_outcome "$VALIDATION_PREPARATION_CLASSIFICATION" 0
 }
 
+apply_validation_stage() {
+    local patch_file=$1 stage=$2
+    git -C "$VALIDATION_TARGET_CHECKOUT" update-index --refresh
+    git -C "$VALIDATION_TARGET_CHECKOUT" apply --check --index --binary "$patch_file" \
+        || processing_status_error "$stage patch does not apply to the expected tree"
+    git -C "$VALIDATION_TARGET_CHECKOUT" apply --index --binary "$patch_file" \
+        || processing_status_error "$stage patch could not be applied"
+}
+
+preflight_validation_stage() {
+    local patch_file=$1 stage=$2 source_tree=$3
+    local preflight_index="$VALIDATION_DATA_ROOT/preflight-$stage.index"
+    rm -f -- "$preflight_index"
+    GIT_INDEX_FILE="$preflight_index" \
+        git -C "$VALIDATION_TARGET_CHECKOUT" read-tree "$source_tree"
+    GIT_INDEX_FILE="$preflight_index" \
+        git -C "$VALIDATION_TARGET_CHECKOUT" apply --check --cached --binary "$patch_file" \
+        || processing_status_error "$stage patch does not apply to the expected tree"
+    GIT_INDEX_FILE="$preflight_index" \
+        git -C "$VALIDATION_TARGET_CHECKOUT" apply --cached --binary "$patch_file" \
+        || processing_status_error "$stage patch could not be preflighted"
+
+    local target_tree path_policy actual_changed_files
+    target_tree=$(GIT_INDEX_FILE="$preflight_index" \
+        git -C "$VALIDATION_TARGET_CHECKOUT" write-tree)
+    if [[ "$stage" == "updates" ]]; then
+        path_policy=validate_update_changed_path
+        VALIDATION_PREFLIGHT_UPDATE_TREE=$target_tree
+    else
+        path_policy=validate_formatting_changed_path
+        VALIDATION_PREFLIGHT_FINAL_TREE=$target_tree
+    fi
+    actual_changed_files=$(changed_files_json_between_index_trees \
+        "$VALIDATION_TARGET_CHECKOUT" "$source_tree" "$target_tree" "$path_policy" \
+        "${VALIDATION_TERRAFORM_ROOTS[@]}")
+    jq -e --arg stage "$stage" --argjson actual "$actual_changed_files" \
+        '.[$stage].changed_files == $actual' "$VALIDATION_MANIFEST" >/dev/null \
+        || processing_status_error "$stage paths, modes, or digests do not match manifest"
+}
+
+preflight_validation_candidate() {
+    preflight_validation_stage "$VALIDATION_UPDATE_PATCH" updates "$VALIDATION_BASE_TREE"
+    VALIDATION_PREFLIGHT_FINAL_TREE=$VALIDATION_PREFLIGHT_UPDATE_TREE
+    if jq -e '.formatting | has("patch_sha256")' "$VALIDATION_MANIFEST" >/dev/null; then
+        preflight_validation_stage "$VALIDATION_FORMAT_PATCH" formatting \
+            "$VALIDATION_PREFLIGHT_UPDATE_TREE"
+    fi
+
+    local actual_changed_files
+    actual_changed_files=$(changed_files_json_between_index_trees \
+        "$VALIDATION_TARGET_CHECKOUT" "$VALIDATION_BASE_TREE" \
+        "$VALIDATION_PREFLIGHT_FINAL_TREE" validate_final_changed_path \
+        "${VALIDATION_TERRAFORM_ROOTS[@]}")
+    jq -e --argjson actual "$actual_changed_files" \
+        '.final_changed_files == $actual' "$VALIDATION_MANIFEST" >/dev/null \
+        || processing_status_error "final candidate paths, modes, or digests do not match manifest"
+}
+
+verify_validation_stage() {
+    local stage=$1 source_tree path_policy
+    local target_tree
+    target_tree=$(git -C "$VALIDATION_TARGET_CHECKOUT" write-tree)
+    if [[ "$stage" == "updates" ]]; then
+        source_tree=$VALIDATION_BASE_TREE
+        path_policy=validate_update_changed_path
+        VALIDATION_UPDATE_TREE=$target_tree
+    else
+        source_tree=$VALIDATION_UPDATE_TREE
+        path_policy=validate_formatting_changed_path
+    fi
+
+    local actual_changed_files
+    actual_changed_files=$(changed_files_json_between_trees \
+        "$VALIDATION_TARGET_CHECKOUT" "$source_tree" "$target_tree" "$path_policy" \
+        "${VALIDATION_TERRAFORM_ROOTS[@]}")
+    jq -e --arg stage "$stage" --argjson actual "$actual_changed_files" \
+        '.[$stage].changed_files == $actual' "$VALIDATION_MANIFEST" >/dev/null \
+        || processing_status_error "$stage paths, modes, or digests do not match manifest"
+}
+
+verify_final_candidate() {
+    local final_tree actual_changed_files
+    final_tree=$(git -C "$VALIDATION_TARGET_CHECKOUT" write-tree)
+    actual_changed_files=$(changed_files_json_between_trees \
+        "$VALIDATION_TARGET_CHECKOUT" "$VALIDATION_BASE_TREE" "$final_tree" \
+        validate_final_changed_path "${VALIDATION_TERRAFORM_ROOTS[@]}")
+    jq -e --argjson actual "$actual_changed_files" \
+        '.final_changed_files == $actual' "$VALIDATION_MANIFEST" >/dev/null \
+        || processing_status_error "final candidate paths, modes, or digests do not match manifest"
+}
+
 apply_validation_candidate() {
-    git -C "$VALIDATION_TARGET_CHECKOUT" apply --check --binary "$VALIDATION_PATCH" || processing_status_error "candidate patch does not apply to exact base"
-    git -C "$VALIDATION_TARGET_CHECKOUT" apply --binary "$VALIDATION_PATCH" || processing_status_error "candidate patch could not be applied"
-    VALIDATION_CANDIDATE_STATUS=$(git -C "$VALIDATION_TARGET_CHECKOUT" status --porcelain=v1 --untracked-files=all)
+    apply_validation_stage "$VALIDATION_UPDATE_PATCH" updates
+    verify_validation_stage updates
+    if jq -e '.formatting | has("patch_sha256")' "$VALIDATION_MANIFEST" >/dev/null; then
+        apply_validation_stage "$VALIDATION_FORMAT_PATCH" formatting
+        verify_validation_stage formatting
+    fi
+    verify_final_candidate
+    VALIDATION_CANDIDATE_STATUS=$(git -C "$VALIDATION_TARGET_CHECKOUT" \
+        status --porcelain=v1 --untracked-files=all)
 }
 
 install_tf_version_bump() {
@@ -892,17 +1387,20 @@ prepare_candidate_roots() {
     local update_status
     local data_directory
     local relative_root
+    local update_report
     local lock_file
     local init_status
     for terraform_root in "${PREPARATION_TERRAFORM_ROOTS[@]}"; do
         root_index=$((root_index + 1))
         update_status=0
+        relative_root=$(relative_terraform_root "$terraform_root")
+        update_report="$PREPARATION_DATA_ROOT/report-$root_index.json"
         (cd "$terraform_root" && run_before_preparation_deadline \
             "$PREPARATION_DATA_ROOT/update-$root_index.log" \
-            "$PREPARATION_TF_VERSION_BUMP_BINARY" -pattern '*.tf' -config "$PREPARATION_CONFIG_PATH") \
+            "$PREPARATION_TF_VERSION_BUMP_BINARY" -pattern '*.tf' \
+            -config "$PREPARATION_CONFIG_PATH" -report-file "$update_report") \
             || update_status=$?
         if [[ "$update_status" -ne 0 ]]; then
-            relative_root=$(relative_terraform_root "$terraform_root")
             write_preparation_failure_bundle \
                 "branch-update" \
                 "tf-version-bump" \
@@ -913,6 +1411,15 @@ prepare_candidate_roots() {
                 processing_status_error "tf-version-bump timed out for Terraform root $relative_root"
             fi
             processing_status_error "tf-version-bump failed for Terraform root $relative_root"
+        fi
+        if ! accumulate_update_report "$update_report" "$relative_root"; then
+            write_preparation_failure_bundle \
+                "automation" \
+                "tf-version-bump report" \
+                "$relative_root" \
+                "tf-version-bump -pattern *.tf -config $PROCESS_CONFIG_PATH -report-file" \
+                1
+            processing_status_error "tf-version-bump returned an invalid report for Terraform root $relative_root"
         fi
         data_directory=${PREPARATION_TF_DATA_DIRECTORIES[$((root_index - 1))]}
         init_status=0
@@ -1009,6 +1516,8 @@ if [[ "${1:-}" == "prepare" && $# -eq 1 ]]; then
     PREPARATION_TF_VERSION_BUMP_BINARY=$(install_tf_version_bump)
     verify_terraform_version "$PREPARATION_DATA_ROOT" run_before_preparation_deadline
     prepare_candidate_roots
+    capture_preparation_update_tree
+    format_candidate_roots
     write_preparation_candidate_bundle
     exit 0
 fi
@@ -1022,6 +1531,9 @@ if [[ "${1:-}" == "validate" && $# -eq 1 ]]; then
         processing_setup_error "validation deadline expired before candidate setup"
     fi
     validation_contract
+    if [[ "$VALIDATION_PREPARATION_CLASSIFICATION" == "success" ]]; then
+        preflight_validation_candidate
+    fi
     verify_terraform_version "$VALIDATION_DATA_ROOT" run_before_validation_deadline
     if [[ "$VALIDATION_PREPARATION_CLASSIFICATION" == "success" ]]; then
         apply_validation_candidate

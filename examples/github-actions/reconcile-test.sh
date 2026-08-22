@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 RECONCILE_SCRIPT="$SCRIPT_DIR/.github/scripts/reconcile-state-branch.sh"
+REUSABLE_WORKFLOW="$SCRIPT_DIR/.github/workflows/tf-version-bump-reusable.yml"
 TEST_GIT=${TEST_GIT-git}
 TEST_ROOT=$(mktemp -d)
 
@@ -54,9 +55,11 @@ ref_hash() {
 setup_success_fixture() {
     FIXTURE_STATE_BRANCH=${FIXTURE_STATE_BRANCH-state/nonproduction/example}
     FIXTURE_TERRAFORM_PATH=${FIXTURE_TERRAFORM_PATH-root/main.tf}
+    FIXTURE_FORMATTING_PATH=${FIXTURE_FORMATTING_PATH-root/nested/child.tf}
     FIXTURE_ROOT=$(mktemp -d "$TEST_ROOT/success.XXXXXX")
     FIXTURE_REMOTE="$FIXTURE_ROOT/origin.git"
     FIXTURE_SOURCE="$FIXTURE_ROOT/source"
+    FIXTURE_CONTROL_CHECKOUT="$FIXTURE_ROOT/control"
     FIXTURE_CHECKOUT="$FIXTURE_ROOT/checkout"
     FIXTURE_BUNDLE="$FIXTURE_ROOT/preparation"
     FIXTURE_OUTCOME="$FIXTURE_ROOT/validation"
@@ -64,10 +67,14 @@ setup_success_fixture() {
 
     "$TEST_GIT" init --bare --initial-branch=main "$FIXTURE_REMOTE" >/dev/null
     "$TEST_GIT" init --initial-branch=main "$FIXTURE_SOURCE" >/dev/null
-    mkdir -p "$FIXTURE_SOURCE/root"
+    mkdir -p "$FIXTURE_SOURCE/root/nested" \
+        "$FIXTURE_SOURCE/${FIXTURE_FORMATTING_PATH%/*}"
     printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
         >"$FIXTURE_SOURCE/$FIXTURE_TERRAFORM_PATH"
-    "$TEST_GIT" -C "$FIXTURE_SOURCE" add -- "$FIXTURE_TERRAFORM_PATH"
+    printf '%s\n' 'locals { nested={value="base"} }' \
+        >"$FIXTURE_SOURCE/$FIXTURE_FORMATTING_PATH"
+    "$TEST_GIT" -C "$FIXTURE_SOURCE" add -- \
+        "$FIXTURE_TERRAFORM_PATH" "$FIXTURE_FORMATTING_PATH"
     fixture_commit "$FIXTURE_SOURCE" 'test: create reconciliation base'
     FIXTURE_BASE_OID=$("$TEST_GIT" -C "$FIXTURE_SOURCE" rev-parse HEAD)
     FIXTURE_CONTROL_OID=$FIXTURE_BASE_OID
@@ -75,6 +82,7 @@ setup_success_fixture() {
     "$TEST_GIT" -C "$FIXTURE_SOURCE" push --quiet origin \
         "HEAD:refs/heads/$FIXTURE_STATE_BRANCH"
 
+    "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$FIXTURE_CONTROL_CHECKOUT"
     "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$FIXTURE_CHECKOUT"
     local candidate="$FIXTURE_ROOT/candidate"
     "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$candidate"
@@ -82,11 +90,36 @@ setup_success_fixture() {
     rm "$candidate/$FIXTURE_TERRAFORM_PATH.bak"
 
     mkdir -p "$FIXTURE_BUNDLE/logs" "$FIXTURE_OUTCOME/logs"
+    local base_tree update_tree final_tree
+    base_tree=$("$TEST_GIT" -C "$candidate" rev-parse 'HEAD^{tree}')
+    "$TEST_GIT" -C "$candidate" add -- "$FIXTURE_TERRAFORM_PATH"
+    update_tree=$("$TEST_GIT" -C "$candidate" write-tree)
     "$TEST_GIT" -C "$candidate" diff --binary --full-index --no-color \
-        >"$FIXTURE_BUNDLE/candidate.patch"
-    local patch_digest file_digest branch_hash
-    patch_digest=$(sha256_file "$FIXTURE_BUNDLE/candidate.patch")
-    file_digest=$(sha256_file "$candidate/$FIXTURE_TERRAFORM_PATH")
+        "$base_tree" "$update_tree" >"$FIXTURE_BUNDLE/update.patch"
+    local update_patch_digest update_file_digest
+    update_patch_digest=$(sha256_file "$FIXTURE_BUNDLE/update.patch")
+    update_file_digest=$(sha256_file "$candidate/$FIXTURE_TERRAFORM_PATH")
+
+    cat >"$candidate/$FIXTURE_TERRAFORM_PATH" <<'EOF'
+terraform {
+  required_version = ">= 1.15.0"
+}
+EOF
+    cat >"$candidate/$FIXTURE_FORMATTING_PATH" <<'EOF'
+locals {
+  nested = { value = "base" }
+}
+EOF
+    "$TEST_GIT" -C "$candidate" add -- \
+        "$FIXTURE_TERRAFORM_PATH" "$FIXTURE_FORMATTING_PATH"
+    final_tree=$("$TEST_GIT" -C "$candidate" write-tree)
+    FIXTURE_FINAL_TREE=$final_tree
+    "$TEST_GIT" -C "$candidate" diff --binary --full-index --no-color \
+        "$update_tree" "$final_tree" >"$FIXTURE_BUNDLE/format.patch"
+    local format_patch_digest final_file_digest formatting_file_digest branch_hash
+    format_patch_digest=$(sha256_file "$FIXTURE_BUNDLE/format.patch")
+    final_file_digest=$(sha256_file "$candidate/$FIXTURE_TERRAFORM_PATH")
+    formatting_file_digest=$(sha256_file "$candidate/$FIXTURE_FORMATTING_PATH")
     branch_hash=$(ref_hash)
     jq -n \
         --arg control_oid "$FIXTURE_CONTROL_OID" \
@@ -94,15 +127,37 @@ setup_success_fixture() {
         --arg ref_hash "$branch_hash" \
         --arg state_branch "$FIXTURE_STATE_BRANCH" \
         --arg changed_path "$FIXTURE_TERRAFORM_PATH" \
-        --arg patch_digest "$patch_digest" \
-        --arg file_digest "$file_digest" \
-        '{schema_version: 1, run_id: "100", run_attempt: "1",
+        --arg update_patch_digest "$update_patch_digest" \
+        --arg format_patch_digest "$format_patch_digest" \
+        --arg update_file_digest "$update_file_digest" \
+        --arg final_file_digest "$final_file_digest" \
+        --arg formatting_path "$FIXTURE_FORMATTING_PATH" \
+        --arg formatting_file_digest "$formatting_file_digest" \
+        '{schema_version: 2, run_id: "100", run_attempt: "1",
           automation_policy_id: "nonproduction", control_oid: $control_oid,
           state_branch: $state_branch, base_oid: $base_oid,
-          ref_hash: $ref_hash, classification: "success",
+          ref_hash: $ref_hash,
+          artifact_name: ("preparation-100-1-nonproduction-" + $ref_hash),
+          classification: "success", terraform_fmt: true,
+          tools: {terraform: {version: "1.15.5"},
+                  tf_version_bump: {version: "v1.0.0-rc.9",
+                                    archive_sha256: "38428a229a77671fd192fd6a18f5d1f9c404b5557124883f04e6a8bec154b1d2"}},
+          config_path: ".github/tf-version-bump/nonproduction.yml",
           roots: [{path: "root"}],
-          changed_files: [{path: $changed_path, mode: "100644", sha256: $file_digest}],
-          patch_sha256: $patch_digest}' >"$FIXTURE_BUNDLE/manifest.json"
+          updates: {module_blocks_updated: 1, provider_blocks_updated: 1,
+                    changed_files: [{path: $changed_path, mode: "100644", sha256: $update_file_digest}],
+                    patch_sha256: $update_patch_digest},
+          formatting: {ran: true,
+                       changed_files: [
+                         {path: $changed_path, mode: "100644", sha256: $final_file_digest},
+                         {path: $formatting_path, mode: "100644", sha256: $formatting_file_digest}
+                       ],
+                       patch_sha256: $format_patch_digest},
+          final_changed_files: [
+            {path: $changed_path, mode: "100644", sha256: $final_file_digest},
+            {path: $formatting_path, mode: "100644", sha256: $formatting_file_digest}
+          ]}' \
+        >"$FIXTURE_BUNDLE/manifest.json"
     local manifest_digest
     manifest_digest=$(sha256_file "$FIXTURE_BUNDLE/manifest.json")
     jq -n \
@@ -111,12 +166,18 @@ setup_success_fixture() {
         --arg ref_hash "$branch_hash" \
         --arg state_branch "$FIXTURE_STATE_BRANCH" \
         --arg manifest_digest "$manifest_digest" \
-        '{schema_version: 1, run_id: "100", run_attempt: "1",
+        '{schema_version: 2, run_id: "100", run_attempt: "1",
           automation_policy_id: "nonproduction", control_oid: $control_oid,
           state_branch: $state_branch, base_oid: $base_oid,
           ref_hash: $ref_hash, classification: "success",
-          candidate_manifest_sha256: $manifest_digest}' \
+          candidate_manifest_sha256: $manifest_digest, command_status: 0}' \
         >"$FIXTURE_OUTCOME/manifest.json"
+
+    "$TEST_GIT" -C "$FIXTURE_CHECKOUT" apply --index --binary \
+        "$FIXTURE_BUNDLE/update.patch"
+    "$TEST_GIT" -C "$FIXTURE_CHECKOUT" update-index --refresh
+    "$TEST_GIT" -C "$FIXTURE_CHECKOUT" apply --index --binary \
+        "$FIXTURE_BUNDLE/format.patch"
 }
 
 run_verify() {
@@ -127,12 +188,45 @@ run_verify() {
         RECONCILE_STATE_BRANCH=${RECONCILE_STATE_BRANCH-$FIXTURE_STATE_BRANCH} \
         RECONCILE_BASE_OID=${RECONCILE_BASE_OID-$FIXTURE_BASE_OID} \
         RECONCILE_REF_HASH=${RECONCILE_REF_HASH-$(ref_hash)} \
+        RECONCILE_CONTROL_CHECKOUT=${RECONCILE_CONTROL_CHECKOUT-$FIXTURE_CONTROL_CHECKOUT} \
         RECONCILE_PREPARATION_BUNDLE_DIR="$FIXTURE_BUNDLE" \
         RECONCILE_VALIDATION_OUTCOME_DIR=${RECONCILE_VALIDATION_OUTCOME_DIR-$FIXTURE_OUTCOME} \
         RECONCILE_TARGET_CHECKOUT="$FIXTURE_CHECKOUT" \
         RECONCILE_VERIFIED_RESULT_DIR="$FIXTURE_VERIFIED" \
         RECONCILE_RUN_URL=https://github.example/yesdevnull/reconciliation-test/actions/runs/100 \
         "$RECONCILE_SCRIPT" verify
+}
+
+run_workflow_result_classification() {
+    local classification_script="$TEST_ROOT/confirm-verified-classification.sh"
+    yq -r '.jobs.validate.steps[] |
+        select(.name == "Confirm verified classification") | .run' \
+        "$REUSABLE_WORKFLOW" >"$classification_script"
+    [[ -s "$classification_script" ]] \
+        || fail "workflow does not define the final verified-result classification gate"
+    CONTROL_CHECKOUT="$SCRIPT_DIR" \
+        RECONCILE_RUN_ID=100 \
+        RECONCILE_RUN_ATTEMPT=1 \
+        RECONCILE_AUTOMATION_POLICY_ID=nonproduction \
+        RECONCILE_CONTROL_OID="$FIXTURE_CONTROL_OID" \
+        RECONCILE_STATE_BRANCH="$FIXTURE_STATE_BRANCH" \
+        RECONCILE_BASE_OID="$FIXTURE_BASE_OID" \
+        RECONCILE_REF_HASH="$(ref_hash)" \
+        RECONCILE_VERIFIED_RESULT_DIR="$FIXTURE_VERIFIED" \
+        bash "$classification_script"
+}
+
+assert_workflow_classification_failure() {
+    local expected_diagnostic=$1 description=$2
+    local stdout_file="$FIXTURE_ROOT/workflow-classification.stdout"
+    local stderr_file="$FIXTURE_ROOT/workflow-classification.stderr"
+    if run_workflow_result_classification >"$stdout_file" 2>"$stderr_file"; then
+        fail "$description succeeded"
+    fi
+    [[ ! -s "$stdout_file" ]] \
+        || fail "$description emitted unexpected stdout: $(<"$stdout_file")"
+    [[ "$(<"$stderr_file")" == "$expected_diagnostic" ]] \
+        || fail "$description emitted an unexpected diagnostic: $(<"$stderr_file")"
 }
 
 setup_gh_capture() {
@@ -144,6 +238,7 @@ setup_gh_capture() {
 set -euo pipefail
 printf '%s\n' "$*" >>"${GH_CAPTURE_DIR:?}/calls"
 if [[ "$1 $2" == "pr list" ]]; then
+    [[ ! -f "$GH_CAPTURE_DIR/existing-pr" ]] || cat "$GH_CAPTURE_DIR/existing-pr"
     exit 0
 fi
 if [[ "$1 $2" == "issue list" ]]; then
@@ -212,6 +307,83 @@ prepare_publication_fixture() {
     setup_gh_capture
 }
 
+reset_target_checkout() {
+    "$TEST_GIT" -C "$FIXTURE_CHECKOUT" reset --hard "$FIXTURE_BASE_OID" >/dev/null
+}
+
+bind_outcome_to_preparation() {
+    local manifest_digest
+    manifest_digest=$(sha256_file "$FIXTURE_BUNDLE/manifest.json")
+    jq --arg manifest_digest "$manifest_digest" \
+        '.candidate_manifest_sha256 = $manifest_digest' \
+        "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/outcome.json"
+    mv "$FIXTURE_ROOT/outcome.json" "$FIXTURE_OUTCOME/manifest.json"
+}
+
+configure_one_stage_success() {
+    jq '.terraform_fmt = false |
+        .formatting = {ran: false, changed_files: []} |
+        .final_changed_files = .updates.changed_files' \
+        "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/one-stage.json"
+    mv "$FIXTURE_ROOT/one-stage.json" "$FIXTURE_BUNDLE/manifest.json"
+    rm "$FIXTURE_BUNDLE/format.patch"
+    bind_outcome_to_preparation
+    reset_target_checkout
+    "$TEST_GIT" -C "$FIXTURE_CHECKOUT" apply --index --binary \
+        "$FIXTURE_BUNDLE/update.patch"
+    FIXTURE_FINAL_TREE=$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" write-tree)
+}
+
+configure_no_change() {
+    jq '.classification = "no-change" |
+        .terraform_fmt = false |
+        .updates = {module_blocks_updated: 0, provider_blocks_updated: 0,
+                    changed_files: []} |
+        .formatting = {ran: false, changed_files: []} |
+        .final_changed_files = []' \
+        "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/no-change.json"
+    mv "$FIXTURE_ROOT/no-change.json" "$FIXTURE_BUNDLE/manifest.json"
+    rm "$FIXTURE_BUNDLE/update.patch" "$FIXTURE_BUNDLE/format.patch"
+    jq '.classification = "no-change"' \
+        "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/no-change-outcome.json"
+    mv "$FIXTURE_ROOT/no-change-outcome.json" "$FIXTURE_OUTCOME/manifest.json"
+    bind_outcome_to_preparation
+    reset_target_checkout
+}
+
+configure_preparation_failure() {
+    local classification=$1 stage=$2 status=$3
+    jq --arg classification "$classification" --arg stage "$stage" --argjson status "$status" \
+        '.classification = $classification |
+         .failure = {stage: $stage, root: "root", command: $stage, status: $status} |
+         del(.terraform_fmt, .tools, .config_path, .roots,
+             .updates, .formatting, .final_changed_files)' \
+        "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/preparation-failure.json"
+    mv "$FIXTURE_ROOT/preparation-failure.json" "$FIXTURE_BUNDLE/manifest.json"
+    rm -rf "$FIXTURE_OUTCOME"
+    rm "$FIXTURE_BUNDLE/update.patch" "$FIXTURE_BUNDLE/format.patch"
+    RECONCILE_VALIDATION_OUTCOME_DIR=""
+    reset_target_checkout
+}
+
+set_update_counts() {
+    local modules=$1 providers=$2
+    jq --argjson modules "$modules" --argjson providers "$providers" \
+        '.updates.module_blocks_updated = $modules |
+         .updates.provider_blocks_updated = $providers' \
+        "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/counts.json"
+    mv "$FIXTURE_ROOT/counts.json" "$FIXTURE_BUNDLE/manifest.json"
+    bind_outcome_to_preparation
+}
+
+assert_exact_result_entries() {
+    local description=$1 expected=$2 actual
+    actual=$(find "$FIXTURE_VERIFIED" -mindepth 1 -maxdepth 1 \
+        -exec basename {} \; | sort)
+    [[ "$actual" == "$expected" ]] \
+        || fail "$description had unexpected entries: $actual"
+}
+
 # Mutates the preparation bundle set up by setup_success_fixture into a bounded branch-update
 # failure (dropping the outcome and patch, which a branch-update failure never has), then verifies
 # it. $1 overrides the failure root (default "root") for tests that need a hostile value there.
@@ -219,16 +391,20 @@ mutate_bundle_into_branch_update_failure() {
     local root=${1-root}
     jq --arg root "$root" \
         '.classification = "branch-update" |
-         .failure = {stage: "tf-version-bump", root: $root, command: "tf-version-bump", status: 1}' \
+         .failure = {stage: "tf-version-bump", root: $root, command: "tf-version-bump", status: 1} |
+         del(.terraform_fmt, .tools, .config_path, .roots,
+             .updates, .formatting, .final_changed_files)' \
         "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/failure.json"
     mv "$FIXTURE_ROOT/failure.json" "$FIXTURE_BUNDLE/manifest.json"
-    rm -rf "$FIXTURE_OUTCOME" "$FIXTURE_BUNDLE/candidate.patch"
+    rm -rf "$FIXTURE_OUTCOME"
+    rm "$FIXTURE_BUNDLE/update.patch" "$FIXTURE_BUNDLE/format.patch"
+    reset_target_checkout
     RECONCILE_VALIDATION_OUTCOME_DIR="" run_verify
 }
 
 test_verifies_successful_candidate_without_credentials() {
-    # Production break caught: verification cannot bind and replay one valid preparation and
-    # validation result without receiving publication credentials.
+    # Production break caught: reconciliation tries to apply a patch to the already-applied
+    # validation checkout, or drops the optional formatting stage from the verified result.
     setup_success_fixture
     assert_silent_success "valid candidate verification" \
         "$FIXTURE_ROOT/verify.stdout" "$FIXTURE_ROOT/verify.stderr" run_verify
@@ -237,15 +413,27 @@ test_verifies_successful_candidate_without_credentials() {
     jq -e \
         --arg manifest_digest "$(sha256_file "$FIXTURE_BUNDLE/manifest.json")" \
         --arg outcome_digest "$(sha256_file "$FIXTURE_OUTCOME/manifest.json")" \
-        --arg patch_digest "$(sha256_file "$FIXTURE_BUNDLE/candidate.patch")" \
-        '.schema_version == 1 and .classification == "success" and
+        --arg patch_digest "$(sha256_file "$FIXTURE_BUNDLE/update.patch")" \
+        '.schema_version == 2 and .classification == "success" and
          .run_id == "100" and .run_attempt == "1" and
          .preparation_manifest_sha256 == $manifest_digest and
          .validation_outcome_sha256 == $outcome_digest and
-         .patch_sha256 == $patch_digest' "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
+         .updates.module_blocks_updated == 1 and
+         .updates.provider_blocks_updated == 1 and
+         .terraform_fmt == true and
+         .updates.patch_sha256 == $patch_digest and
+         .formatting.ran == true and
+         (.formatting.changed_files | length) == 2 and
+         (.formatting.patch_sha256 | type == "string") and
+         (.final_changed_files | length) == 2' \
+        "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
         || fail "verified success result did not bind the candidate artefacts"
-    cmp "$FIXTURE_BUNDLE/candidate.patch" "$FIXTURE_VERIFIED/candidate.patch" \
+    cmp "$FIXTURE_BUNDLE/update.patch" "$FIXTURE_VERIFIED/update.patch" \
         || fail "verified candidate patch differs from the prepared patch"
+    cmp "$FIXTURE_BUNDLE/format.patch" "$FIXTURE_VERIFIED/format.patch" \
+        || fail "verified format patch differs from the prepared patch"
+    assert_exact_result_entries "two-stage verified success" \
+        $'format.patch\nmanifest.json\nupdate.patch'
 }
 
 test_verifies_candidate_with_valid_tab_in_path() {
@@ -259,6 +447,459 @@ test_verifies_candidate_with_valid_tab_in_path() {
         "$FIXTURE_CHECKOUT/$FIXTURE_TERRAFORM_PATH" >/dev/null \
         || fail "verification did not apply the special-character candidate patch"
     unset FIXTURE_TERRAFORM_PATH
+}
+
+test_emits_strict_verified_result_variants() {
+    # Production breaks caught: a result variant retains stage artefacts or metadata it must
+    # forbid, omits a required source digest, or exposes any file outside its exact file set.
+    setup_success_fixture
+    configure_one_stage_success
+    run_verify
+    jq -e '.classification == "success" and
+        (.preparation_manifest_sha256 | type == "string") and
+        (.validation_outcome_sha256 | type == "string") and
+        .formatting == {ran: false, changed_files: []}' \
+        "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
+        || fail "one-stage verified success did not preserve its exact bindings"
+    assert_exact_result_entries "one-stage verified success" \
+        $'manifest.json\nupdate.patch'
+
+    setup_success_fixture
+    configure_no_change
+    run_verify
+    jq -e '.classification == "no-change" and
+        (.preparation_manifest_sha256 | type == "string") and
+        (.validation_outcome_sha256 | type == "string") and
+        .updates.changed_files == [] and .formatting.changed_files == [] and
+        .final_changed_files == []' "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
+        || fail "verified no-change result did not preserve its exact bindings"
+    assert_exact_result_entries "verified no-change" 'manifest.json'
+
+    local classification stage status
+    for classification in branch-update branch-init branch-format automation; do
+        setup_success_fixture
+        case "$classification" in
+            branch-update) stage="tf-version-bump"; status=5 ;;
+            branch-init) stage="terraform init"; status=6 ;;
+            branch-format) stage="terraform fmt"; status=7 ;;
+            automation) stage="tf-version-bump report"; status=1 ;;
+        esac
+        configure_preparation_failure "$classification" "$stage" "$status"
+        run_verify
+        jq -e --arg classification "$classification" --arg stage "$stage" \
+            --argjson status "$status" '
+            .classification == $classification and
+            (.preparation_manifest_sha256 | type == "string") and
+            has("validation_outcome_sha256") == false and
+            has("updates") == false and has("formatting") == false and
+            has("final_changed_files") == false and
+            .failure == {stage: $stage, root: "root", status: $status}' \
+            "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
+            || fail "$classification verified result did not enforce the failure variant"
+        assert_exact_result_entries "$classification verified result" 'manifest.json'
+        unset RECONCILE_VALIDATION_OUTCOME_DIR
+    done
+
+    setup_success_fixture
+    jq '.classification = "branch-validation" | .command_status = 9 |
+        .failure = {stage: "terraform validate", root: "root", status: 9}' \
+        "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/branch-validation.json"
+    mv "$FIXTURE_ROOT/branch-validation.json" "$FIXTURE_OUTCOME/manifest.json"
+    run_verify
+    jq -e '.classification == "branch-validation" and
+        (.preparation_manifest_sha256 | type == "string") and
+        (.validation_outcome_sha256 | type == "string") and
+        has("updates") == false and has("formatting") == false and
+        has("final_changed_files") == false and
+        .failure == {stage: "terraform validate", root: "root", status: 9}' \
+        "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
+        || fail "branch-validation verified result did not enforce its exact variant"
+    assert_exact_result_entries "branch-validation verified result" 'manifest.json'
+}
+
+test_workflow_classifies_verified_results_after_reconciliation() {
+    # Production breaks caught: a bounded branch failure makes validation red before publication,
+    # or an automation/malformed result passes the final workflow classification gate.
+    setup_success_fixture
+    run_verify
+    run_workflow_result_classification \
+        || fail "workflow rejected a verified success result"
+
+    setup_success_fixture
+    configure_no_change
+    run_verify
+    run_workflow_result_classification \
+        || fail "workflow rejected a verified no-change result"
+
+    local classification stage
+    for classification in branch-update branch-init branch-format; do
+        setup_success_fixture
+        case "$classification" in
+            branch-update) stage="tf-version-bump" ;;
+            branch-init) stage="terraform init" ;;
+            branch-format) stage="terraform fmt" ;;
+        esac
+        configure_preparation_failure "$classification" "$stage" 1
+        run_verify
+        run_workflow_result_classification \
+            || fail "workflow rejected a verified $classification result"
+        unset RECONCILE_VALIDATION_OUTCOME_DIR
+    done
+
+    setup_success_fixture
+    jq '.classification = "branch-validation" | .command_status = 1 |
+        .failure = {stage: "terraform validate", root: "root", status: 1}' \
+        "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/branch-validation.json"
+    mv "$FIXTURE_ROOT/branch-validation.json" "$FIXTURE_OUTCOME/manifest.json"
+    run_verify
+    run_workflow_result_classification \
+        || fail "workflow rejected a verified branch-validation result"
+
+    setup_success_fixture
+    configure_preparation_failure automation "tf-version-bump report" 1
+    run_verify
+    [[ -f "$FIXTURE_VERIFIED/manifest.json" ]] \
+        || fail "automation reconciliation did not produce its verified result"
+    assert_workflow_classification_failure "" \
+        "workflow classification of a verified automation result"
+
+    chmod -R u+w "$FIXTURE_VERIFIED"
+    rm "$FIXTURE_VERIFIED/manifest.json"
+    assert_workflow_classification_failure \
+        "reconciliation error: verified result manifest must be a regular file" \
+        "workflow classification of a missing verified result"
+    printf '%s\n' '{}' >"$FIXTURE_VERIFIED/manifest.json"
+    assert_workflow_classification_failure \
+        "reconciliation error: verified result manifest contract is invalid" \
+        "workflow classification of a malformed verified result"
+    printf '%s\n' '{"classification":"success"}' >"$FIXTURE_VERIFIED/manifest.json"
+    assert_workflow_classification_failure \
+        "reconciliation error: verified result manifest contract is invalid" \
+        "workflow classification of an allowed-classification malformed verified result"
+    unset RECONCILE_VALIDATION_OUTCOME_DIR
+}
+
+test_rejects_zero_status_preparation_failures() {
+    # Production break caught: a failure preparation with a successful command status reaches
+    # the trusted result and can be published as a contradictory failure.
+    local classification stage
+    for classification in branch-update branch-init branch-format automation; do
+        setup_success_fixture
+        case "$classification" in
+            branch-update) stage="tf-version-bump" ;;
+            branch-init) stage="terraform init" ;;
+            branch-format) stage="terraform fmt" ;;
+            automation) stage="tf-version-bump report" ;;
+        esac
+        configure_preparation_failure "$classification" "$stage" 0
+        assert_verification_failure "$classification zero-status preparation failure"
+        unset RECONCILE_VALIDATION_OUTCOME_DIR
+    done
+}
+
+test_rejects_unexpected_contract_logs() {
+    # Production break caught: an unknown regular log basename is accepted into either source
+    # artefact and can reach a trusted verified result despite the bounded stage-log contract.
+    local contract
+    for contract in preparation outcome; do
+        setup_success_fixture
+        if [[ "$contract" == "preparation" ]]; then
+            printf '%s\n' sensitive >"$FIXTURE_BUNDLE/logs/unexpected.log"
+        else
+            printf '%s\n' sensitive >"$FIXTURE_OUTCOME/logs/unexpected.log"
+        fi
+        assert_verification_failure "unexpected $contract log"
+    done
+}
+
+test_binds_failure_classifications_to_stages_at_every_boundary() {
+    # Production breaks caught: a branch or automation classification carries an unrelated stage
+    # through preparation, outcome reconciliation, or final publication and misroutes lifecycle
+    # handling while still satisfying the structural failure schema.
+    local classification valid_stage
+    for classification in branch-update branch-init branch-format automation; do
+        setup_success_fixture
+        case "$classification" in
+            branch-update) valid_stage="tf-version-bump" ;;
+            branch-init) valid_stage="terraform init" ;;
+            branch-format) valid_stage="terraform fmt" ;;
+            automation) valid_stage="tf-version-bump report" ;;
+        esac
+        configure_preparation_failure "$classification" "$valid_stage" 1
+        jq '.failure.stage = "unrelated stage"' "$FIXTURE_BUNDLE/manifest.json" \
+            >"$FIXTURE_ROOT/mismatched-preparation.json"
+        mv "$FIXTURE_ROOT/mismatched-preparation.json" "$FIXTURE_BUNDLE/manifest.json"
+        assert_verification_failure "$classification mismatched preparation stage"
+        unset RECONCILE_VALIDATION_OUTCOME_DIR
+    done
+
+    setup_success_fixture
+    jq '.classification = "branch-validation" | .command_status = 1 |
+        .failure = {stage: "terraform fmt", root: "root", status: 1}' \
+        "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/mismatched-outcome.json"
+    mv "$FIXTURE_ROOT/mismatched-outcome.json" "$FIXTURE_OUTCOME/manifest.json"
+    assert_verification_failure "branch-validation mismatched outcome stage"
+
+    for classification in branch-validation branch-update branch-init branch-format automation; do
+        setup_success_fixture
+        case "$classification" in
+            branch-validation)
+                jq '.classification = "branch-validation" | .command_status = 1 |
+                    .failure = {stage: "terraform validate", root: "root", status: 1}' \
+                    "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/valid-outcome.json"
+                mv "$FIXTURE_ROOT/valid-outcome.json" "$FIXTURE_OUTCOME/manifest.json"
+                run_verify
+                ;;
+            branch-update) valid_stage="tf-version-bump" ;;
+            branch-init) valid_stage="terraform init" ;;
+            branch-format) valid_stage="terraform fmt" ;;
+            automation) valid_stage="tf-version-bump report" ;;
+        esac
+        if [[ "$classification" != "branch-validation" ]]; then
+            configure_preparation_failure "$classification" "$valid_stage" 1
+            run_verify
+        fi
+        chmod -R u+w "$FIXTURE_VERIFIED"
+        jq '.failure.stage = "unrelated stage"' "$FIXTURE_VERIFIED/manifest.json" \
+            >"$FIXTURE_ROOT/mismatched-verified.json"
+        mv "$FIXTURE_ROOT/mismatched-verified.json" "$FIXTURE_VERIFIED/manifest.json"
+        setup_gh_capture
+        if run_publish >"$FIXTURE_ROOT/mismatched-publish.stdout" \
+            2>"$FIXTURE_ROOT/mismatched-publish.stderr"; then
+            fail "publication accepted $classification mismatched verified stage"
+        fi
+        unset RECONCILE_VALIDATION_OUTCOME_DIR
+    done
+
+    setup_success_fixture
+    configure_preparation_failure automation "provider lock policy" 1
+    run_verify || fail "provider-lock automation stage was rejected"
+    unset RECONCILE_VALIDATION_OUTCOME_DIR
+}
+
+test_rejects_post_terraform_mutation() {
+    # Production breaks caught: the trusted reconciliation pass accepts accidental mutation after
+    # Terraform exits instead of rechecking both source artefacts and the already-applied checkout.
+    local row
+    for row in control-checkout ignored-control-checkout preparation-manifest update-patch \
+        format-patch validation-outcome intermediate-metadata final-metadata \
+        applied-checkout ignored-applied-checkout; do
+        setup_success_fixture
+        case "$row" in
+            control-checkout)
+                printf '%s\n' '# changed after validation' \
+                    >>"$FIXTURE_CONTROL_CHECKOUT/root/main.tf"
+                ;;
+            ignored-control-checkout)
+                printf '%s\n' 'root/provider-created.tmp' \
+                    >"$FIXTURE_CONTROL_CHECKOUT/.git/info/exclude"
+                printf '%s\n' unexpected \
+                    >"$FIXTURE_CONTROL_CHECKOUT/root/provider-created.tmp"
+                ;;
+            preparation-manifest)
+                printf '%s\n' ' ' >>"$FIXTURE_BUNDLE/manifest.json"
+                ;;
+            update-patch)
+                printf '%s\n' '# changed after validation' >>"$FIXTURE_BUNDLE/update.patch"
+                ;;
+            format-patch)
+                printf '%s\n' '# changed after validation' >>"$FIXTURE_BUNDLE/format.patch"
+                ;;
+            validation-outcome)
+                jq '.unexpected = true' "$FIXTURE_OUTCOME/manifest.json" \
+                    >"$FIXTURE_ROOT/mutated-outcome.json"
+                mv "$FIXTURE_ROOT/mutated-outcome.json" "$FIXTURE_OUTCOME/manifest.json"
+                ;;
+            intermediate-metadata)
+                jq '(.updates.changed_files[0].sha256) = ("0" * 64)' \
+                    "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/intermediate.json"
+                mv "$FIXTURE_ROOT/intermediate.json" "$FIXTURE_BUNDLE/manifest.json"
+                bind_outcome_to_preparation
+                ;;
+            final-metadata)
+                jq '(.final_changed_files[0].sha256) = ("0" * 64)' \
+                    "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/final.json"
+                mv "$FIXTURE_ROOT/final.json" "$FIXTURE_BUNDLE/manifest.json"
+                bind_outcome_to_preparation
+                ;;
+            applied-checkout)
+                printf '%s\n' '# changed after validation' \
+                    >>"$FIXTURE_CHECKOUT/root/main.tf"
+                ;;
+            ignored-applied-checkout)
+                printf '%s\n' 'root/provider-created.tmp' \
+                    >"$FIXTURE_CHECKOUT/.git/info/exclude"
+                printf '%s\n' unexpected \
+                    >"$FIXTURE_CHECKOUT/root/provider-created.tmp"
+                ;;
+        esac
+        assert_verification_failure "$row post-Terraform mutation"
+    done
+}
+
+test_publication_rejects_ambiguous_verified_results() {
+    # Production breaks caught: publication accepts an unknown manifest field or any undeclared
+    # file-system entry, making the supposedly narrow verified contract ambiguous.
+    local row
+    for row in unknown-field extra-file extra-directory extra-symlink; do
+        prepare_publication_fixture
+        chmod -R u+w "$FIXTURE_VERIFIED"
+        case "$row" in
+            unknown-field)
+                jq '.unexpected = true' "$FIXTURE_VERIFIED/manifest.json" \
+                    >"$FIXTURE_ROOT/unknown-field.json"
+                mv "$FIXTURE_ROOT/unknown-field.json" "$FIXTURE_VERIFIED/manifest.json"
+                ;;
+            extra-file)
+                printf '%s\n' unexpected >"$FIXTURE_VERIFIED/unexpected"
+                ;;
+            extra-directory)
+                mkdir "$FIXTURE_VERIFIED/unexpected"
+                ;;
+            extra-symlink)
+                ln -s manifest.json "$FIXTURE_VERIFIED/unexpected"
+                ;;
+        esac
+        if run_publish >"$FIXTURE_ROOT/$row.stdout" 2>"$FIXTURE_ROOT/$row.stderr"; then
+            fail "publication accepted $row in the verified result"
+        fi
+    done
+
+    setup_success_fixture
+    configure_one_stage_success
+    run_verify
+    chmod -R u+w "$FIXTURE_VERIFIED"
+    printf '%s\n' unexpected >"$FIXTURE_VERIFIED/format.patch"
+    rm -rf "$FIXTURE_CHECKOUT"
+    "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$FIXTURE_CHECKOUT"
+    setup_gh_capture
+    if run_publish >"$FIXTURE_ROOT/undeclared-format-patch.stdout" \
+        2>"$FIXTURE_ROOT/undeclared-format-patch.stderr"; then
+        fail "publication accepted an undeclared format patch in the verified result"
+    fi
+
+    setup_success_fixture
+    configure_no_change
+    run_verify
+    chmod -R u+w "$FIXTURE_VERIFIED"
+    printf '%s\n' unexpected >"$FIXTURE_VERIFIED/update.patch"
+    setup_gh_capture
+    if run_publish >"$FIXTURE_ROOT/no-change-patch.stdout" \
+        2>"$FIXTURE_ROOT/no-change-patch.stderr"; then
+        fail "publication accepted a patch in a no-change verified result"
+    fi
+}
+
+test_publication_rejects_verified_dot_terraform_path() {
+    # Production breaks caught: publication materialises a digest-consistent verified update or
+    # formatting patch beneath .terraform, or creates the first commit before rejecting format.
+    local stage
+    for stage in updates formatting; do
+        prepare_publication_fixture
+        local candidate="$FIXTURE_ROOT/dot-terraform-$stage-candidate"
+        "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$candidate"
+        "$TEST_GIT" -C "$candidate" apply --index --binary "$FIXTURE_VERIFIED/update.patch"
+        local update_tree
+        update_tree=$("$TEST_GIT" -C "$candidate" write-tree)
+        if [[ "$stage" == "formatting" ]]; then
+            "$TEST_GIT" -C "$candidate" apply --index --binary \
+                "$FIXTURE_VERIFIED/format.patch"
+        fi
+        mkdir -p "$candidate/root/.terraform"
+        printf '%s\n' 'locals { unsafe = true }' >"$candidate/root/.terraform/unsafe.tf"
+        "$TEST_GIT" -C "$candidate" add -- "root/.terraform/unsafe.tf"
+
+        local patch_digest unsafe_digest
+        unsafe_digest=$(sha256_file "$candidate/root/.terraform/unsafe.tf")
+        if [[ "$stage" == "updates" ]]; then
+            "$TEST_GIT" -C "$candidate" diff --cached --binary --full-index --no-color \
+                >"$FIXTURE_VERIFIED/update.patch"
+            patch_digest=$(sha256_file "$FIXTURE_VERIFIED/update.patch")
+            jq --arg patch_digest "$patch_digest" --arg unsafe_digest "$unsafe_digest" '
+                .updates.patch_sha256 = $patch_digest |
+                .updates.changed_files += [
+                    {path: "root/.terraform/unsafe.tf", mode: "100644", sha256: $unsafe_digest}
+                ] |
+                .updates.changed_files |= sort_by(.path) |
+                .final_changed_files += [
+                    {path: "root/.terraform/unsafe.tf", mode: "100644", sha256: $unsafe_digest}
+                ] |
+                .final_changed_files |= sort_by(.path)
+            ' "$FIXTURE_VERIFIED/manifest.json" >"$FIXTURE_ROOT/dot-terraform-manifest.json"
+        else
+            local final_tree
+            final_tree=$("$TEST_GIT" -C "$candidate" write-tree)
+            "$TEST_GIT" -C "$candidate" diff --binary --full-index --no-color \
+                "$update_tree" "$final_tree" >"$FIXTURE_VERIFIED/format.patch"
+            patch_digest=$(sha256_file "$FIXTURE_VERIFIED/format.patch")
+            jq --arg patch_digest "$patch_digest" --arg unsafe_digest "$unsafe_digest" '
+                .formatting.patch_sha256 = $patch_digest |
+                .formatting.changed_files += [
+                    {path: "root/.terraform/unsafe.tf", mode: "100644", sha256: $unsafe_digest}
+                ] |
+                .formatting.changed_files |= sort_by(.path) |
+                .final_changed_files += [
+                    {path: "root/.terraform/unsafe.tf", mode: "100644", sha256: $unsafe_digest}
+                ] |
+                .final_changed_files |= sort_by(.path)
+            ' "$FIXTURE_VERIFIED/manifest.json" >"$FIXTURE_ROOT/dot-terraform-manifest.json"
+        fi
+        mv "$FIXTURE_ROOT/dot-terraform-manifest.json" "$FIXTURE_VERIFIED/manifest.json"
+
+        if run_publish >"$FIXTURE_ROOT/dot-terraform.stdout" \
+            2>"$FIXTURE_ROOT/dot-terraform.stderr"; then
+            fail "publication accepted a verified $stage path beneath .terraform"
+        fi
+        grep -F 'reconciliation error: candidate contains an undeclared or unsafe path' \
+            "$FIXTURE_ROOT/dot-terraform.stderr" >/dev/null \
+            || fail "publication rejected the $stage .terraform path for the wrong reason: $(<"$FIXTURE_ROOT/dot-terraform.stderr")"
+        [[ "$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" rev-parse HEAD)" == "$FIXTURE_BASE_OID" ]] \
+            || fail "rejected $stage .terraform path produced a publication commit"
+        [[ -z "$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" status --porcelain=v1 \
+            --untracked-files=all)" ]] \
+            || fail "rejected $stage .terraform path changed the publication checkout"
+        [[ -z "$(find "$FIXTURE_GH_CAPTURE" -mindepth 1 -print -quit)" ]] \
+            || fail "rejected $stage .terraform path invoked GitHub lifecycle commands"
+    done
+}
+
+test_publication_rejects_zero_status_failure_results() {
+    # Production break caught: publication trusts a verified failure whose command status says
+    # success, producing a contradictory issue or accepting automation as a valid no-op.
+    local classification stage
+    for classification in branch-validation branch-update branch-init branch-format automation; do
+        setup_success_fixture
+        case "$classification" in
+            branch-validation)
+                jq '.classification = "branch-validation" | .command_status = 1 |
+                    .failure = {stage: "terraform validate", root: "root", status: 1}' \
+                    "$FIXTURE_OUTCOME/manifest.json" \
+                    >"$FIXTURE_ROOT/branch-validation.json"
+                mv "$FIXTURE_ROOT/branch-validation.json" \
+                    "$FIXTURE_OUTCOME/manifest.json"
+                run_verify
+                ;;
+            branch-update) stage="tf-version-bump" ;;
+            branch-init) stage="terraform init" ;;
+            branch-format) stage="terraform fmt" ;;
+            automation) stage="tf-version-bump report" ;;
+        esac
+        if [[ "$classification" != "branch-validation" ]]; then
+            configure_preparation_failure "$classification" "$stage" 1
+            run_verify
+        fi
+        chmod -R u+w "$FIXTURE_VERIFIED"
+        jq '.failure.status = 0' "$FIXTURE_VERIFIED/manifest.json" \
+            >"$FIXTURE_ROOT/zero-status-verified.json"
+        mv "$FIXTURE_ROOT/zero-status-verified.json" \
+            "$FIXTURE_VERIFIED/manifest.json"
+        setup_gh_capture
+        if run_publish >"$FIXTURE_ROOT/zero-status-publish.stdout" \
+            2>"$FIXTURE_ROOT/zero-status-publish.stderr"; then
+            fail "publication accepted $classification zero-status failure result"
+        fi
+        unset RECONCILE_VALIDATION_OUTCOME_DIR
+    done
 }
 
 assert_verification_failure() {
@@ -284,7 +925,7 @@ test_rejects_mismatched_or_corrupt_candidates() {
                 RECONCILE_RUN_ATTEMPT=2
                 ;;
             corrupt-patch)
-                printf '%s\n' '# corrupt' >>"$FIXTURE_BUNDLE/candidate.patch"
+                printf '%s\n' '# corrupt' >>"$FIXTURE_BUNDLE/update.patch"
                 ;;
             undeclared-patch-path)
                 local candidate="$FIXTURE_ROOT/extra-candidate"
@@ -294,10 +935,10 @@ test_rejects_mismatched_or_corrupt_candidates() {
                 printf '%s\n' 'terraform {}' >"$candidate/undeclared.tf"
                 "$TEST_GIT" -C "$candidate" add -N -- undeclared.tf
                 "$TEST_GIT" -C "$candidate" diff --binary --full-index --no-color \
-                    >"$FIXTURE_BUNDLE/candidate.patch"
+                    >"$FIXTURE_BUNDLE/update.patch"
                 local digest
-                digest=$(sha256_file "$FIXTURE_BUNDLE/candidate.patch")
-                jq --arg digest "$digest" '.patch_sha256 = $digest' \
+                digest=$(sha256_file "$FIXTURE_BUNDLE/update.patch")
+                jq --arg digest "$digest" '.updates.patch_sha256 = $digest' \
                     "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/manifest.json"
                 mv "$FIXTURE_ROOT/manifest.json" "$FIXTURE_BUNDLE/manifest.json"
                 digest=$(sha256_file "$FIXTURE_BUNDLE/manifest.json")
@@ -326,20 +967,25 @@ test_verifies_deleting_candidate_reports_a_classified_digest_error() {
     "$TEST_GIT" -C "$FIXTURE_SOURCE" push --quiet origin "HEAD:refs/heads/$FIXTURE_STATE_BRANCH"
     rm -rf "$FIXTURE_CHECKOUT"
     "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$FIXTURE_CHECKOUT"
+    rm "$FIXTURE_CHECKOUT/$extra_path"
+    "$TEST_GIT" -C "$FIXTURE_CHECKOUT" add -- "$extra_path"
 
     local candidate="$FIXTURE_ROOT/deleting-candidate"
     "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$candidate"
     rm -f "$candidate/$extra_path"
     "$TEST_GIT" -C "$candidate" diff --binary --full-index --no-color \
-        >"$FIXTURE_BUNDLE/candidate.patch"
+        >"$FIXTURE_BUNDLE/update.patch"
 
     local patch_digest
-    patch_digest=$(sha256_file "$FIXTURE_BUNDLE/candidate.patch")
+    patch_digest=$(sha256_file "$FIXTURE_BUNDLE/update.patch")
     jq --arg base_oid "$FIXTURE_BASE_OID" \
         --arg patch_digest "$patch_digest" \
         --arg extra_path "$extra_path" \
-        '.base_oid = $base_oid | .patch_sha256 = $patch_digest |
-         .changed_files = [{path: $extra_path, mode: "100644", sha256: ("0" * 64)}]' \
+        '.base_oid = $base_oid | .terraform_fmt = false |
+         .updates.patch_sha256 = $patch_digest |
+         .updates.changed_files = [{path: $extra_path, mode: "100644", sha256: ("0" * 64)}] |
+         .formatting = {ran: false, changed_files: []} |
+         .final_changed_files = .updates.changed_files' \
         "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/deleting-manifest.json"
     mv "$FIXTURE_ROOT/deleting-manifest.json" "$FIXTURE_BUNDLE/manifest.json"
     local manifest_digest
@@ -349,6 +995,7 @@ test_verifies_deleting_candidate_reports_a_classified_digest_error() {
         '.base_oid = $base_oid | .candidate_manifest_sha256 = $manifest_digest' \
         "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/deleting-outcome.json"
     mv "$FIXTURE_ROOT/deleting-outcome.json" "$FIXTURE_OUTCOME/manifest.json"
+    rm "$FIXTURE_BUNDLE/format.patch"
 
     if run_verify >"$FIXTURE_ROOT/delete.stdout" 2>"$FIXTURE_ROOT/delete.stderr"; then
         fail "deleting-candidate verification succeeded"
@@ -369,16 +1016,12 @@ test_verifies_only_bounded_branch_failures_without_a_patch() {
         if [[ "$classification" == "branch-init" ]]; then
             expected_stage="terraform init"
             expected_status=7
-            jq '.classification = "branch-init" |
-                .failure = {stage: "terraform init", root: "root", command: "terraform init", status: 7}' \
-                "$FIXTURE_BUNDLE/manifest.json" >"$FIXTURE_ROOT/failure.json"
-            mv "$FIXTURE_ROOT/failure.json" "$FIXTURE_BUNDLE/manifest.json"
-            rm -rf "$FIXTURE_OUTCOME" "$FIXTURE_BUNDLE/candidate.patch"
-            RECONCILE_VALIDATION_OUTCOME_DIR=""
+            configure_preparation_failure branch-init "terraform init" 7
         else
             expected_stage="terraform validate"
             expected_status=9
             jq '.classification = "branch-validation" |
+                .command_status = 9 |
                 .failure = {stage: "terraform validate", root: "root", status: 9}' \
                 "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/failure.json"
             mv "$FIXTURE_ROOT/failure.json" "$FIXTURE_OUTCOME/manifest.json"
@@ -388,8 +1031,10 @@ test_verifies_only_bounded_branch_failures_without_a_patch() {
             fail "$classification verification failed: $(<"$FIXTURE_ROOT/failure.stderr")"
         fi
         jq -e --arg classification "$classification" \
-            '.schema_version == 1 and .classification == $classification and
-             has("patch_sha256") == false' "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
+            '.schema_version == 2 and .classification == $classification and
+             has("updates") == false and has("formatting") == false and
+             has("final_changed_files") == false' \
+            "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
             || fail "$classification did not produce a bounded verified failure"
         jq -e \
             --arg stage "$expected_stage" \
@@ -398,7 +1043,7 @@ test_verifies_only_bounded_branch_failures_without_a_patch() {
              .run_url == "https://github.example/yesdevnull/reconciliation-test/actions/runs/100"' \
             "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
             || fail "$classification did not preserve bounded failure details and run URL"
-        [[ ! -e "$FIXTURE_VERIFIED/candidate.patch" ]] \
+        [[ ! -e "$FIXTURE_VERIFIED/update.patch" ]] \
             || fail "$classification retained a publishable patch"
 
         setup_gh_capture
@@ -416,9 +1061,9 @@ test_verifies_only_bounded_branch_failures_without_a_patch() {
         unset RECONCILE_DRY_RUN
     done
 
-    yq -o=json '.jobs.verify.steps' \
+    yq -o=json '.jobs.validate.steps' \
         "$SCRIPT_DIR/.github/workflows/tf-version-bump-reusable.yml" | jq -e '
-        any(.[]; .name == "Verify candidate result" and
+        any(.[]; .name == "Reconcile candidate result" and
             .env.RECONCILE_RUN_URL ==
                 "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")
     ' >/dev/null || fail "workflow does not pass the trusted direct run URL to verification"
@@ -473,6 +1118,172 @@ test_dry_run_constructs_unsigned_owned_commit_without_external_mutation() {
     fi
     [[ -z "$(find "$FIXTURE_GH_CAPTURE" -mindepth 1 -print -quit)" ]] \
         || fail "dry-run invoked GitHub lifecycle commands"
+}
+
+test_constructs_deterministic_staged_commits() {
+    # Production breaks caught: report counts select the wrong dependency subject, formatting is
+    # folded into that commit, either commit loses ownership, or the committed tree diverges.
+    local modules providers expected_subject actual_subject revision commit_message commit_count
+    while IFS='|' read -r modules providers expected_subject; do
+        setup_success_fixture
+        set_update_counts "$modules" "$providers"
+        run_verify
+        chmod -R u+w "$FIXTURE_VERIFIED"
+        rm -rf "$FIXTURE_CHECKOUT"
+        "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$FIXTURE_CHECKOUT"
+        setup_gh_capture
+        run_publish
+
+        actual_subject=$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" show -s --format=%s HEAD^)
+        [[ "$actual_subject" == "$expected_subject" ]] \
+            || fail "count tuple ($modules,$providers) selected '$actual_subject'"
+        [[ "$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" show -s --format=%s HEAD)" \
+            == 'chore: run Terraform fmt' ]] \
+            || fail "formatting commit used the wrong subject"
+        commit_count=$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" rev-list --count \
+            "$FIXTURE_BASE_OID..HEAD")
+        [[ "$commit_count" -eq 2 ]] \
+            || fail "two-stage publication created $commit_count commits"
+        for revision in HEAD HEAD^; do
+            commit_message=$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" show -s \
+                --format=%B "$revision")
+            [[ "$commit_message" \
+                == *'Tf-Version-Bump-Automation: nonproduction/'"$(ref_hash)"* ]] \
+                || fail "$revision omitted the automation ownership trailer"
+            [[ "$commit_message" == *"Tf-Version-Bump-Base: $FIXTURE_BASE_OID"* ]] \
+                || fail "$revision omitted the exact base trailer"
+        done
+        [[ "$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" rev-parse 'HEAD^{tree}')" \
+            == "$FIXTURE_FINAL_TREE" ]] \
+            || fail "published final tree differs from the verified final metadata"
+    done <<'EOF'
+1|1|chore: bump Terraform provider and module versions
+0|1|chore: bump Terraform provider versions
+1|0|chore: bump Terraform module versions
+0|0|chore: update Terraform configuration
+EOF
+
+    setup_success_fixture
+    configure_one_stage_success
+    run_verify
+    chmod -R u+w "$FIXTURE_VERIFIED"
+    rm -rf "$FIXTURE_CHECKOUT"
+    "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$FIXTURE_CHECKOUT"
+    setup_gh_capture
+    run_publish
+    commit_count=$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" rev-list --count \
+        "$FIXTURE_BASE_OID..HEAD")
+    [[ "$commit_count" -eq 1 ]] \
+        || fail "one-stage publication created $commit_count commits"
+    [[ "$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" show -s --format=%s HEAD)" \
+        == 'chore: bump Terraform provider and module versions' ]] \
+        || fail "one-stage publication used the wrong dependency subject"
+    [[ "$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" rev-parse 'HEAD^{tree}')" \
+        == "$FIXTURE_FINAL_TREE" ]] \
+        || fail "one-stage published tree differs from the verified final metadata"
+}
+
+test_renders_split_pull_request_change_summary() {
+    # Production breaks caught: PR creation or editing omits exact report counts, combines the two
+    # commit file lists, duplicates an overlapping path, or emits a hostile path as raw markup.
+    local pr_action marker body calls overlap_count
+    for pr_action in create edit; do
+        FIXTURE_FORMATTING_PATH='root/nested/@ops</code>__fmt.tf'
+        setup_success_fixture
+        set_update_counts 3 2
+        run_verify
+        chmod -R u+w "$FIXTURE_VERIFIED"
+        rm -rf "$FIXTURE_CHECKOUT"
+        "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$FIXTURE_CHECKOUT"
+        setup_gh_capture
+        marker='<!-- tf-version-bump:nonproduction:'"$(ref_hash)"' -->'
+        if [[ "$pr_action" == "edit" ]]; then
+            printf '[{"number":17,"body":"%s"}]\n' "$marker" \
+                >"$FIXTURE_GH_CAPTURE/existing-pr"
+        fi
+        RECONCILE_DRY_RUN=false run_publish
+        body=$(<"$FIXTURE_GH_CAPTURE/pr-body")
+        calls=$(<"$FIXTURE_GH_CAPTURE/calls")
+        [[ "$calls" == *"pr $pr_action"* ]] \
+            || fail "$pr_action lifecycle did not pass the managed PR body"
+        [[ "$body" == *'Module blocks updated: <code>3</code>'* ]] \
+            || fail "$pr_action PR body omitted the exact module count"
+        [[ "$body" == *'Provider blocks updated: <code>2</code>'* ]] \
+            || fail "$pr_action PR body omitted the exact provider count"
+        [[ "$body" == *'Dependency and lock-file changes (<code>1</code>)'* ]] \
+            || fail "$pr_action PR body omitted the update-stage file count"
+        [[ "$body" == *'Formatting changes (<code>2</code>)'* ]] \
+            || fail "$pr_action PR body omitted the formatting-stage file count"
+        [[ "$body" == *'<code>root/nested/&#64;ops&lt;/code&gt;__fmt.tf</code>'* ]] \
+            || fail "$pr_action PR body did not encode the hostile formatting path"
+        [[ "$body" != *'root/nested/@ops</code>__fmt.tf'* ]] \
+            || fail "$pr_action PR body retained the raw hostile formatting path"
+        overlap_count=$(grep -Fo '<code>root/main.tf</code>' \
+            "$FIXTURE_GH_CAPTURE/pr-body" | wc -l | tr -d ' ')
+        [[ "$overlap_count" -eq 2 ]] \
+            || fail "$pr_action PR body did not list the overlapping path once per stage"
+        unset FIXTURE_FORMATTING_PATH RECONCILE_DRY_RUN
+    done
+
+    setup_success_fixture
+    configure_one_stage_success
+    run_verify
+    chmod -R u+w "$FIXTURE_VERIFIED"
+    rm -rf "$FIXTURE_CHECKOUT"
+    "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$FIXTURE_CHECKOUT"
+    setup_gh_capture
+    RECONCILE_DRY_RUN=false run_publish
+    grep -F 'Formatting changes: None' "$FIXTURE_GH_CAPTURE/pr-body" >/dev/null \
+        || fail "one-stage PR body did not render formatting as None"
+    unset RECONCILE_DRY_RUN
+}
+
+test_automation_result_is_a_publication_no_op() {
+    # Production breaks caught: a trusted automation diagnostic is discarded, binds an outcome,
+    # pre-encodes its run URL, or reaches either Git or GitHub during publication.
+    setup_success_fixture
+    configure_preparation_failure automation 'tf-version-bump report' 1
+    run_verify
+    local preparation_digest
+    preparation_digest=$(sha256_file "$FIXTURE_BUNDLE/manifest.json")
+    jq -e --arg preparation_digest "$preparation_digest" '
+        .classification == "automation" and
+        .preparation_manifest_sha256 == $preparation_digest and
+        has("validation_outcome_sha256") == false and
+        .failure == {stage: "tf-version-bump report", root: "root", status: 1} and
+        .run_url == "https://github.example/yesdevnull/reconciliation-test/actions/runs/100"' \
+        "$FIXTURE_VERIFIED/manifest.json" >/dev/null \
+        || fail "automation verification did not retain the diagnostic contract"
+    assert_exact_result_entries "automation verified result" 'manifest.json'
+
+    setup_gh_capture
+    cat >"$FIXTURE_BIN/git" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' called >"${AUTOMATION_GIT_SENTINEL:?}"
+exit 99
+EOF
+    cat >"$FIXTURE_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' called >"${AUTOMATION_GH_SENTINEL:?}"
+exit 99
+EOF
+    chmod 755 "$FIXTURE_BIN/git" "$FIXTURE_BIN/gh"
+    PATH="$FIXTURE_BIN:$PATH" \
+        AUTOMATION_GIT_SENTINEL="$FIXTURE_ROOT/automation-git-called" \
+        AUTOMATION_GH_SENTINEL="$FIXTURE_ROOT/automation-gh-called" \
+        RECONCILE_RUN_ID=100 RECONCILE_RUN_ATTEMPT=1 \
+        RECONCILE_AUTOMATION_POLICY_ID=nonproduction \
+        RECONCILE_CONTROL_OID="$FIXTURE_CONTROL_OID" \
+        RECONCILE_STATE_BRANCH="$FIXTURE_STATE_BRANCH" \
+        RECONCILE_BASE_OID="$FIXTURE_BASE_OID" \
+        RECONCILE_REF_HASH="$(ref_hash)" \
+        RECONCILE_VERIFIED_RESULT_DIR="$FIXTURE_VERIFIED" \
+        "$RECONCILE_SCRIPT" publish
+    [[ ! -e "$FIXTURE_ROOT/automation-git-called" ]] \
+        || fail "automation publication invoked Git"
+    [[ ! -e "$FIXTURE_ROOT/automation-gh-called" ]] \
+        || fail "automation publication invoked GitHub"
+    unset RECONCILE_VALIDATION_OUTCOME_DIR
 }
 
 test_protected_publication_updates_only_an_owned_or_absent_ref() {
@@ -554,11 +1365,18 @@ test_reconciles_marked_pull_request_or_failure_issue_payload() {
     local marker
     marker='<!-- tf-version-bump:nonproduction:'"$(ref_hash)"' -->'
     local expected_pr_body
-    expected_pr_body=$(printf '%s\n\n%s\n\n%s\n%s\n' \
+    expected_pr_body=$(printf '%s\n\n%s\n\n%s\n%s\n%s\n%s\n\n%s\n%s\n\n%s\n%s\n%s\n' \
         "$marker" \
         'Automated Terraform dependency update for <code>state/nonproduction/example</code>.' \
         "Base: <code>$FIXTURE_BASE_OID</code>" \
-        'Policy: <code>nonproduction</code>')
+        'Policy: <code>nonproduction</code>' \
+        'Module blocks updated: <code>1</code>' \
+        'Provider blocks updated: <code>1</code>' \
+        'Dependency and lock-file changes (<code>1</code>):' \
+        '- <code>root/main.tf</code>' \
+        'Formatting changes (<code>2</code>):' \
+        '- <code>root/main.tf</code>' \
+        '- <code>root/nested/child.tf</code>')
     [[ "$(<"$FIXTURE_GH_CAPTURE/pr-body")" == "$expected_pr_body" ]] \
         || fail "success publication used the wrong marked PR body"
     [[ "$(<"$FIXTURE_GH_CAPTURE/closed-issue")" == 42 ]] \
@@ -650,11 +1468,23 @@ test_issue_lookup_searches_the_ref_hash_in_bodies() {
 if [[ $# -eq 0 ]]; then
     test_verifies_successful_candidate_without_credentials
     test_verifies_candidate_with_valid_tab_in_path
+    test_emits_strict_verified_result_variants
+    test_workflow_classifies_verified_results_after_reconciliation
+    test_rejects_zero_status_preparation_failures
+    test_rejects_unexpected_contract_logs
+    test_binds_failure_classifications_to_stages_at_every_boundary
+    test_rejects_post_terraform_mutation
+    test_publication_rejects_ambiguous_verified_results
+    test_publication_rejects_verified_dot_terraform_path
+    test_publication_rejects_zero_status_failure_results
     test_rejects_mismatched_or_corrupt_candidates
     test_verifies_deleting_candidate_reports_a_classified_digest_error
     test_verifies_only_bounded_branch_failures_without_a_patch
     test_publish_failure_requires_dry_run_to_be_set
     test_dry_run_constructs_unsigned_owned_commit_without_external_mutation
+    test_constructs_deterministic_staged_commits
+    test_renders_split_pull_request_change_summary
+    test_automation_result_is_a_publication_no_op
     test_protected_publication_updates_only_an_owned_or_absent_ref
     test_reconciles_marked_pull_request_or_failure_issue_payload
     test_escapes_hostile_branch_values_and_uses_constant_titles
