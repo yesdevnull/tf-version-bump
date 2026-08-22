@@ -231,9 +231,9 @@ Overlapping configured roots remain allowed. Formatting runs once from each supp
 requested; stage file lists contain unique Git paths, so a nested file is reported once even if two
 recursive invocations reached it.
 
-The update and formatting file lists may overlap. An update-list digest identifies the
-intermediate update/init tree, while a formatting-list and final-list digest identifies the final
-formatted tree.
+The update and formatting file lists may overlap. The update patch digest plus its per-file metadata
+bind the intermediate update/init tree. The optional format patch digest, formatting metadata, and
+final per-file metadata bind the final formatted tree.
 
 ## Validation and verification
 
@@ -286,7 +286,10 @@ publication job can maintain their marked issues. A well-formed `automation` pre
 also packaged, but publication treats it as a no-op. Malformed contracts fail closed without a
 verified result, causing that matrix entry to remain red rather than reaching repository mutation.
 Every well-formed matrix entry therefore uploads exactly one verified result, avoiding unsafe
-aggregation through matrix job outputs.
+aggregation through matrix job outputs. After an `automation` result is uploaded, the final
+classification step exits non-zero; publication still runs under its existing `if: always()`
+dependency, consumes the verified no-op disposition, and performs no mutation. The validation job
+and overall workflow therefore remain visibly failed.
 
 A preparation branch failure skips Terraform and reconciliation creates the verified failure result
 directly from the checked manifest and logs. A separate validation-outcome artefact and a second
@@ -329,7 +332,8 @@ identity fields, and binds the source artefacts. A successful result has this lo
 }
 ```
 
-The verified result has these presence rules:
+`preparation_manifest_sha256` is required for every classification and binds the exact preparation
+manifest from which the result was derived. The verified result has these additional presence rules:
 
 | Classification | Outcome binding | Staged metadata and patches | Failure data |
 |----------------|-----------------|-----------------------------|--------------|
@@ -434,8 +438,8 @@ implementation for:
   no commits or pull request.
 - Bounded format failure artefacts, diagnostics, validation-time verification, and marked-issue
   lifecycle.
-- Missing, malformed, wrong-schema, and invalid-count report files producing a non-publishable
-  `automation` diagnostic.
+- Missing, malformed, wrong-schema, and invalid-count report files producing an uploaded
+  non-publishing `automation` disposition while validation and the workflow remain failed.
 - Rejection of nested formatting paths outside roots, paths beneath `.terraform`, symlinks,
   undeclared files, changed modes, invalid UTF-8, and tampered patch/file digests.
 - Applying and verifying the two patches in order once during validation, including intermediate
