@@ -1154,6 +1154,8 @@ test_reusable_workflow_wires_current_attempt_pipeline() {
             (.run | contains("branch-validation")) and
             (.run | contains("automation"))) and
         any(.publish.steps[]; (.run // "") | contains("reconcile-state-branch.sh\" publish")) and
+        any(.publish.steps[]; .name == "Publish verified result" and
+            .env.RECONCILE_TERRAFORM_ROOTS == "${{ inputs.terraform_directories }}") and
         any(.prepare.steps[]; ((.uses // "") | startswith("actions/upload-artifact@")) and
             .with.name == "preparation-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}") and
         any(.publish.steps[]; ((.uses // "") | startswith("actions/download-artifact@")) and
