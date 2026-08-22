@@ -63,6 +63,7 @@ fixture_commit() {
         -c user.name="$author_name" \
         -c user.email="$author_email" \
         commit "$@" -m "$message" >/dev/null
+    "$TEST_GIT" -C "$checkout" verify-commit HEAD >/dev/null 2>&1
 }
 
 # Writes an executable fake `terraform` at $1 that answers `version -json` with the pinned
@@ -1526,7 +1527,7 @@ test_reconciliation_rejects_non_utf8_candidate_path_collision() {
     local verified="$fixture_root/verified"
     local container_checkout="/tmp/tf-version-bump-non-utf8-checkout-$RANDOM"
     local container_candidate="/tmp/tf-version-bump-non-utf8-candidate-$RANDOM"
-    mkdir -p "$bundle" "$outcome"
+    mkdir -p "$bundle/logs" "$outcome/logs"
     docker exec "$PROCESS_CONTAINER_ID" cp -a "$PROCESS_TARGET_CHECKOUT" "$container_checkout"
     docker exec "$PROCESS_CONTAINER_ID" cp -a "$PROCESS_TARGET_CHECKOUT" "$container_candidate"
     docker exec "$PROCESS_CONTAINER_ID" chown -R \
@@ -1542,11 +1543,13 @@ invalid_path+='.tf'
 printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' >"$invalid_path"
 git -C "$CANDIDATE" add -N -- "${invalid_path#"$CANDIDATE/"}"
 git -C "$CANDIDATE" diff --binary --full-index --no-color >"$BUNDLE/update.patch"
+git -C "$CHECKOUT" apply --index --binary "$BUNDLE/update.patch"
 EOF
     chmod 755 "$fixture_script"
     docker exec \
         --user "$(id -u):$(id -g)" \
         --env "CANDIDATE=$container_candidate" \
+        --env "CHECKOUT=$container_checkout" \
         --env "BUNDLE=$bundle" \
         "$PROCESS_CONTAINER_ID" /bin/bash "$fixture_script"
 
@@ -1567,7 +1570,12 @@ EOF
         '{schema_version: 2, run_id: "123456", run_attempt: "2",
           automation_policy_id: "nonproduction", control_oid: $control_oid,
           state_branch: $state_branch, base_oid: $base_oid, ref_hash: $ref_hash,
-          classification: "success", roots: [{path: "root"}],
+          artifact_name: ("preparation-123456-2-nonproduction-" + $ref_hash),
+          classification: "success", terraform_fmt: false,
+          tools: {terraform: {version: "1.15.5"},
+                  tf_version_bump: {version: "v1.0.0-rc.9",
+                                    archive_sha256: "38428a229a77671fd192fd6a18f5d1f9c404b5557124883f04e6a8bec154b1d2"}},
+          config_path: ".github/tf-version-bump/test.yml", roots: [{path: "root"}],
           updates: {module_blocks_updated: 0, provider_blocks_updated: 0,
                     changed_files: [{path: $changed_path, mode: "100644", sha256: $file_digest}],
                     patch_sha256: $patch_digest},
@@ -1592,9 +1600,11 @@ EOF
     local stderr_file="$fixture_root/verify.stderr"
     if docker exec \
         --user "$(id -u):$(id -g)" \
-        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_COUNT=2 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env "GIT_CONFIG_VALUE_0=$container_checkout" \
+        --env GIT_CONFIG_KEY_1=safe.directory \
+        --env "GIT_CONFIG_VALUE_1=$PROCESS_CONTROL_CHECKOUT" \
         --env RECONCILE_RUN_ID=123456 \
         --env RECONCILE_RUN_ATTEMPT=2 \
         --env RECONCILE_AUTOMATION_POLICY_ID=nonproduction \
@@ -1602,6 +1612,7 @@ EOF
         --env "RECONCILE_STATE_BRANCH=$PROCESS_STATE_BRANCH" \
         --env "RECONCILE_BASE_OID=$base_oid" \
         --env "RECONCILE_REF_HASH=$branch_hash" \
+        --env "RECONCILE_CONTROL_CHECKOUT=$PROCESS_CONTROL_CHECKOUT" \
         --env "RECONCILE_PREPARATION_BUNDLE_DIR=$bundle" \
         --env "RECONCILE_VALIDATION_OUTCOME_DIR=$outcome" \
         --env "RECONCILE_TARGET_CHECKOUT=$container_checkout" \
@@ -2672,6 +2683,7 @@ test_processing_no_change_runs_validation_and_skips_publication_mutation() {
         RECONCILE_STATE_BRANCH="$PROCESS_STATE_BRANCH" \
         RECONCILE_BASE_OID="$(processing_base_oid)" \
         RECONCILE_REF_HASH="$(processing_ref_hash)" \
+        RECONCILE_CONTROL_CHECKOUT="$PROCESS_CONTROL_CHECKOUT" \
         RECONCILE_PREPARATION_BUNDLE_DIR="$PROCESS_PREPARATION_BUNDLE_DIR" \
         RECONCILE_VALIDATION_OUTCOME_DIR="$PROCESS_VALIDATION_OUTCOME_DIR" \
         RECONCILE_TARGET_CHECKOUT="$PROCESS_TARGET_CHECKOUT" \
