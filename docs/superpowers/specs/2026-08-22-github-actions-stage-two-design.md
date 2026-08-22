@@ -2,8 +2,9 @@
 
 ## Status
 
-Approved in conversation on 2026-08-22. This design extends the copyable GitHub Actions example
-after `tf-version-bump v1.0.0-rc.9` added machine-readable module and provider update counts.
+Revised following review on 2026-08-22. This design extends the copyable GitHub Actions example
+after `tf-version-bump v1.0.0-rc.9` added machine-readable module and provider update counts. The
+revision folds staged-result verification into validation while retaining isolated publication.
 
 ## Goal
 
@@ -29,32 +30,30 @@ pull request.
   pull-request body.
 - Treat a formatting failure as a bounded branch failure handled by the existing marked-issue
   lifecycle.
-- Preserve the existing preparation, validation, verification, and privileged publication job
-  boundaries.
+- Keep preparation and validation unprivileged, fold staged-result verification into validation,
+  and retain a separate privileged publication job.
 
 ## Non-goals
 
 - Extend the `tf-version-bump` report schema beyond its existing module/provider counts.
 - Report exact Terraform `required_version` update counts.
 - Interpret `.terraform.lock.hcl` changes beyond listing them in the update/init file section.
-- Combine workflow jobs or expose repository write credentials to Terraform, providers, or modules.
+- Expose repository write credentials to Terraform, providers, or modules.
 - Add backward compatibility for artefacts produced by an older control revision. Partial job
   reruns remain unsupported, and every artefact remains bound to the run attempt and control OID.
 - Automatically merge or approve generated pull requests.
 
 ## Job and trust boundaries
 
-The existing four-job flow remains intact:
+After discovery, the workflow uses three processing jobs:
 
 1. **Prepare**, with `contents: read`, runs the released updater and `terraform init -upgrade`,
    optionally formats the resulting candidate, and uploads immutable staged patches and a manifest.
-2. **Validate**, with `contents: read`, applies both patches in order to a fresh exact-base checkout,
-   runs non-upgrade initialisation and `terraform validate`, and uploads a bound outcome.
-3. **Verify**, with `contents: read`, checks preparation and validation identities, patch hashes,
-   stage-specific paths, modes, file digests, and the final candidate state in another fresh
-   exact-base checkout. It does not rerun the updater, Terraform initialisation, formatting, or
-   validation.
-4. **Publish**, with repository write permissions, consumes only the verified result, constructs
+2. **Validate**, with `contents: read`, checks the preparation identity and patch integrity, applies
+   both patches in order to one fresh exact-base checkout, verifies the staged paths and file
+   metadata, runs non-upgrade initialisation and `terraform validate`, confirms that validation did
+   not mutate the candidate, and uploads the verified result.
+3. **Publish**, with repository write permissions, consumes only the verified result, constructs
    the deterministic commit sequence, updates the managed branch under its exact lease, and
    creates or refreshes the marked pull request.
 
@@ -169,7 +168,7 @@ not the counts, controls no-change classification and formatting eligibility. Fa
 contain the existing bounded failure record and logs but no update or format patch. The new bounded
 preparation classification is `branch-format` with failure stage `terraform fmt`.
 
-All three job-produced manifest types move together to schema version 2. A run cannot mix schemas
+All three manifest types move together to schema version 2. A run cannot mix schemas
 because artefact names include the run attempt and immutable control identity, and partial reruns
 are rejected.
 
@@ -196,42 +195,37 @@ The update and formatting file lists may overlap. An update-list digest identifi
 intermediate update/init tree, while a formatting-list and final-list digest identifies the final
 formatted tree.
 
-## Validation
+## Validation and verification
 
-Validation downloads the preparation bundle into a fresh exact-base checkout and validates schema
-version 2 before running Terraform:
+Validation downloads the preparation bundle into one fresh exact-base checkout. In that checkout,
+the job validates schema version 2 and the complete run/control/base/policy identity before running
+Terraform:
 
-1. Verify and apply `update.patch` to the exact base when classification is `success`.
-2. Verify and apply `format.patch` to the update state when the formatting manifest declares a
-   non-empty formatting diff.
-3. Confirm the resulting Git status and final file metadata match `final_changed_files` exactly.
-4. Run the existing per-root non-upgrade initialisation. Use `-lockfile=readonly` when a lock file
+1. Require the correct presence or absence of `update.patch` and `format.patch` for the declared
+   classification and formatting state, then recompute their SHA-256 values.
+2. Validate `update.patch` against its stage-specific path policy and changed-file metadata, then
+   apply it to the exact base when classification is `success`.
+3. Validate `format.patch` against its stage-specific path policy and changed-file metadata, then
+   apply it to the update state when the formatting manifest declares a non-empty formatting diff.
+4. Confirm the resulting Git status plus final paths, modes, and digests match
+   `final_changed_files` exactly.
+5. Run the existing per-root non-upgrade initialisation. Use `-lockfile=readonly` when a lock file
    exists.
-5. Run `terraform validate -no-color` for every root.
-6. Confirm Terraform did not alter the candidate checkout and upload a validation outcome bound to
-   the preparation-manifest SHA-256.
+6. Run `terraform validate -no-color` for every root.
+7. Confirm Terraform did not alter the candidate checkout.
+8. Write the validation outcome, bind it to the preparation-manifest SHA-256, and assemble the
+   verified-result artefact from the already checked patches and staged metadata.
+
+The job uploads the verified result only after every applicable integrity check succeeds and the
+validation outcome has been faithfully recorded. A preparation failure does not run Terraform:
+validation checks the bounded failure manifest and logs, binds a failure outcome to that manifest,
+and packages the verified failure result for publication. A separate validation-outcome artefact
+and a second checkout are unnecessary because the outcome is produced and bound before the
+verified result leaves this job.
 
 Validation failures retain the existing `branch-validation` classification and marked-issue
-lifecycle.
-
-## Verification
-
-Verification receives the preparation bundle and validation outcome in its current credential-free
-job. It must:
-
-- Validate schema version 2 and the complete run/control/base/policy identity.
-- Require the correct presence or absence of `update.patch` and `format.patch` for the declared
-  classification and formatting state.
-- Recompute both patch SHA-256 values.
-- Apply the patches in order to a clean exact-base index/worktree.
-- Validate each patch against its stage-specific path policy and changed-file metadata.
-- Validate the final base-to-candidate paths, modes, and digests against `final_changed_files`.
-- Bind the successful or failed validation outcome to the exact preparation manifest.
-- Copy both patches and the verified staged metadata into the verified-result artefact only after
-  every check succeeds.
-
-Verification validates provenance and integrity of the staged result. It deliberately does not
-repeat the preparation or validation commands.
+lifecycle. The combined job remains credential-free beyond `contents: read` and does not repeat
+preparation commands.
 
 ## Publication and commits
 
@@ -308,10 +302,11 @@ implementation for:
 - Skipping formatting when update/init produces no diff.
 - Recursive formatting of a nested `.tf` file from each configured root.
 - Formatting enabled but producing no format patch.
-- Bounded format failure artefacts, diagnostics, verification, and marked-issue lifecycle.
+- Bounded format failure artefacts, diagnostics, validation-time verification, and marked-issue
+  lifecycle.
 - Rejection of nested formatting paths outside roots, paths beneath `.terraform`, symlinks,
   undeclared files, changed modes, invalid UTF-8, and tampered patch/file digests.
-- Applying the two patches in order during validation and verification.
+- Applying and verifying the two patches in order once during validation.
 - One update commit when formatting is unchanged and two commits when formatting changes files.
 - All four dynamic update/init commit subjects.
 - The fixed `chore: run Terraform fmt` subject.
