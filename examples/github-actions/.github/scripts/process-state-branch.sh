@@ -880,8 +880,8 @@ validate_candidate_roots() {
 }
 
 apply_validation_candidate() {
-    git -C "$VALIDATION_TARGET_CHECKOUT" apply --check --binary "$VALIDATION_UPDATE_PATCH" || processing_status_error "candidate patch does not apply to exact base"
-    git -C "$VALIDATION_TARGET_CHECKOUT" apply --binary "$VALIDATION_UPDATE_PATCH" || processing_status_error "candidate patch could not be applied"
+    git -C "$VALIDATION_TARGET_CHECKOUT" apply --check --index --binary "$VALIDATION_UPDATE_PATCH" || processing_status_error "candidate patch does not apply to exact base"
+    git -C "$VALIDATION_TARGET_CHECKOUT" apply --index --binary "$VALIDATION_UPDATE_PATCH" || processing_status_error "candidate patch could not be applied"
 
     local -a relative_paths=() git_modes=() file_sha256s=()
     local raw_entry relative_path new_mode sha_line
@@ -889,7 +889,7 @@ apply_validation_candidate() {
         read -r _ new_mode _ _ _ <<<"$raw_entry"
         relative_paths+=("$relative_path")
         git_modes+=("$new_mode")
-    done < <(git -C "$VALIDATION_TARGET_CHECKOUT" diff --raw -z --no-renames)
+    done < <(git -C "$VALIDATION_TARGET_CHECKOUT" diff --cached --raw -z --no-renames)
     if [[ ${#relative_paths[@]} -gt 0 ]]; then
         while IFS= read -r sha_line; do
             file_sha256s+=("${sha_line%% *}")
