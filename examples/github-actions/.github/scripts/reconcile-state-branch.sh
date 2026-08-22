@@ -71,7 +71,7 @@ require_common_identity() {
 manifest_matches_identity() {
     local manifest=$1
     jq -e '
-        .schema_version == 1 and
+        .schema_version == 2 and
         .run_id == env.RECONCILE_RUN_ID and
         .run_attempt == env.RECONCILE_RUN_ATTEMPT and
         .automation_policy_id == env.RECONCILE_AUTOMATION_POLICY_ID and
@@ -113,7 +113,7 @@ verify_declared_candidate() {
     while IFS= read -r relative_path; do
         path_is_declared_direct_file "$manifest" "$relative_path" \
             || reconcile_error "candidate contains an undeclared or unsafe path"
-    done < <(jq -er '.changed_files[].path' "$manifest")
+    done < <(jq -er '.updates.changed_files[].path' "$manifest")
 
     git -C "$checkout" apply --check --index --binary "$patch" >/dev/null \
         || reconcile_error "candidate patch does not apply to exact base"
@@ -138,7 +138,7 @@ verify_declared_candidate() {
 
     local actual_paths_json declared_paths_json
     actual_paths_json=$(jq -cn '$ARGS.positional | sort' --args -- "${actual_paths[@]}")
-    declared_paths_json=$(jq -c '[.changed_files[].path] | sort' "$manifest")
+    declared_paths_json=$(jq -c '[.updates.changed_files[].path] | sort' "$manifest")
     [[ "$actual_paths_json" == "$declared_paths_json" ]] \
         || reconcile_error "candidate patch paths do not match the manifest"
 
@@ -162,7 +162,8 @@ verify_declared_candidate() {
         && IFS= read -r -d '' declared_sha256; do
         expected_mode_by_path["$declared_path"]=$declared_mode
         expected_sha256_by_path["$declared_path"]=$declared_sha256
-    done < <(jq -j '([0] | implode) as $nul | .changed_files[] | (.path, $nul, .mode, $nul, .sha256, $nul)' "$manifest")
+    done < <(jq -j '([0] | implode) as $nul | .updates.changed_files[] |
+        (.path, $nul, .mode, $nul, .sha256, $nul)' "$manifest")
 
     local index expected_mode expected_digest
     for index in "${!actual_paths[@]}"; do
@@ -187,6 +188,16 @@ bounded_failure_json() {
 write_verified_result() {
     local classification=$1 preparation_digest=$2 outcome_digest=${3-} patch_digest=${4-}
     local failure_json=${5-null} run_url=${6-}
+    [[ -n "$preparation_digest" ]] \
+        || reconcile_error "verified result requires a preparation manifest digest"
+    if [[ "$classification" == "success" || "$classification" == "no-change" \
+        || "$classification" == "branch-validation" ]]; then
+        [[ -n "$outcome_digest" ]] \
+            || reconcile_error "verified result requires a validation outcome digest"
+    else
+        [[ -z "$outcome_digest" ]] \
+            || reconcile_error "preparation failure must not bind a validation outcome"
+    fi
     local destination=$RECONCILE_VERIFIED_RESULT_DIR
     [[ ! -e "$destination" && ! -L "$destination" ]] \
         || reconcile_error "verified result destination must be absent"
@@ -211,20 +222,25 @@ write_verified_result() {
         --arg outcome_digest "$outcome_digest" \
         --arg patch_digest "$patch_digest" \
         --argjson failure "$failure_json" \
-        --arg run_url "$run_url" '
-        {schema_version: 1, run_id: $run_id, run_attempt: $run_attempt,
+        --arg run_url "$run_url" \
+        --slurpfile preparation "$RECONCILE_PREPARATION_BUNDLE_DIR/manifest.json" '
+        {schema_version: 2, run_id: $run_id, run_attempt: $run_attempt,
          automation_policy_id: $policy, control_oid: $control_oid,
          state_branch: $branch, base_oid: $base_oid, ref_hash: $ref_hash,
          classification: $classification,
          preparation_manifest_sha256: $preparation_digest}
         + if $outcome_digest == "" then {} else
             {validation_outcome_sha256: $outcome_digest} end
-        + if $patch_digest == "" then {} else {patch_sha256: $patch_digest} end
+        + if ($preparation[0] | has("updates")) then
+            {updates: $preparation[0].updates,
+             formatting: $preparation[0].formatting,
+             final_changed_files: $preparation[0].final_changed_files}
+          else {} end
         + if $failure == null then {} else
             {failure: $failure, run_url: $run_url} end
         ' >"$stage/manifest.json"
     if [[ -n "$patch_digest" ]]; then
-        cp -- "$RECONCILE_PREPARATION_BUNDLE_DIR/candidate.patch" "$stage/candidate.patch"
+        cp -- "$RECONCILE_PREPARATION_BUNDLE_DIR/update.patch" "$stage/update.patch"
     fi
     chmod 444 "$stage"/*
     mv -- "$stage" "$destination"
@@ -254,6 +270,9 @@ verify_result() {
         [[ "$(git -C "$RECONCILE_TARGET_CHECKOUT" rev-parse HEAD 2>/dev/null)" \
             == "$RECONCILE_BASE_OID" ]] \
             || reconcile_error "target checkout HEAD does not match base OID"
+        [[ ! -e "$RECONCILE_PREPARATION_BUNDLE_DIR/update.patch" \
+            && ! -L "$RECONCILE_PREPARATION_BUNDLE_DIR/update.patch" ]] \
+            || reconcile_error "preparation failure must not contain an update patch"
         : "${RECONCILE_RUN_URL:?RECONCILE_RUN_URL must be set for failures}"
         local preparation_failure
         preparation_failure=$(bounded_failure_json "$preparation_manifest")
@@ -264,21 +283,39 @@ verify_result() {
     [[ "$preparation_classification" == "success" \
         || "$preparation_classification" == "no-change" ]] \
         || reconcile_error "preparation classification is not supported"
+    jq -e '
+        .formatting == {ran: false, changed_files: []} and
+        .final_changed_files == .updates.changed_files and
+        (.updates.module_blocks_updated | type == "number" and . >= 0 and floor == .) and
+        (.updates.provider_blocks_updated | type == "number" and . >= 0 and floor == .) and
+        if .classification == "success" then
+            (.updates | keys) == ["changed_files", "module_blocks_updated", "patch_sha256",
+                                 "provider_blocks_updated"] and
+            (.updates.changed_files | length > 0) and
+            (.updates.patch_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+        else
+            (.updates | keys) == ["changed_files", "module_blocks_updated",
+                                 "provider_blocks_updated"] and
+            .updates.changed_files == [] and .final_changed_files == []
+        end
+    ' "$preparation_manifest" >/dev/null \
+        || reconcile_error "preparation update contract is invalid"
 
     local patch="" patch_digest="" expected_patch_digest outcome outcome_digest outcome_classification
     if [[ "$preparation_classification" == "success" ]]; then
-        patch="$RECONCILE_PREPARATION_BUNDLE_DIR/candidate.patch"
+        patch="$RECONCILE_PREPARATION_BUNDLE_DIR/update.patch"
         [[ -f "$patch" && ! -L "$patch" ]] \
             || reconcile_error "candidate patch must be a regular file"
         patch_digest=$(sha256_file "$patch")
-        expected_patch_digest=$(jq -er '.patch_sha256' "$preparation_manifest")
+        expected_patch_digest=$(jq -er '.updates.patch_sha256' "$preparation_manifest")
         [[ "$patch_digest" == "$expected_patch_digest" ]] \
             || reconcile_error "candidate patch digest does not match the manifest"
     else
-        [[ ! -e "$RECONCILE_PREPARATION_BUNDLE_DIR/candidate.patch" \
-            && ! -L "$RECONCILE_PREPARATION_BUNDLE_DIR/candidate.patch" ]] \
+        [[ ! -e "$RECONCILE_PREPARATION_BUNDLE_DIR/update.patch" \
+            && ! -L "$RECONCILE_PREPARATION_BUNDLE_DIR/update.patch" ]] \
             || reconcile_error "no-change preparation must not contain a patch"
-        jq -e '.changed_files == [] and (has("patch_sha256") | not)' \
+        jq -e '.updates.changed_files == [] and
+            (.updates | has("patch_sha256") | not) and .final_changed_files == []' \
             "$preparation_manifest" >/dev/null \
             || reconcile_error "no-change preparation manifest is invalid"
     fi
@@ -293,7 +330,10 @@ verify_result() {
         --arg expected_classification "$preparation_classification" '
         (.classification == $expected_classification or
          .classification == "branch-validation") and
-        .candidate_manifest_sha256 == $preparation_digest
+        .candidate_manifest_sha256 == $preparation_digest and
+        (.command_status | type == "number" and . >= 0 and floor == .) and
+        if .classification == "branch-validation" then .command_status > 0
+        else .command_status == 0 end
     ' "$outcome" >/dev/null \
         || reconcile_error "validation outcome does not match the candidate"
     outcome_digest=$(sha256_file "$outcome")
@@ -334,11 +374,11 @@ construct_update_commit() {
     [[ -z "$(git -C "$checkout" status --porcelain=v1 --untracked-files=all)" ]] \
         || reconcile_error "publication checkout must be clean"
 
-    local patch="$RECONCILE_VERIFIED_RESULT_DIR/candidate.patch"
+    local patch="$RECONCILE_VERIFIED_RESULT_DIR/update.patch"
     local verified_manifest="$RECONCILE_VERIFIED_RESULT_DIR/manifest.json"
     [[ -f "$patch" && ! -L "$patch" ]] \
         || reconcile_error "verified candidate patch must be a regular file"
-    [[ "$(sha256_file "$patch")" == "$(jq -er '.patch_sha256' "$verified_manifest")" ]] \
+    [[ "$(sha256_file "$patch")" == "$(jq -er '.updates.patch_sha256' "$verified_manifest")" ]] \
         || reconcile_error "verified candidate patch digest is invalid"
     git -C "$checkout" apply --check --index --binary "$patch" >/dev/null \
         || reconcile_error "verified candidate patch does not apply to exact base"

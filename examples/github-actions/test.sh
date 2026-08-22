@@ -255,9 +255,9 @@ create_validation_candidate_bundle() {
 
     mkdir -m 700 "$PROCESS_PREPARATION_BUNDLE_DIR"
     "$TEST_GIT" -C "$candidate_checkout" diff --binary --full-index --no-color \
-        >"$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch"
+        >"$PROCESS_PREPARATION_BUNDLE_DIR/update.patch"
     local patch_sha256
-    patch_sha256=$(sha256_file "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch")
+    patch_sha256=$(sha256_file "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch")
     local main_sha256
     main_sha256=$(sha256_file "$candidate_checkout/root/main.tf")
     local ref_hash
@@ -274,7 +274,7 @@ create_validation_candidate_bundle() {
         --arg main_sha256 "$main_sha256" \
         --arg tf_version_bump_version "$TF_VERSION_BUMP_VERSION" \
         --arg tf_version_bump_archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" \
-        '{schema_version: 1,
+        '{schema_version: 2,
           run_id: $run_id,
           run_attempt: $run_attempt,
           automation_policy_id: $policy,
@@ -291,13 +291,20 @@ create_validation_candidate_bundle() {
             terraform: {version: "1.15.5"}
           },
           roots: [{path: "root"}],
-          changed_files: [{path: "root/main.tf", mode: "100644", sha256: $main_sha256}],
           artifact_name: ("preparation-123456-2-nonproduction-" + $ref_hash),
-          patch_sha256: $patch_sha256,
-          classification: "success"}' \
+          classification: "success",
+          terraform_fmt: false,
+          updates: {
+            module_blocks_updated: 0,
+            provider_blocks_updated: 0,
+            changed_files: [{path: "root/main.tf", mode: "100644", sha256: $main_sha256}],
+            patch_sha256: $patch_sha256
+          },
+          formatting: {ran: false, changed_files: []},
+          final_changed_files: [{path: "root/main.tf", mode: "100644", sha256: $main_sha256}]}' \
         >"$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
     chmod 444 \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch" \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" \
         "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
 
     local validation_checkout="$PROCESS_TMP_ROOT/validation"
@@ -396,7 +403,7 @@ prepopulate_verified_processing_release_cache() {
     local actual_sha256
     actual_sha256=$(sha256_file "$verified_archive")
     [[ "$actual_sha256" == "$TF_VERSION_BUMP_ARCHIVE_SHA256" ]] \
-        || fail "independently downloaded rc.8 fixture archive failed checksum verification"
+        || fail "independently downloaded rc.9 fixture archive failed checksum verification"
 
     local cache_directory="$PROCESS_RUNNER_TEMP/tf-version-bump-release-cache"
     local cached_archive="$cache_directory/$TF_VERSION_BUMP_ARCHIVE_SHA256.tar.gz"
@@ -405,6 +412,44 @@ prepopulate_verified_processing_release_cache() {
     actual_sha256=$(sha256_file "$cached_archive")
     [[ "$actual_sha256" == "$TF_VERSION_BUMP_ARCHIVE_SHA256" ]] \
         || fail "trusted processing fixture cache failed checksum verification"
+}
+
+write_controlled_update_report_archive() {
+    local report_payload=$1
+    local fixture_root="$PROCESS_RUNNER_TEMP/controlled-updater"
+    local tool_directory="$fixture_root/tool"
+    local archive="$fixture_root/tf-version-bump.tar.gz"
+    mkdir -p "$tool_directory"
+    cat >"$tool_directory/tf-version-bump" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "-version" ]]; then
+    printf '%s\n' 'tf-version-bump 1.0.0-test-report'
+    exit 0
+fi
+
+report_file=""
+while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "-report-file" ]]; then
+        report_file=$2
+        break
+    fi
+    shift
+done
+[[ -n "$report_file" ]] || exit 64
+[[ "$(<"${PROCESS_TEST_CALL_LOG:?}")" == "__MISSING__" ]] \
+    || cp -- "$PROCESS_TEST_CALL_LOG" "$report_file"
+EOF
+    chmod 755 "$tool_directory/tf-version-bump"
+    printf '%s' "$report_payload" >"$PROCESS_TMP_ROOT/update-report-payload"
+    PROCESS_TEST_CALL_LOG="$PROCESS_TMP_ROOT/update-report-payload"
+    tar -czf "$archive" -C "$tool_directory" tf-version-bump
+    PROCESS_TF_VERSION_BUMP_VERSION="v1.0.0-test-report"
+    PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256=$(sha256_file "$archive")
+    local cache_directory="$PROCESS_RUNNER_TEMP/tf-version-bump-release-cache"
+    mkdir -p "$cache_directory"
+    cp -- "$archive" "$cache_directory/$PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256.tar.gz"
 }
 
 # Runs $4.. (redirected to $2/$3), asserts it succeeded, and asserts it emitted nothing on
@@ -1314,7 +1359,7 @@ invalid_path+=$'\377'
 invalid_path+='.tf'
 printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' >"$invalid_path"
 git -C "$CANDIDATE" add -N -- "${invalid_path#"$CANDIDATE/"}"
-git -C "$CANDIDATE" diff --binary --full-index --no-color >"$BUNDLE/candidate.patch"
+git -C "$CANDIDATE" diff --binary --full-index --no-color >"$BUNDLE/update.patch"
 EOF
     chmod 755 "$fixture_script"
     docker exec \
@@ -1327,7 +1372,7 @@ EOF
     base_oid=$(processing_base_oid)
     control_oid=$(processing_control_oid)
     branch_hash=$(processing_ref_hash)
-    patch_digest=$(sha256_file "$bundle/candidate.patch")
+    patch_digest=$(sha256_file "$bundle/update.patch")
     file_digest=$(sha256_file "$PROCESS_TARGET_CHECKOUT/$declared_path")
     jq -n \
         --arg control_oid "$control_oid" \
@@ -1337,12 +1382,16 @@ EOF
         --arg changed_path "$declared_path" \
         --arg patch_digest "$patch_digest" \
         --arg file_digest "$file_digest" \
-        '{schema_version: 1, run_id: "123456", run_attempt: "2",
+        '{schema_version: 2, run_id: "123456", run_attempt: "2",
           automation_policy_id: "nonproduction", control_oid: $control_oid,
           state_branch: $state_branch, base_oid: $base_oid, ref_hash: $ref_hash,
           classification: "success", roots: [{path: "root"}],
-          changed_files: [{path: $changed_path, mode: "100644", sha256: $file_digest}],
-          patch_sha256: $patch_digest}' >"$bundle/manifest.json"
+          updates: {module_blocks_updated: 0, provider_blocks_updated: 0,
+                    changed_files: [{path: $changed_path, mode: "100644", sha256: $file_digest}],
+                    patch_sha256: $patch_digest},
+          formatting: {ran: false, changed_files: []},
+          final_changed_files: [{path: $changed_path, mode: "100644", sha256: $file_digest}]}' \
+        >"$bundle/manifest.json"
     manifest_digest=$(sha256_file "$bundle/manifest.json")
     jq -n \
         --arg control_oid "$control_oid" \
@@ -1350,10 +1399,11 @@ EOF
         --arg ref_hash "$branch_hash" \
         --arg state_branch "$PROCESS_STATE_BRANCH" \
         --arg manifest_digest "$manifest_digest" \
-        '{schema_version: 1, run_id: "123456", run_attempt: "2",
+        '{schema_version: 2, run_id: "123456", run_attempt: "2",
           automation_policy_id: "nonproduction", control_oid: $control_oid,
           state_branch: $state_branch, base_oid: $base_oid, ref_hash: $ref_hash,
-          classification: "success", candidate_manifest_sha256: $manifest_digest}' \
+          classification: "success", command_status: 0,
+          candidate_manifest_sha256: $manifest_digest}' \
         >"$outcome/manifest.json"
 
     local stdout_file="$fixture_root/verify.stdout"
@@ -1511,6 +1561,104 @@ test_processing_prepares_with_released_cli_and_pinned_terraform() {
         || fail "released CLI did not apply the reviewed Terraform version update"
 }
 
+test_processing_aggregates_released_cli_reports() {
+    # Production break caught: preparation drops or mis-aggregates per-root block counts, or uses
+    # a controlled executable instead of the published updater for the valid report contract.
+    setup_processing_workspace
+    cp -- "$NONPRODUCTION_CONFIG" \
+        "$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
+    mkdir "$PROCESS_TARGET_CHECKOUT/second"
+    local terraform_root
+    for terraform_root in root second; do
+        cat >"$PROCESS_TARGET_CHECKOUT/$terraform_root/main.tf" <<'EOF'
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "4.0.0"
+}
+EOF
+    done
+    "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- \
+        ".github/tf-version-bump/test.yml"
+    fixture_commit "$PROCESS_CONTROL_CHECKOUT" "Processing Test" \
+        "processing-test@example.invalid" "test: configure report aggregation"
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- \
+        "root/main.tf" "second/main.tf"
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
+        "processing-test@example.invalid" "test: add report aggregation roots"
+
+    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
+    mkdir "$fixture_bin"
+    local stub_body
+    stub_body=$(cat <<'EOF'
+root=${1#-chdir=}
+printf '%s\n' '# controlled lock fixture' >"$root/.terraform.lock.hcl"
+printf '%s\n' 'Terraform has been successfully initialized!'
+EOF
+    )
+    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
+    PROCESS_PATH_PREFIX=$fixture_bin
+    PROCESS_TERRAFORM_ROOTS=$'root\nsecond'
+    prepopulate_verified_processing_release_cache
+
+    local stdout_file="$PROCESS_TMP_ROOT/aggregation.stdout"
+    local stderr_file="$PROCESS_TMP_ROOT/aggregation.stderr"
+    assert_silent_success "released multi-root report aggregation" \
+        "$stdout_file" "$stderr_file" run_processing_prepare
+    jq -e '
+      .schema_version == 2 and
+      .classification == "success" and
+      .updates.module_blocks_updated == 2 and
+      .updates.provider_blocks_updated == 2 and
+      (.updates.changed_files | length) >= 2 and
+      .formatting == {ran: false, changed_files: []} and
+      .final_changed_files == .updates.changed_files
+    ' "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null
+    [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]]
+    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch" ]]
+}
+
+test_processing_rejects_invalid_update_reports_as_automation() {
+    # Production break caught: preparation accepts absent, malformed, non-v1, non-integral, or
+    # extended updater reports and exposes their partial working-tree changes for publication.
+    local row report_payload
+    while IFS=$'\t' read -r row report_payload; do
+        setup_processing_workspace
+        write_controlled_update_report_archive "$report_payload"
+
+        local stdout_file="$PROCESS_TMP_ROOT/$row.stdout"
+        local stderr_file="$PROCESS_TMP_ROOT/$row.stderr"
+        if run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
+            fail "$row update report succeeded"
+        fi
+        [[ ! -s "$stdout_file" ]] \
+            || fail "$row update report emitted unexpected stdout"
+        jq -e '
+          .schema_version == 2 and
+          .classification == "automation" and
+          .failure.stage == "tf-version-bump report" and
+          has("updates") == false
+        ' "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null
+        [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]]
+        [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch" ]]
+    done <<'EOF'
+missing	__MISSING__
+malformed	not json
+schema-2	{"schema_version":2,"module_blocks_updated":0,"provider_blocks_updated":0}
+negative-count	{"schema_version":1,"module_blocks_updated":-1,"provider_blocks_updated":0}
+fractional-count	{"schema_version":1,"module_blocks_updated":0,"provider_blocks_updated":1.5}
+extra-key	{"schema_version":1,"module_blocks_updated":0,"provider_blocks_updated":0,"extra":true}
+EOF
+}
+
 test_processing_rejects_release_archive_before_extraction_on_checksum_mismatch() {
     # Production break caught: an archive whose bytes do not match the recorded release digest is
     # extracted or executed before the mismatch is rejected.
@@ -1617,7 +1765,7 @@ test_processing_rejects_ignored_new_provider_lock() {
         "ignored newly required provider lock"
     [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" ]] \
         || fail "ignored required lock did not preserve an automation failure manifest"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch" ]] \
+    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]] \
         || fail "ignored required lock exposed a publishable patch"
     jq -e \
         '.classification == "automation" and .failure.root == "root"' \
@@ -1681,7 +1829,7 @@ EOF
         || fail "non-returning init exceeded the one absolute preparation deadline plus its kill-after grace: ${elapsed}s (ceiling ${elapsed_ceiling}s)"
     [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" ]] \
         || fail "init timeout did not preserve an uploadable failure manifest"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch" ]] \
+    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]] \
         || fail "init timeout exposed a publishable candidate patch"
     jq -e \
         '.classification == "branch-init" and .failure.root == "second"' \
@@ -1723,7 +1871,7 @@ EOF
         "processing status error: terraform init timed out for Terraform root root" \
         "process-tree init timeout"
     [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" \
-        && ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch" ]] \
+        && ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]] \
         || fail "process-tree timeout did not preserve a non-publishable failure bundle"
     sleep 4
     [[ ! -e "$PROCESS_TEST_CALL_LOG.sentinel" ]] \
@@ -1731,7 +1879,7 @@ EOF
 }
 
 # Shared by test_processing_aggregate_update_failure_has_no_publishable_patch and
-# test_processing_failure_manifest_binds_candidate_lineage: a workspace where rc.8's own
+# test_processing_failure_manifest_binds_candidate_lineage: a workspace where rc.9's own
 # aggregate non-zero status (after it has already changed a valid sibling file) fails prepare.
 create_aggregate_update_failure_fixture() {
     setup_processing_workspace
@@ -1745,7 +1893,7 @@ create_aggregate_update_failure_fixture() {
 }
 
 test_processing_aggregate_update_failure_has_no_publishable_patch() {
-    # Production break caught: rc.8's aggregate non-zero status is ignored after it changes a
+    # Production break caught: rc.9's aggregate non-zero status is ignored after it changes a
     # valid sibling file, allowing a partial source update to become a publishable candidate.
     create_aggregate_update_failure_fixture
     grep -F 'required_version = ">= 1.15.0"' \
@@ -1753,7 +1901,7 @@ test_processing_aggregate_update_failure_has_no_publishable_patch() {
         || fail "aggregate failure fixture did not prove a later valid file was updated"
     [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" ]] \
         || fail "aggregate update failure did not preserve its failure manifest"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch" ]] \
+    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]] \
         || fail "aggregate update failure exposed a publishable candidate patch"
     jq -e \
         '.classification == "branch-update" and .failure.root == "root"' \
@@ -1775,7 +1923,7 @@ test_processing_failure_manifest_binds_candidate_lineage() {
         --arg control_oid "$expected_control_oid" \
         --arg base_oid "$expected_base_oid" \
         --arg ref_hash "$expected_ref_hash" \
-        '.schema_version == 1 and
+        '.schema_version == 2 and
          .run_id == "123456" and .run_attempt == "2" and
          .automation_policy_id == "nonproduction" and
          .control_oid == $control_oid and
@@ -1869,7 +2017,7 @@ test_processing_success_bundle_has_immutable_binary_patch_and_artifact_key() {
     # Production break caught: the candidate has no replayable binary patch, its recorded digest
     # does not bind the bytes, or two run attempts/policies/full refs can collide on one artefact.
     ensure_successful_preparation_bundle
-    local patch_file="$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch"
+    local patch_file="$PROCESS_PREPARATION_BUNDLE_DIR/update.patch"
     [[ -f "$patch_file" && ! -L "$patch_file" ]] \
         || fail "successful preparation did not create a regular binary patch"
     local permissions
@@ -1884,7 +2032,7 @@ test_processing_success_bundle_has_immutable_binary_patch_and_artifact_key() {
         --arg patch_sha256 "$patch_sha256" \
         --arg ref_hash "$expected_ref_hash" \
         '.artifact_name == ("preparation-123456-2-nonproduction-" + $ref_hash) and
-         .patch_sha256 == $patch_sha256' \
+         .updates.patch_sha256 == $patch_sha256' \
         "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
         || fail "manifest did not bind the artifact key and exact patch bytes"
 
@@ -1903,11 +2051,11 @@ test_processing_success_manifest_records_changed_paths_modes_and_hashes() {
     ensure_successful_preparation_bundle
     local manifest="$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
     jq -e \
-        '[.changed_files[].path] == [
+        '[.updates.changed_files[].path] == [
           "provider-free/main.tf",
           "root/.terraform.lock.hcl",
           "root/main.tf"
-        ] and all(.changed_files[]; .mode == "100644")' \
+        ] and all(.updates.changed_files[]; .mode == "100644")' \
         "$manifest" >/dev/null \
         || fail "manifest did not record the exact sorted changed paths and Git modes"
 
@@ -1921,7 +2069,7 @@ test_processing_success_manifest_records_changed_paths_modes_and_hashes() {
         expected_sha256=$(sha256_file "$PROCESS_TARGET_CHECKOUT/$relative_path")
         recorded_sha256=$(jq -er \
             --arg path "$relative_path" \
-            '.changed_files[] | select(.path == $path) | .sha256' \
+            '.updates.changed_files[] | select(.path == $path) | .sha256' \
             "$manifest")
         [[ "$recorded_sha256" == "$expected_sha256" ]] \
             || fail "manifest recorded the wrong SHA-256 for $relative_path"
@@ -1948,7 +2096,7 @@ test_processing_success_manifest_records_correct_mode_for_glob_metacharacter_pat
         fail "glob-metacharacter preparation failed: $(<"$stderr_file")"
     fi
     jq -e --arg path "root/a[5].tf" \
-        '.changed_files[] | select(.path == $path) | .mode == "100644"' \
+        '.updates.changed_files[] | select(.path == $path) | .mode == "100644"' \
         "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
         || fail "manifest recorded the wrong mode for a glob-metacharacter changed path"
 }
@@ -1963,11 +2111,12 @@ test_processing_no_change_runs_validation_and_skips_publication_mutation() {
     fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: create unchanged provider-free root"
 
     run_processing_prepare
-    jq -e '.classification == "no-change" and .changed_files == [] and
-        has("patch_sha256") == false' \
+    jq -e '.classification == "no-change" and .updates.changed_files == [] and
+        (.updates | has("patch_sha256") | not) and
+        .formatting == {ran: false, changed_files: []} and .final_changed_files == []' \
         "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
         || fail "unchanged preparation did not produce a patch-free no-change manifest"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch" ]] \
+    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]] \
         || fail "unchanged preparation emitted a candidate patch"
 
     run_processing_validate
@@ -1988,7 +2137,8 @@ test_processing_no_change_runs_validation_and_skips_publication_mutation() {
         RECONCILE_TARGET_CHECKOUT="$PROCESS_TARGET_CHECKOUT" \
         RECONCILE_VERIFIED_RESULT_DIR="$verified" \
         "$RECONCILE_SCRIPT" verify
-    jq -e '.classification == "no-change" and has("patch_sha256") == false' \
+    jq -e '.classification == "no-change" and
+        (.updates | has("patch_sha256") | not)' \
         "$verified/manifest.json" >/dev/null \
         || fail "verification did not bind the no-change result"
 
@@ -2047,7 +2197,7 @@ test_processing_validation_runs_provider_root() {
     configure_validation_provider_base
     create_validation_candidate_bundle
     local candidate_patch_sha256
-    candidate_patch_sha256=$(sha256sum "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch")
+    candidate_patch_sha256=$(sha256sum "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch")
     local candidate_manifest_sha256
     candidate_manifest_sha256=$(sha256sum "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json")
     local lock_sha256
@@ -2067,7 +2217,7 @@ test_processing_validation_runs_provider_root() {
         '.classification == "success" and .command_status == 0 and
          has("semantic_validation_authenticated") == false' "$outcome" >/dev/null \
         || fail "direct validation retained an unused authentication field"
-    [[ "$(sha256sum "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch")" == "$candidate_patch_sha256" \
+    [[ "$(sha256sum "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch")" == "$candidate_patch_sha256" \
         && "$(sha256sum "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json")" == "$candidate_manifest_sha256" ]] \
         || fail "provider execution modified the immutable candidate bundle"
     [[ "$(sha256sum "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl")" == "$lock_sha256" ]] \
@@ -2211,6 +2361,8 @@ test_processing_preparation() {
     test_processing_rejects_mismatched_target_head_before_target_write
     test_processing_rejects_mismatched_ref_hash_before_target_write
     test_processing_prepares_with_released_cli_and_pinned_terraform
+    test_processing_aggregates_released_cli_reports
+    test_processing_rejects_invalid_update_reports_as_automation
     test_processing_rejects_release_archive_before_extraction_on_checksum_mismatch
     test_processing_verifies_exact_terraform_version_before_target_writes
     test_processing_rejects_expired_deadline_before_workspace_setup
