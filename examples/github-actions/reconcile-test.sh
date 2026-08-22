@@ -790,77 +790,87 @@ test_publication_rejects_ambiguous_verified_results() {
     fi
 }
 
-test_publication_rejects_verified_dot_terraform_path() {
-    # Production breaks caught: publication materialises a digest-consistent verified update or
-    # formatting patch beneath .terraform, or creates the first commit before rejecting format.
-    local stage
-    for stage in updates formatting; do
-        prepare_publication_fixture
-        local candidate="$FIXTURE_ROOT/dot-terraform-$stage-candidate"
-        "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$candidate"
-        "$TEST_GIT" -C "$candidate" apply --index --binary "$FIXTURE_VERIFIED/update.patch"
-        local update_tree
-        update_tree=$("$TEST_GIT" -C "$candidate" write-tree)
-        if [[ "$stage" == "formatting" ]]; then
-            "$TEST_GIT" -C "$candidate" apply --index --binary \
-                "$FIXTURE_VERIFIED/format.patch"
-        fi
-        mkdir -p "$candidate/root/.terraform"
-        printf '%s\n' 'locals { unsafe = true }' >"$candidate/root/.terraform/unsafe.tf"
-        "$TEST_GIT" -C "$candidate" add -- "root/.terraform/unsafe.tf"
+test_publication_rejects_verified_unsafe_path() {
+    # Production breaks caught: publication materialises a digest-consistent path outside the
+    # configured roots or beneath .terraform, or creates the first commit before rejecting format.
+    local unsafe_path case_name stage
+    while IFS='|' read -r unsafe_path case_name; do
+        for stage in updates formatting; do
+            prepare_publication_fixture
+            local candidate="$FIXTURE_ROOT/$case_name-$stage-candidate"
+            "$TEST_GIT" clone --quiet "$FIXTURE_SOURCE" "$candidate"
+            "$TEST_GIT" -C "$candidate" apply --index --binary "$FIXTURE_VERIFIED/update.patch"
+            local update_tree
+            update_tree=$("$TEST_GIT" -C "$candidate" write-tree)
+            if [[ "$stage" == "formatting" ]]; then
+                "$TEST_GIT" -C "$candidate" apply --index --binary \
+                    "$FIXTURE_VERIFIED/format.patch"
+            fi
+            mkdir -p "$candidate/${unsafe_path%/*}"
+            printf '%s\n' 'locals { unsafe = true }' >"$candidate/$unsafe_path"
+            "$TEST_GIT" -C "$candidate" add -- "$unsafe_path"
 
-        local patch_digest unsafe_digest
-        unsafe_digest=$(sha256_file "$candidate/root/.terraform/unsafe.tf")
-        if [[ "$stage" == "updates" ]]; then
-            "$TEST_GIT" -C "$candidate" diff --cached --binary --full-index --no-color \
-                >"$FIXTURE_VERIFIED/update.patch"
-            patch_digest=$(sha256_file "$FIXTURE_VERIFIED/update.patch")
-            jq --arg patch_digest "$patch_digest" --arg unsafe_digest "$unsafe_digest" '
-                .updates.patch_sha256 = $patch_digest |
-                .updates.changed_files += [
-                    {path: "root/.terraform/unsafe.tf", mode: "100644", sha256: $unsafe_digest}
-                ] |
-                .updates.changed_files |= sort_by(.path) |
-                .final_changed_files += [
-                    {path: "root/.terraform/unsafe.tf", mode: "100644", sha256: $unsafe_digest}
-                ] |
-                .final_changed_files |= sort_by(.path)
-            ' "$FIXTURE_VERIFIED/manifest.json" >"$FIXTURE_ROOT/dot-terraform-manifest.json"
-        else
-            local final_tree
-            final_tree=$("$TEST_GIT" -C "$candidate" write-tree)
-            "$TEST_GIT" -C "$candidate" diff --binary --full-index --no-color \
-                "$update_tree" "$final_tree" >"$FIXTURE_VERIFIED/format.patch"
-            patch_digest=$(sha256_file "$FIXTURE_VERIFIED/format.patch")
-            jq --arg patch_digest "$patch_digest" --arg unsafe_digest "$unsafe_digest" '
-                .formatting.patch_sha256 = $patch_digest |
-                .formatting.changed_files += [
-                    {path: "root/.terraform/unsafe.tf", mode: "100644", sha256: $unsafe_digest}
-                ] |
-                .formatting.changed_files |= sort_by(.path) |
-                .final_changed_files += [
-                    {path: "root/.terraform/unsafe.tf", mode: "100644", sha256: $unsafe_digest}
-                ] |
-                .final_changed_files |= sort_by(.path)
-            ' "$FIXTURE_VERIFIED/manifest.json" >"$FIXTURE_ROOT/dot-terraform-manifest.json"
-        fi
-        mv "$FIXTURE_ROOT/dot-terraform-manifest.json" "$FIXTURE_VERIFIED/manifest.json"
+            local patch_digest unsafe_digest
+            unsafe_digest=$(sha256_file "$candidate/$unsafe_path")
+            if [[ "$stage" == "updates" ]]; then
+                "$TEST_GIT" -C "$candidate" diff --cached --binary --full-index --no-color \
+                    >"$FIXTURE_VERIFIED/update.patch"
+                patch_digest=$(sha256_file "$FIXTURE_VERIFIED/update.patch")
+                jq --arg patch_digest "$patch_digest" --arg unsafe_digest "$unsafe_digest" \
+                    --arg unsafe_path "$unsafe_path" '
+                    .updates.patch_sha256 = $patch_digest |
+                    .updates.changed_files += [
+                        {path: $unsafe_path, mode: "100644", sha256: $unsafe_digest}
+                    ] |
+                    .updates.changed_files |= sort_by(.path) |
+                    .final_changed_files += [
+                        {path: $unsafe_path, mode: "100644", sha256: $unsafe_digest}
+                    ] |
+                    .final_changed_files |= sort_by(.path)
+                ' "$FIXTURE_VERIFIED/manifest.json" \
+                    >"$FIXTURE_ROOT/unsafe-path-manifest.json"
+            else
+                local final_tree
+                final_tree=$("$TEST_GIT" -C "$candidate" write-tree)
+                "$TEST_GIT" -C "$candidate" diff --binary --full-index --no-color \
+                    "$update_tree" "$final_tree" >"$FIXTURE_VERIFIED/format.patch"
+                patch_digest=$(sha256_file "$FIXTURE_VERIFIED/format.patch")
+                jq --arg patch_digest "$patch_digest" --arg unsafe_digest "$unsafe_digest" \
+                    --arg unsafe_path "$unsafe_path" '
+                    .formatting.patch_sha256 = $patch_digest |
+                    .formatting.changed_files += [
+                        {path: $unsafe_path, mode: "100644", sha256: $unsafe_digest}
+                    ] |
+                    .formatting.changed_files |= sort_by(.path) |
+                    .final_changed_files += [
+                        {path: $unsafe_path, mode: "100644", sha256: $unsafe_digest}
+                    ] |
+                    .final_changed_files |= sort_by(.path)
+                ' "$FIXTURE_VERIFIED/manifest.json" \
+                    >"$FIXTURE_ROOT/unsafe-path-manifest.json"
+            fi
+            mv "$FIXTURE_ROOT/unsafe-path-manifest.json" "$FIXTURE_VERIFIED/manifest.json"
 
-        if run_publish >"$FIXTURE_ROOT/dot-terraform.stdout" \
-            2>"$FIXTURE_ROOT/dot-terraform.stderr"; then
-            fail "publication accepted a verified $stage path beneath .terraform"
-        fi
-        grep -F 'reconciliation error: candidate contains an undeclared or unsafe path' \
-            "$FIXTURE_ROOT/dot-terraform.stderr" >/dev/null \
-            || fail "publication rejected the $stage .terraform path for the wrong reason: $(<"$FIXTURE_ROOT/dot-terraform.stderr")"
-        [[ "$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" rev-parse HEAD)" == "$FIXTURE_BASE_OID" ]] \
-            || fail "rejected $stage .terraform path produced a publication commit"
-        [[ -z "$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" status --porcelain=v1 \
-            --untracked-files=all)" ]] \
-            || fail "rejected $stage .terraform path changed the publication checkout"
-        [[ -z "$(find "$FIXTURE_GH_CAPTURE" -mindepth 1 -print -quit)" ]] \
-            || fail "rejected $stage .terraform path invoked GitHub lifecycle commands"
-    done
+            if run_publish >"$FIXTURE_ROOT/unsafe-path.stdout" \
+                2>"$FIXTURE_ROOT/unsafe-path.stderr"; then
+                fail "publication accepted a verified $stage $case_name path"
+            fi
+            grep -F 'reconciliation error: candidate contains an undeclared or unsafe path' \
+                "$FIXTURE_ROOT/unsafe-path.stderr" >/dev/null \
+                || fail "publication rejected the $stage $case_name path for the wrong reason: $(<"$FIXTURE_ROOT/unsafe-path.stderr")"
+            [[ "$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" rev-parse HEAD)" \
+                == "$FIXTURE_BASE_OID" ]] \
+                || fail "rejected $stage $case_name path produced a publication commit"
+            [[ -z "$("$TEST_GIT" -C "$FIXTURE_CHECKOUT" status --porcelain=v1 \
+                --untracked-files=all)" ]] \
+                || fail "rejected $stage $case_name path changed the publication checkout"
+            [[ -z "$(find "$FIXTURE_GH_CAPTURE" -mindepth 1 -print -quit)" ]] \
+                || fail "rejected $stage $case_name path invoked GitHub lifecycle commands"
+        done
+    done <<'EOF'
+root/.terraform/unsafe.tf|dot-terraform
+outside-root/unsafe.tf|outside-root
+EOF
 }
 
 test_publication_rejects_zero_status_failure_results() {
@@ -1475,7 +1485,7 @@ if [[ $# -eq 0 ]]; then
     test_binds_failure_classifications_to_stages_at_every_boundary
     test_rejects_post_terraform_mutation
     test_publication_rejects_ambiguous_verified_results
-    test_publication_rejects_verified_dot_terraform_path
+    test_publication_rejects_verified_unsafe_path
     test_publication_rejects_zero_status_failure_results
     test_rejects_mismatched_or_corrupt_candidates
     test_verifies_deleting_candidate_reports_a_classified_digest_error
