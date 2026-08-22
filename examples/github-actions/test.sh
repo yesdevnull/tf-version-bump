@@ -37,9 +37,9 @@ SUCCESSFUL_PREPARATION_READY=false
 TEST_TMP_ROOT=$(mktemp -d)
 TEST_TMP_ROOT=$(realpath "$TEST_TMP_ROOT")
 
-TF_VERSION_BUMP_VERSION="v1.0.0-rc.8"
-TF_VERSION_BUMP_ARCHIVE_SHA256="af30c90f06b2a3c371e86f1bd7b1a7d09dcdc4eb500fef0491a046cc9030adad"
-TF_VERSION_BUMP_ARCHIVE_URL="https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0-rc.8/tf-version-bump_1.0.0-rc.8_linux_x86_64.tar.gz"
+TF_VERSION_BUMP_VERSION="v1.0.0-rc.9"
+TF_VERSION_BUMP_ARCHIVE_SHA256="38428a229a77671fd192fd6a18f5d1f9c404b5557124883f04e6a8bec154b1d2"
+TF_VERSION_BUMP_ARCHIVE_URL="https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0-rc.9/tf-version-bump_1.0.0-rc.9_linux_x86_64.tar.gz"
 TF_VERSION_BUMP_PREFETCH_CONNECT_TIMEOUT_SECONDS=10
 TF_VERSION_BUMP_PREFETCH_MAX_TIME_SECONDS=120
 TERRAFORM_VERSION="1.15.5"

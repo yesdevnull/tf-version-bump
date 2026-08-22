@@ -41,8 +41,8 @@ jobs:
       config_path: .github/tf-version-bump/production.yml
       terraform_directories: .
       terraform_version: 1.15.5
-      tf_version_bump_version: v1.0.0-rc.8
-      tf_version_bump_archive_sha256: af30c90f06b2a3c371e86f1bd7b1a7d09dcdc4eb500fef0491a046cc9030adad
+      tf_version_bump_version: v1.0.0-rc.9
+      tf_version_bump_archive_sha256: 38428a229a77671fd192fd6a18f5d1f9c404b5557124883f04e6a8bec154b1d2
       dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
       max_parallel: 2
       commit_author_name: github-actions[bot]
