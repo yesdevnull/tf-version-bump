@@ -154,7 +154,7 @@ setup_processing_workspace() {
     unset PROCESS_RUN_ID PROCESS_RUN_ATTEMPT PROCESS_AUTOMATION_POLICY_ID
     unset PROCESS_CONTROL_OID PROCESS_STATE_BRANCH PROCESS_BASE_OID PROCESS_REF_HASH
     unset PROCESS_TF_VERSION_BUMP_VERSION PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256
-    unset PROCESS_TERRAFORM_VERSION
+    unset PROCESS_TERRAFORM_FMT PROCESS_TERRAFORM_VERSION
     unset TF_CLI_CONFIG_FILE
     PROCESS_PATH_PREFIX=""
     PROCESS_TEST_CALL_LOG=""
@@ -357,6 +357,110 @@ create_validation_candidate_bundle() {
     PROCESS_TARGET_CHECKOUT="$validation_checkout"
 }
 
+create_two_stage_validation_candidate_bundle() {
+    mkdir -p "$PROCESS_TARGET_CHECKOUT/root/nested"
+    printf '%s\n' 'locals { nested={value="base"} }' \
+        >"$PROCESS_TARGET_CHECKOUT/root/nested/child.tf"
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/nested/child.tf"
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
+        "processing-test@example.invalid" "test: add two-stage validation fixture"
+
+    local candidate_checkout="$PROCESS_TMP_ROOT/two-stage-candidate"
+    "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$candidate_checkout"
+    printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' \
+        >"$candidate_checkout/root/main.tf"
+    "$TEST_GIT" -C "$candidate_checkout" add -- "root/main.tf"
+    local base_tree update_tree
+    base_tree=$("$TEST_GIT" -C "$candidate_checkout" rev-parse 'HEAD^{tree}')
+    update_tree=$("$TEST_GIT" -C "$candidate_checkout" write-tree)
+    local update_main_sha256
+    update_main_sha256=$(sha256_file "$candidate_checkout/root/main.tf")
+
+    mkdir -m 700 "$PROCESS_PREPARATION_BUNDLE_DIR"
+    "$TEST_GIT" -C "$candidate_checkout" diff --binary --full-index --no-color \
+        "$base_tree" "$update_tree" >"$PROCESS_PREPARATION_BUNDLE_DIR/update.patch"
+
+    cat >"$candidate_checkout/root/main.tf" <<'EOF'
+terraform {
+  required_version = ">= 1.15.0"
+}
+EOF
+    cat >"$candidate_checkout/root/nested/child.tf" <<'EOF'
+locals {
+  nested = { value = "base" }
+}
+EOF
+    "$TEST_GIT" -C "$candidate_checkout" add -- \
+        "root/main.tf" "root/nested/child.tf"
+    local final_tree
+    final_tree=$("$TEST_GIT" -C "$candidate_checkout" write-tree)
+    "$TEST_GIT" -C "$candidate_checkout" diff --binary --full-index --no-color \
+        "$update_tree" "$final_tree" >"$PROCESS_PREPARATION_BUNDLE_DIR/format.patch"
+
+    local update_patch_sha256 format_patch_sha256 final_main_sha256 final_nested_sha256
+    update_patch_sha256=$(sha256_file "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch")
+    format_patch_sha256=$(sha256_file "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch")
+    final_main_sha256=$(sha256_file "$candidate_checkout/root/main.tf")
+    final_nested_sha256=$(sha256_file "$candidate_checkout/root/nested/child.tf")
+    local ref_hash
+    ref_hash=$(processing_ref_hash)
+    jq -n \
+        --arg control_oid "$(processing_control_oid)" \
+        --arg state_branch "$PROCESS_STATE_BRANCH" \
+        --arg base_oid "$(processing_base_oid)" \
+        --arg ref_hash "$ref_hash" \
+        --arg update_patch_sha256 "$update_patch_sha256" \
+        --arg format_patch_sha256 "$format_patch_sha256" \
+        --arg update_main_sha256 "$update_main_sha256" \
+        --arg final_main_sha256 "$final_main_sha256" \
+        --arg final_nested_sha256 "$final_nested_sha256" \
+        --arg tf_version_bump_version "$TF_VERSION_BUMP_VERSION" \
+        --arg tf_version_bump_archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" \
+        '{schema_version: 2, run_id: "123456", run_attempt: "2",
+          automation_policy_id: "nonproduction", control_oid: $control_oid,
+          state_branch: $state_branch, base_oid: $base_oid, ref_hash: $ref_hash,
+          config_path: ".github/tf-version-bump/test.yml",
+          tools: {
+            tf_version_bump: {
+              version: $tf_version_bump_version,
+              archive_sha256: $tf_version_bump_archive_sha256
+            },
+            terraform: {version: "1.15.5"}
+          },
+          roots: [{path: "root"}],
+          artifact_name: ("preparation-123456-2-nonproduction-" + $ref_hash),
+          classification: "success",
+          terraform_fmt: true,
+          updates: {
+            module_blocks_updated: 0,
+            provider_blocks_updated: 0,
+            changed_files: [
+              {path: "root/main.tf", mode: "100644", sha256: $update_main_sha256}
+            ],
+            patch_sha256: $update_patch_sha256
+          },
+          formatting: {
+            ran: true,
+            changed_files: [
+              {path: "root/main.tf", mode: "100644", sha256: $final_main_sha256},
+              {path: "root/nested/child.tf", mode: "100644", sha256: $final_nested_sha256}
+            ],
+            patch_sha256: $format_patch_sha256
+          },
+          final_changed_files: [
+            {path: "root/main.tf", mode: "100644", sha256: $final_main_sha256},
+            {path: "root/nested/child.tf", mode: "100644", sha256: $final_nested_sha256}
+          ]}' >"$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
+    chmod 444 \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch" \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
+
+    local validation_checkout="$PROCESS_TMP_ROOT/two-stage-validation"
+    "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$validation_checkout"
+    PROCESS_TARGET_CHECKOUT="$validation_checkout"
+}
+
 # Populates the PROCESSING_SHARED_DOCKER_ENV array with the `docker exec --env ...` pairs common
 # to both run_processing_prepare and run_processing_validate (run identity, immutable state-branch
 # lineage, the pinned Terraform version, RUNNER_TEMP, and PATH).
@@ -424,6 +528,7 @@ run_processing_prepare() {
         "${PROCESSING_SHARED_DOCKER_ENV[@]}" \
         --env "PROCESS_TF_VERSION_BUMP_VERSION=${PROCESS_TF_VERSION_BUMP_VERSION-$TF_VERSION_BUMP_VERSION}" \
         --env "PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256=${PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256-$TF_VERSION_BUMP_ARCHIVE_SHA256}" \
+        --env "PROCESS_TERRAFORM_FMT=${PROCESS_TERRAFORM_FMT-false}" \
         --env "PROCESS_PREPARATION_DEADLINE_EPOCH=${PROCESS_PREPARATION_DEADLINE_EPOCH-$(($(date +%s) + 1200))}" \
         --env "PROCESS_PREPARATION_BUNDLE_DIR=${PROCESS_PREPARATION_BUNDLE_DIR-$PROCESS_RUNNER_TEMP/preparation-bundle}" \
         --env "PROCESS_TEST_CALL_LOG=${PROCESS_TEST_CALL_LOG-}" \
@@ -457,6 +562,30 @@ prepopulate_verified_processing_release_cache() {
     actual_sha256=$(sha256_file "$cached_archive")
     [[ "$actual_sha256" == "$TF_VERSION_BUMP_ARCHIVE_SHA256" ]] \
         || fail "trusted processing fixture cache failed checksum verification"
+}
+
+configure_call_log_terraform_stub() {
+    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
+    mkdir "$fixture_bin"
+    local stub_body
+    stub_body=$(cat <<'EOF'
+printf '%s' 'terraform' >>"${PROCESS_TEST_CALL_LOG:?}"
+for argument in "$@"; do
+    if [[ "$argument" == -chdir="${PROCESS_TARGET_CHECKOUT:?}"/* ]]; then
+        printf ' -chdir=%s' "${argument#-chdir="$PROCESS_TARGET_CHECKOUT"/}" \
+            >>"$PROCESS_TEST_CALL_LOG"
+    else
+        printf ' %s' "$argument" >>"$PROCESS_TEST_CALL_LOG"
+    fi
+done
+printf '\n' >>"$PROCESS_TEST_CALL_LOG"
+exec /bin/terraform "$@"
+EOF
+    )
+    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
+    PROCESS_PATH_PREFIX=$fixture_bin
+    PROCESS_TEST_CALL_LOG="$PROCESS_TMP_ROOT/terraform-calls.log"
+    prepopulate_verified_processing_release_cache
 }
 
 write_controlled_update_report_archive() {
@@ -817,7 +946,7 @@ test_reusable_workflow_declares_lean_interface() {
         keys == [
             "allowed_branch_prefixes", "automation_policy_id", "branch_prefix", "commit_author_email",
             "commit_author_name", "config_path", "dry_run", "max_parallel", "terraform_directories",
-            "terraform_version", "tf_version_bump_archive_sha256",
+            "terraform_fmt", "terraform_version", "tf_version_bump_archive_sha256",
             "tf_version_bump_version"
         ] and
         .automation_policy_id == {type: "string", required: true} and
@@ -825,6 +954,7 @@ test_reusable_workflow_declares_lean_interface() {
         .branch_prefix == {type: "string", default: ""} and
         .config_path == {type: "string", required: true} and
         .terraform_directories == {type: "string", default: "."} and
+        .terraform_fmt == {type: "boolean", default: false} and
         .terraform_version == {type: "string", required: true} and
         .tf_version_bump_version == {type: "string", required: true} and
         .tf_version_bump_archive_sha256 == {type: "string", required: true} and
@@ -892,6 +1022,12 @@ test_reusable_workflow_wires_current_attempt_pipeline() {
                 .env.EXPECTED_RUN_ATTEMPT == "${{ matrix.run_attempt }}" and
                 .env.CURRENT_RUN_ATTEMPT == "${{ github.run_attempt }}")) and
         any(.prepare.steps[]; (.run // "") | contains("process-state-branch.sh\" prepare")) and
+        any(.prepare.steps[]; .name == "Prepare candidate" and
+            (.env.PROCESS_TERRAFORM_FMT | contains("inputs.terraform_fmt"))) and
+        any(.prepare.steps[]; .name == "Confirm preparation classification" and
+            (.run | contains("branch-format"))) and
+        any(.validate.steps[]; .name == "Confirm validation classification" and
+            (.run | contains("branch-format"))) and
         any(.validate.steps[]; (.run // "") | contains("process-state-branch.sh\" validate")) and
         any(.verify.steps[]; (.run // "") | contains("reconcile-state-branch.sh\" verify")) and
         any(.publish.steps[]; (.run // "") | contains("reconcile-state-branch.sh\" publish")) and
@@ -939,6 +1075,7 @@ test_callers_define_weekly_policies_and_tool_pins() {
             .terraform_version == "1.15.5" and
             .tf_version_bump_version == $tf_version_bump_version and
             .tf_version_bump_archive_sha256 == $tf_version_bump_archive_sha256 and
+            (has("terraform_fmt") | not) and
             (has("github_app_client_id") | not) and
             (has("unattended_checks_safe") | not) and
             (has("publication_environment") | not)
@@ -1671,6 +1808,364 @@ EOF
     [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch" ]]
 }
 
+test_processing_formatting_disabled() {
+    # Production break caught: preparation formats Terraform files even though the reusable input
+    # is disabled, or records formatting as having run.
+    setup_processing_workspace
+    configure_call_log_terraform_stub
+
+    run_processing_prepare
+
+    jq -e '.terraform_fmt == false and .formatting == {ran: false, changed_files: []}' \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
+        || fail "disabled formatting was not represented exactly"
+    ! grep -F 'fmt -recursive' "$PROCESS_TEST_CALL_LOG" >/dev/null \
+        || fail "Terraform formatting ran while disabled"
+}
+
+test_processing_rejects_invalid_formatting_input() {
+    # Production break caught: a truthy spelling other than the exact workflow strings true/false
+    # enables formatting or is silently normalised.
+    setup_processing_workspace
+    PROCESS_TERRAFORM_FMT=TRUE
+
+    assert_processing_failure \
+        "processing setup error: Terraform formatting must be true or false" \
+        "invalid Terraform formatting input"
+    grep -F 'required_version = ">= 1.0"' \
+        "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
+        || fail "invalid Terraform formatting input changed target source"
+    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR" ]] \
+        || fail "invalid Terraform formatting input produced a preparation bundle"
+}
+
+test_processing_skips_formatting_without_update_diff() {
+    # Production break caught: enabled formatting runs without an aggregate update/init diff, or
+    # an ineligible branch loses the requested input value in its manifest.
+    setup_processing_workspace
+    printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' \
+        >"$PROCESS_TARGET_CHECKOUT/root/main.tf"
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/main.tf"
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
+        "processing-test@example.invalid" "test: create formatting-ineligible fixture"
+    configure_call_log_terraform_stub
+    PROCESS_TERRAFORM_FMT=true
+
+    run_processing_prepare
+
+    jq -e '.classification == "no-change" and .terraform_fmt == true and
+           .formatting == {ran: false, changed_files: []}' \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
+        || fail "ineligible formatting was not skipped exactly"
+    ! grep -F 'fmt -recursive' "$PROCESS_TEST_CALL_LOG" >/dev/null \
+        || fail "Terraform formatting ran without an update diff"
+}
+
+test_processing_formats_nested_files_from_every_root() {
+    # Production break caught: enabled formatting omits a declared root, does not recurse into
+    # nested Terraform files, or reports one formatted path more than once.
+    setup_processing_workspace
+    local terraform_root
+    for terraform_root in root-a root-b; do
+        mkdir -p "$PROCESS_TARGET_CHECKOUT/$terraform_root/nested"
+        printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
+            >"$PROCESS_TARGET_CHECKOUT/$terraform_root/main.tf"
+        printf '%s\n' 'locals { nested={value="unformatted"} }' \
+            >"$PROCESS_TARGET_CHECKOUT/$terraform_root/nested/child.tf"
+    done
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- \
+        "root-a/main.tf" "root-a/nested/child.tf" \
+        "root-b/main.tf" "root-b/nested/child.tf"
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
+        "processing-test@example.invalid" "test: add recursive formatting roots"
+    configure_call_log_terraform_stub
+    PROCESS_TERRAFORM_ROOTS=$'root-a\nroot-b'
+    PROCESS_TERRAFORM_FMT=true
+
+    run_processing_prepare
+
+    [[ "$(grep -Fxc 'terraform -chdir=root-a fmt -recursive' "$PROCESS_TEST_CALL_LOG")" -eq 1 ]] \
+        || fail "Terraform formatting did not run exactly once from root-a"
+    [[ "$(grep -Fxc 'terraform -chdir=root-b fmt -recursive' "$PROCESS_TEST_CALL_LOG")" -eq 1 ]] \
+        || fail "Terraform formatting did not run exactly once from root-b"
+    [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch" ]] \
+        || fail "recursive formatting did not produce format.patch"
+    jq -e '[.formatting.changed_files[].path] ==
+           ["root-a/nested/child.tf", "root-b/nested/child.tf"]' \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
+        || fail "recursive formatting paths were not exact and sorted"
+}
+
+test_processing_deduplicates_formatting_paths_for_overlapping_roots() {
+    # Production break caught: overlapping recursive roots duplicate one Git path in formatting
+    # metadata even though both declared formatter invocations are retained.
+    setup_processing_workspace
+    mkdir -p "$PROCESS_TARGET_CHECKOUT/root/nested/deeper"
+    printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
+        >"$PROCESS_TARGET_CHECKOUT/root/nested/main.tf"
+    printf '%s\n' 'locals { nested={value="unformatted"} }' \
+        >"$PROCESS_TARGET_CHECKOUT/root/nested/deeper/child.tf"
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- \
+        "root/nested/main.tf" "root/nested/deeper/child.tf"
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
+        "processing-test@example.invalid" "test: add overlapping formatting roots"
+    configure_call_log_terraform_stub
+    PROCESS_TERRAFORM_ROOTS=$'root\nroot/nested'
+    PROCESS_TERRAFORM_FMT=true
+
+    run_processing_prepare
+
+    [[ "$(grep -Fxc 'terraform -chdir=root fmt -recursive' "$PROCESS_TEST_CALL_LOG")" -eq 1 \
+        && "$(grep -Fxc 'terraform -chdir=root/nested fmt -recursive' "$PROCESS_TEST_CALL_LOG")" -eq 1 ]] \
+        || fail "overlapping roots did not each receive one recursive formatter invocation"
+    jq -e '[.formatting.changed_files[].path] ==
+           ["root/nested/deeper/child.tf"]' \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
+        || fail "overlapping roots duplicated or widened formatting metadata"
+}
+
+test_processing_formatting_without_diff_omits_patch() {
+    # Production break caught: a successful formatting invocation with no stage diff is recorded
+    # as skipped or emits an empty format patch.
+    setup_processing_workspace
+    cat >"$PROCESS_TARGET_CHECKOUT/root/main.tf" <<'EOF'
+terraform {
+  required_version = ">= 1.0"
+}
+EOF
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/main.tf"
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
+        "processing-test@example.invalid" "test: add already-formatted Terraform root"
+    configure_call_log_terraform_stub
+    PROCESS_TERRAFORM_FMT=true
+
+    run_processing_prepare
+
+    jq -e '.classification == "success" and .formatting.ran == true and
+           .formatting.changed_files == [] and (.formatting | has("patch_sha256") | not)' \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
+        || fail "unchanged formatting metadata was not exact"
+    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch" ]] \
+        || fail "unchanged formatting emitted format.patch"
+}
+
+test_processing_formatting_can_cancel_update_diff() {
+    # Production break caught: formatting that restores the exact base still publishes stale
+    # intermediate patches or is classified as a successful final change.
+    setup_processing_workspace
+    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
+    mkdir "$fixture_bin"
+    local stub_body
+    stub_body=$(cat <<'EOF'
+if [[ "${2:-}" == "fmt" && "${3:-}" == "-recursive" ]]; then
+    terraform_root=${1#-chdir=}
+    printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
+        >"$terraform_root/main.tf"
+fi
+EOF
+    )
+    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
+    PROCESS_PATH_PREFIX=$fixture_bin
+    PROCESS_TERRAFORM_FMT=true
+    prepopulate_verified_processing_release_cache
+
+    run_processing_prepare
+
+    jq -e '.classification == "no-change" and
+           .formatting.ran == true and
+           .updates.changed_files == [] and
+           .formatting.changed_files == [] and
+           .final_changed_files == []' \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
+        || fail "formatting cancellation did not produce final no-change metadata"
+    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]] \
+        || fail "formatting cancellation retained update.patch"
+    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch" ]] \
+        || fail "formatting cancellation retained format.patch"
+
+    run_processing_validate
+    jq -e '.classification == "no-change" and .command_status == 0' \
+        "$PROCESS_VALIDATION_OUTCOME_DIR/manifest.json" >/dev/null \
+        || fail "formatting cancellation did not complete no-change validation"
+}
+
+test_processing_format_failure_is_bounded() {
+    # Production break caught: a recursive formatter failure loses its root/status/log attribution
+    # or exposes a partial update or format patch.
+    setup_processing_workspace
+    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
+    mkdir "$fixture_bin"
+    local stub_body
+    stub_body=$(cat <<'EOF'
+if [[ "${2:-}" == "fmt" && "${3:-}" == "-recursive" ]]; then
+    printf '%s\n' 'controlled recursive formatting failure' >&2
+    exit 9
+fi
+EOF
+    )
+    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
+    PROCESS_PATH_PREFIX=$fixture_bin
+    PROCESS_TERRAFORM_FMT=true
+    prepopulate_verified_processing_release_cache
+
+    local stdout_file="$PROCESS_TMP_ROOT/format-failure.stdout"
+    local stderr_file="$PROCESS_TMP_ROOT/format-failure.stderr"
+    if run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
+        fail "recursive formatting failure succeeded"
+    fi
+    [[ ! -s "$stdout_file" ]] \
+        || fail "recursive formatting failure emitted unexpected stdout"
+    grep -F 'processing status error: terraform fmt failed for Terraform root root' \
+        "$stderr_file" >/dev/null \
+        || fail "recursive formatting failure emitted the wrong diagnostic"
+    jq -e '.classification == "branch-format" and
+           .failure == {stage: "terraform fmt", root: "root",
+                       command: "terraform -chdir=root fmt -recursive", status: 9}' \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
+        || fail "recursive formatting failure manifest was not exact"
+    [[ "$(<"$PROCESS_PREPARATION_BUNDLE_DIR/logs/format-1.log")" \
+        == "controlled recursive formatting failure" ]] \
+        || fail "recursive formatting failure log was not retained exactly"
+    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" \
+        && ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch" ]] \
+        || fail "recursive formatting failure exposed a patch"
+}
+
+test_processing_rejects_unsafe_recursive_formatting_paths() {
+    # Production breaks caught: recursive formatting can report a nested file outside every root,
+    # a .terraform entry, a symlink, executable content, invalid UTF-8, or a non-.tf path.
+    local row expected_diagnostic
+    while IFS=$'\t' read -r row expected_diagnostic; do
+        setup_processing_workspace
+        local fixture_path=""
+        case "$row" in
+            nested-outside)
+                fixture_path="other/nested/child.tf"
+                mkdir -p "$PROCESS_TARGET_CHECKOUT/other/nested"
+                printf '%s\n' 'locals { value = "base" }' \
+                    >"$PROCESS_TARGET_CHECKOUT/$fixture_path"
+                ;;
+            symlink|executable)
+                fixture_path="root/nested/child.tf"
+                mkdir -p "$PROCESS_TARGET_CHECKOUT/root/nested"
+                printf '%s\n' 'locals { value = "base" }' \
+                    >"$PROCESS_TARGET_CHECKOUT/$fixture_path"
+                ;;
+            undeclared)
+                fixture_path="root/nested/notes.txt"
+                mkdir -p "$PROCESS_TARGET_CHECKOUT/root/nested"
+                printf '%s\n' 'base' >"$PROCESS_TARGET_CHECKOUT/$fixture_path"
+                ;;
+            dot-terraform)
+                fixture_path=".gitignore"
+                printf '%s\n' 'root/.terraform/' \
+                    >"$PROCESS_TARGET_CHECKOUT/$fixture_path"
+                ;;
+            invalid-utf8) ;;
+            *) fail "unknown unsafe formatting fixture: $row" ;;
+        esac
+        if [[ -n "$fixture_path" ]]; then
+            "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "$fixture_path"
+            fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
+                "processing-test@example.invalid" "test: add $row formatting fixture"
+        fi
+
+        local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
+        mkdir "$fixture_bin"
+        local stub_body
+        case "$row" in
+            nested-outside)
+                stub_body=$(cat <<'EOF'
+if [[ "${2:-}" == "fmt" ]]; then
+    printf '%s\n' 'locals { value = "changed" }' \
+        >"${PROCESS_TARGET_CHECKOUT:?}/other/nested/child.tf"
+fi
+EOF
+                )
+                ;;
+            dot-terraform)
+                stub_body=$(cat <<'EOF'
+if [[ "${2:-}" == "fmt" ]]; then
+    mkdir -p "${PROCESS_TARGET_CHECKOUT:?}/root/.terraform"
+    printf '%s\n' 'locals { value = "changed" }' \
+        >"$PROCESS_TARGET_CHECKOUT/root/.terraform/child.tf"
+fi
+EOF
+                )
+                ;;
+            symlink)
+                stub_body=$(cat <<'EOF'
+if [[ "${2:-}" == "fmt" ]]; then
+    rm -- "${PROCESS_TARGET_CHECKOUT:?}/root/nested/child.tf"
+    ln -s ../main.tf "$PROCESS_TARGET_CHECKOUT/root/nested/child.tf"
+fi
+EOF
+                )
+                ;;
+            executable)
+                stub_body=$(cat <<'EOF'
+if [[ "${2:-}" == "fmt" ]]; then
+    chmod 755 "${PROCESS_TARGET_CHECKOUT:?}/root/nested/child.tf"
+fi
+EOF
+                )
+                ;;
+            invalid-utf8)
+                stub_body=$(cat <<'EOF'
+if [[ "${2:-}" == "fmt" ]]; then
+    invalid_path="${PROCESS_TARGET_CHECKOUT:?}/root/nested"
+    invalid_path+=$'\377'
+    invalid_path+='.tf'
+    printf '%s\n' 'locals { value = "changed" }' >"$invalid_path"
+fi
+EOF
+                )
+                ;;
+            undeclared)
+                stub_body=$(cat <<'EOF'
+if [[ "${2:-}" == "fmt" ]]; then
+    printf '%s\n' 'changed' \
+        >"${PROCESS_TARGET_CHECKOUT:?}/root/nested/notes.txt"
+fi
+EOF
+                )
+                ;;
+        esac
+        write_terraform_stub "$fixture_bin/terraform" "$stub_body"
+        PROCESS_PATH_PREFIX=$fixture_bin
+        PROCESS_TERRAFORM_FMT=true
+        prepopulate_verified_processing_release_cache
+        ensure_processing_container
+
+        local host_target=$PROCESS_TARGET_CHECKOUT
+        local container_target="/tmp/tf-version-bump-format-policy-$row-$RANDOM"
+        PROCESS_BASE_OID=$(processing_base_oid)
+        PROCESS_CONTROL_OID=$(processing_control_oid)
+        docker exec "$PROCESS_CONTAINER_ID" cp -a "$host_target" "$container_target"
+        docker exec "$PROCESS_CONTAINER_ID" chown -R \
+            "$(id -u):$(id -g)" "$container_target"
+        PROCESS_TARGET_CHECKOUT=$container_target
+
+        local stdout_file="$PROCESS_TMP_ROOT/$row.stdout"
+        local stderr_file="$PROCESS_TMP_ROOT/$row.stderr"
+        if run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
+            fail "$row recursive formatting path succeeded"
+        fi
+        grep -F "$expected_diagnostic" "$stderr_file" >/dev/null \
+            || fail "$row recursive formatting path emitted the wrong diagnostic: $(<"$stderr_file")"
+        [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR" \
+            && ! -e "$PROCESS_VALIDATION_OUTCOME_DIR" ]] \
+            || fail "$row recursive formatting path produced a consumable result"
+    done <<'EOF'
+nested-outside	formatted Terraform file must be beneath a configured root
+dot-terraform	formatting changed a path beneath .terraform
+symlink	changed path must be a regular non-symlink file
+executable	changed file mode must be 100644
+invalid-utf8	changed path is not valid UTF-8
+undeclared	formatting changed a non-Terraform path
+EOF
+}
+
 test_processing_rejects_invalid_update_reports_as_automation() {
     # Production break caught: preparation accepts absent, malformed, non-v1, non-integral, or
     # extended updater reports and exposes their partial working-tree changes for publication.
@@ -2289,6 +2784,100 @@ test_processing_validation_accepts_update_patch_with_added_lock_file() {
         || fail "added-lock validation did not produce a successful outcome"
 }
 
+test_processing_validation_checks_update_before_format_stage() {
+    # Production break caught: validation applies both patches before checking the update-stage
+    # digest, allowing a final digest to conceal tampered intermediate content.
+    setup_processing_workspace
+    create_two_stage_validation_candidate_bundle
+    local update_sha256 final_sha256
+    update_sha256=$(jq -er \
+        '.updates.changed_files[] | select(.path == "root/main.tf") | .sha256' \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json")
+    final_sha256=$(jq -er \
+        '.final_changed_files[] | select(.path == "root/main.tf") | .sha256' \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json")
+    [[ "$update_sha256" != "$final_sha256" ]] \
+        || fail "two-stage fixture did not provide distinct intermediate and final digests"
+
+    local stdout_file="$PROCESS_TMP_ROOT/two-stage-validation.stdout"
+    local stderr_file="$PROCESS_TMP_ROOT/two-stage-validation.stderr"
+    assert_silent_success "ordered two-stage validation" \
+        "$stdout_file" "$stderr_file" run_processing_validate
+    grep -F 'required_version = ">= 1.15.0"' \
+        "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
+        || fail "ordered validation did not apply the final formatted content"
+    jq -e '.classification == "success" and .command_status == 0' \
+        "$PROCESS_VALIDATION_OUTCOME_DIR/manifest.json" >/dev/null \
+        || fail "ordered two-stage validation did not retain a successful outcome"
+}
+
+test_processing_validation_rejects_wrong_update_stage_digest() {
+    # Production break caught: the final digest is accepted for a file that appears in both stage
+    # lists because validation checks metadata only after applying format.patch.
+    setup_processing_workspace
+    create_two_stage_validation_candidate_bundle
+    chmod u+w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
+    jq '(.updates.changed_files[] | select(.path == "root/main.tf") | .sha256) =
+        (.final_changed_files[] | select(.path == "root/main.tf") | .sha256)' \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" \
+        >"$PROCESS_TMP_ROOT/wrong-update-digest.json"
+    mv "$PROCESS_TMP_ROOT/wrong-update-digest.json" \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
+    chmod a-w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
+
+    local stdout_file="$PROCESS_TMP_ROOT/wrong-update-digest.stdout"
+    local stderr_file="$PROCESS_TMP_ROOT/wrong-update-digest.stderr"
+    if run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
+        fail "validation accepted the final digest at the update-stage boundary"
+    fi
+    [[ ! -e "$PROCESS_VALIDATION_OUTCOME_DIR" ]] \
+        || fail "wrong update-stage digest produced a validation outcome"
+}
+
+test_processing_validation_rejects_unrun_format_patch() {
+    # Production break caught: a manifest can declare formatting disabled and not run while still
+    # carrying a format patch that validation applies.
+    setup_processing_workspace
+    create_two_stage_validation_candidate_bundle
+    chmod u+w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
+    jq '.terraform_fmt = false | .formatting.ran = false' \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" \
+        >"$PROCESS_TMP_ROOT/unrun-format-patch.json"
+    mv "$PROCESS_TMP_ROOT/unrun-format-patch.json" \
+        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
+    chmod a-w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
+
+    local stdout_file="$PROCESS_TMP_ROOT/unrun-format-patch.stdout"
+    local stderr_file="$PROCESS_TMP_ROOT/unrun-format-patch.stderr"
+    if run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
+        fail "validation accepted a format patch declared as not run"
+    fi
+    [[ ! -e "$PROCESS_VALIDATION_OUTCOME_DIR" ]] \
+        || fail "format patch declared as not run produced a validation outcome"
+}
+
+test_processing_validation_rejects_tampered_stage_patches() {
+    # Production break caught: validation consumes update or format patch bytes that no longer
+    # match their manifest-bound SHA-256 values.
+    local stage
+    for stage in update format; do
+        setup_processing_workspace
+        create_two_stage_validation_candidate_bundle
+        chmod u+w "$PROCESS_PREPARATION_BUNDLE_DIR/$stage.patch"
+        printf '%s\n' '# tampered stage patch' \
+            >>"$PROCESS_PREPARATION_BUNDLE_DIR/$stage.patch"
+        chmod a-w "$PROCESS_PREPARATION_BUNDLE_DIR/$stage.patch"
+
+        local stdout_file="$PROCESS_TMP_ROOT/tampered-$stage.stdout"
+        local stderr_file="$PROCESS_TMP_ROOT/tampered-$stage.stderr"
+        if run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
+            fail "validation accepted tampered $stage.patch"
+        fi
+        [[ ! -e "$PROCESS_VALIDATION_OUTCOME_DIR" ]] \
+            || fail "tampered $stage.patch produced a validation outcome"
+    done
+}
+
 test_processing_validation_allows_provider_free_root_without_lock() {
     # Production break caught: a provider-free root without a lock is rejected. Terraform 1.15.5
     # tolerates readonly mode without a lock, so this test honestly proves acceptance, not omission.
@@ -2417,6 +3006,10 @@ test_processing_validation() {
     test_processing_validation_runs_directly_without_docker_executable
     test_processing_validation_runs_provider_root
     test_processing_validation_accepts_update_patch_with_added_lock_file
+    test_processing_validation_checks_update_before_format_stage
+    test_processing_validation_rejects_wrong_update_stage_digest
+    test_processing_validation_rejects_unrun_format_patch
+    test_processing_validation_rejects_tampered_stage_patches
     test_processing_validation_allows_provider_free_root_without_lock
     test_processing_validation_rejects_installed_version_mismatch_before_candidate_apply
     test_processing_validation_produces_bounded_outcome_when_deadline_expires_before_first_log
@@ -2428,6 +3021,15 @@ test_processing_preparation() {
     test_processing_rejects_mismatched_ref_hash_before_target_write
     test_processing_prepares_with_released_cli_and_pinned_terraform
     test_processing_aggregates_released_cli_reports
+    test_processing_formatting_disabled
+    test_processing_rejects_invalid_formatting_input
+    test_processing_skips_formatting_without_update_diff
+    test_processing_formats_nested_files_from_every_root
+    test_processing_deduplicates_formatting_paths_for_overlapping_roots
+    test_processing_formatting_without_diff_omits_patch
+    test_processing_formatting_can_cancel_update_diff
+    test_processing_format_failure_is_bounded
+    test_processing_rejects_unsafe_recursive_formatting_paths
     test_processing_rejects_invalid_update_reports_as_automation
     test_processing_rejects_release_archive_before_extraction_on_checksum_mismatch
     test_processing_verifies_exact_terraform_version_before_target_writes

@@ -18,6 +18,9 @@ on:
       terraform_directories:
         type: string
         default: "."
+      terraform_fmt:
+        type: boolean
+        default: false
       terraform_version:
         type: string
         required: true
@@ -118,6 +121,7 @@ jobs:
           PROCESS_TARGET_CHECKOUT: ${{ github.workspace }}/target
           PROCESS_CONFIG_PATH: ${{ inputs.config_path }}
           PROCESS_TERRAFORM_ROOTS: ${{ inputs.terraform_directories }}
+          PROCESS_TERRAFORM_FMT: ${{ inputs.terraform_fmt }}
           PROCESS_RUN_ID: ${{ matrix.run_id }}
           PROCESS_RUN_ATTEMPT: ${{ matrix.run_attempt }}
           PROCESS_AUTOMATION_POLICY_ID: ${{ matrix.automation_policy_id }}
@@ -146,7 +150,7 @@ jobs:
         run: |
           [[ -f "$PREPARATION_MANIFEST" ]] || exit 1
           classification=$(jq -er '.classification' "$PREPARATION_MANIFEST")
-          [[ "$classification" == "success" || "$classification" == "no-change" || "$classification" == "branch-update" || "$classification" == "branch-init" ]]
+          [[ "$classification" == "success" || "$classification" == "no-change" || "$classification" == "branch-update" || "$classification" == "branch-init" || "$classification" == "branch-format" ]]
 
   validate:
     needs: [discover, prepare]
@@ -240,7 +244,7 @@ jobs:
             validation=$(jq -er '.classification' "$VALIDATION_MANIFEST")
             [[ "$validation" == "$preparation" || "$validation" == "branch-validation" ]]
           else
-            [[ "$preparation" == "branch-update" || "$preparation" == "branch-init" ]]
+            [[ "$preparation" == "branch-update" || "$preparation" == "branch-init" || "$preparation" == "branch-format" ]]
             [[ ! -e "$VALIDATION_MANIFEST" ]]
           fi
 
