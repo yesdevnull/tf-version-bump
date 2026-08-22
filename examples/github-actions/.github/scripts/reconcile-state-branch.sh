@@ -718,6 +718,9 @@ construct_update_commits() {
     local update_patch="$RECONCILE_VERIFIED_RESULT_DIR/update.patch"
     local format_patch="$RECONCILE_VERIFIED_RESULT_DIR/format.patch"
     local verified_manifest="$RECONCILE_VERIFIED_RESULT_DIR/manifest.json"
+    verify_declared_stage_paths "$verified_manifest" updates path_is_verified_file
+    verify_declared_stage_paths "$verified_manifest" formatting path_is_verified_file
+    verify_declared_stage_paths "$verified_manifest" final path_is_verified_file
     [[ -f "$update_patch" && ! -L "$update_patch" ]] \
         || reconcile_error "verified candidate patch must be a regular file"
     [[ "$(sha256_file "$update_patch")" \
