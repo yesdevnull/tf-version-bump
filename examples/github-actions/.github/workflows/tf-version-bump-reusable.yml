@@ -249,10 +249,17 @@ jobs:
       - name: Confirm verified classification
         if: ${{ always() }}
         env:
-          VERIFIED_MANIFEST: ${{ runner.temp }}/verified-result/manifest.json
+          CONTROL_CHECKOUT: ${{ github.workspace }}/control
+          RECONCILE_RUN_ID: ${{ matrix.run_id }}
+          RECONCILE_RUN_ATTEMPT: ${{ matrix.run_attempt }}
+          RECONCILE_AUTOMATION_POLICY_ID: ${{ matrix.automation_policy_id }}
+          RECONCILE_CONTROL_OID: ${{ matrix.control_oid }}
+          RECONCILE_STATE_BRANCH: ${{ matrix.branch }}
+          RECONCILE_BASE_OID: ${{ matrix.base_oid }}
+          RECONCILE_REF_HASH: ${{ matrix.ref_hash }}
+          RECONCILE_VERIFIED_RESULT_DIR: ${{ runner.temp }}/verified-result
         run: |
-          [[ -f "$VERIFIED_MANIFEST" ]] || exit 1
-          classification=$(jq -er '.classification' "$VERIFIED_MANIFEST") || exit 1
+          classification=$("$CONTROL_CHECKOUT/.github/scripts/reconcile-state-branch.sh" classify)
           case "$classification" in
             success|no-change|branch-update|branch-init|branch-format|branch-validation) ;;
             automation) exit 1 ;;

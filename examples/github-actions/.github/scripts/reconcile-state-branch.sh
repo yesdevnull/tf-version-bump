@@ -11,9 +11,10 @@ usage() {
     cat <<'EOF'
 Usage: reconcile-state-branch.sh --help
        reconcile-state-branch.sh verify
+       reconcile-state-branch.sh classify
        reconcile-state-branch.sh publish
 
-Verify preparation and validation artefacts, or publish one verified result.
+Verify preparation and validation artefacts, classify a verified result, or publish it.
 EOF
 }
 
@@ -865,6 +866,15 @@ verify_verified_result() {
     printf '%s\n' "$classification"
 }
 
+classify_verified_result() {
+    require_common_identity_values
+    : "${RECONCILE_VERIFIED_RESULT_DIR:?RECONCILE_VERIFIED_RESULT_DIR must be set}"
+    local verified_manifest="$RECONCILE_VERIFIED_RESULT_DIR/manifest.json"
+    [[ -f "$verified_manifest" && ! -L "$verified_manifest" ]] \
+        || reconcile_error "verified result manifest must be a regular file"
+    verify_verified_result "$verified_manifest"
+}
+
 marked_pr_number() {
     local marker=$1 response
     response=$(gh pr list --repo "$RECONCILE_REPOSITORY" --state open \
@@ -976,13 +986,9 @@ reconcile_failure_lifecycle() {
 }
 
 publish_result() {
-    require_common_identity_values
-    : "${RECONCILE_VERIFIED_RESULT_DIR:?RECONCILE_VERIFIED_RESULT_DIR must be set}"
-    local verified_manifest="$RECONCILE_VERIFIED_RESULT_DIR/manifest.json"
-    [[ -f "$verified_manifest" && ! -L "$verified_manifest" ]] \
-        || reconcile_error "verified result manifest must be a regular file"
     local classification
-    classification=$(verify_verified_result "$verified_manifest")
+    classification=$(classify_verified_result)
+    local verified_manifest="$RECONCILE_VERIFIED_RESULT_DIR/manifest.json"
     [[ "$classification" != "no-change" && "$classification" != "automation" ]] || return 0
     git check-ref-format "refs/heads/$RECONCILE_STATE_BRANCH" >/dev/null 2>&1 \
         || reconcile_error "state branch is invalid"
@@ -1018,6 +1024,10 @@ fi
 if [[ "${1:-}" == "verify" && $# -eq 1 ]]; then
     trap cleanup_reconcile_temporaries EXIT
     verify_result
+    exit 0
+fi
+if [[ "${1:-}" == "classify" && $# -eq 1 ]]; then
+    classify_verified_result
     exit 0
 fi
 if [[ "${1:-}" == "publish" && $# -eq 1 ]]; then
