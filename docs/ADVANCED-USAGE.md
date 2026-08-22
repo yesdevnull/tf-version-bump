@@ -13,21 +13,38 @@ For a scheduled or manually dispatched GitHub Actions proof of concept, see
 [`examples/github-actions`](../examples/github-actions/README.md). It copies into a consuming
 repository's `.github` directory and provides separate production and non-production callers that
 run only from the default branch, plus config-change triggers, read-only pull-request config
-validation, dry-run support, update pull requests, and marked failure issues. The pull-request
-check validates only the control config with `tf-version-bump`; full state-branch dry runs remain
+validation, dry-run support, update pull requests, and marked failure issues. The reusable
+workflow has four jobs: `discover`, `prepare`, `validate`, and `publish`. The pull-request check
+validates only the control config with `tf-version-bump`; full state-branch dry runs remain
 deferred.
 
 The POC is designed for organisation-authored modules, official HashiCorp or organisation-developed
-providers, and NVA-controlled egress. It is not a malicious-Terraform sandbox; read the example's
-limits and operator-run disposable-repository battle test before enabling publication.
+providers, and NVA-controlled egress. It is not a malicious-Terraform sandbox;
+private and first-party providers are trusted code that can execute in the runner. Read the
+example's limits and operator-run disposable-repository battle test before enabling publication.
+
+`terraform_fmt` defaults to `false`; both callers opt in with `terraform_fmt: true`. For every
+configured root, preparation runs the updater and `terraform init -upgrade` before formatting is
+eligible, then an eligible changed candidate runs `terraform fmt -recursive` in every configured
+root. The callers pin `tf-version-bump` to `v1.0.0-rc.9` and archive SHA-256
+`38428a229a77671fd192fd6a18f5d1f9c404b5557124883f04e6a8bec154b1d2`.
 
 The reusable workflow installs the pinned Terraform CLI with `hashicorp/setup-terraform` in both
 Terraform jobs and invokes it directly. Docker is neither a production workflow requirement nor a
 validation sandbox; the repository harness uses it only to supply a reproducible local Terraform
 fixture. Checkout v7 manages the built-in token for discovery's control checkout and publication's
-target checkout, while all Terraform and verification checkouts disable persisted credentials.
-The reconciliation helper performs its own exact-ref fetches and exact-lease publication; the
-processing helper only prepares and validates candidates.
+target checkout, while Terraform checkouts disable persisted credentials. Validation and verification use one target checkout in `validate`; there is no separate fresh verification checkout.
+The run retains `preparation-*` and `verified-*` artefacts; it has no separate validation artefact
+or verification job. The reconciliation helper performs its own exact-ref fetches and exact-lease
+publication; the processing helper only prepares and validates candidates.
+
+For a changed candidate, publication creates one dynamic dependency commit, including
+`chore: bump Terraform provider and module versions` when both kinds of block change. If recursive
+formatting changed files, it adds `chore: run Terraform fmt`; a net-zero formatting run produces no
+format patch or formatting commit. The managed pull request reports exact `Module blocks updated`
+and `Provider blocks updated` counts with separate `Dependency and lock-file changes` and
+`Formatting changes` file lists. A `branch-format` result means recursive formatting failed in a
+configured root and creates or refreshes the marked failure issue.
 
 Publication uses the workflow `GITHUB_TOKEN` only and creates explicitly unsigned automation
 commits. Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to
