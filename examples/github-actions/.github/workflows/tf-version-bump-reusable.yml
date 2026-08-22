@@ -213,6 +213,9 @@ jobs:
           PROCESS_STATE_BRANCH: ${{ matrix.branch }}
           PROCESS_BASE_OID: ${{ matrix.base_oid }}
           PROCESS_REF_HASH: ${{ matrix.ref_hash }}
+          PROCESS_CONFIG_PATH: ${{ inputs.config_path }}
+          PROCESS_TF_VERSION_BUMP_VERSION: ${{ inputs.tf_version_bump_version }}
+          PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256: ${{ inputs.tf_version_bump_archive_sha256 }}
           PROCESS_TERRAFORM_VERSION: ${{ inputs.terraform_version }}
         run: |
           classification=$(jq -er '.classification' "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json")

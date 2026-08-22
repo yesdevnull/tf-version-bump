@@ -89,11 +89,63 @@ directory_has_exact_entries() {
     [[ "$actual_json" == "$expected_json" ]]
 }
 
-logs_are_bounded_regular_files() {
-    local directory=$1 entry
+preparation_logs_are_valid() {
+    local directory=$1 manifest=$2
     [[ -d "$directory" && ! -L "$directory" ]] || return 1
+    local classification root_count=0 formatting_ran=false
+    classification=$(jq -er '.classification' "$manifest") || return 1
+    if [[ "$classification" == "success" || "$classification" == "no-change" ]]; then
+        root_count=$(jq -er '.roots | length' "$manifest") || return 1
+        formatting_ran=$(jq -r '.formatting.ran' "$manifest") || return 1
+    fi
+
+    local entry name index
     while IFS= read -r -d '' entry; do
         [[ -f "$entry" && ! -L "$entry" ]] || return 1
+        name=${entry##*/}
+        case "$name" in
+            download.log|terraform-version.json|tf-version-bump-version.log) ;;
+            update-*.log|init-*.log)
+                [[ "$name" =~ ^(update|init)-([1-9][0-9]*)\.log$ ]] || return 1
+                if [[ "$classification" == "success" || "$classification" == "no-change" ]]; then
+                    index=${BASH_REMATCH[2]}
+                    ((index <= root_count)) || return 1
+                fi
+                ;;
+            format-*.log)
+                [[ "$name" =~ ^format-([1-9][0-9]*)\.log$ ]] || return 1
+                if [[ "$classification" == "success" || "$classification" == "no-change" ]]; then
+                    index=${BASH_REMATCH[1]}
+                    [[ "$formatting_ran" == "true" ]] || return 1
+                    ((index <= root_count)) || return 1
+                else
+                    [[ "$classification" == "branch-format" ]] || return 1
+                fi
+                ;;
+            *) return 1 ;;
+        esac
+    done < <(find "$directory" -mindepth 1 -maxdepth 1 -print0)
+}
+
+validation_logs_are_valid() {
+    local directory=$1 preparation_manifest=$2
+    [[ -d "$directory" && ! -L "$directory" ]] || return 1
+    local root_count
+    root_count=$(jq -er '.roots | length' "$preparation_manifest") || return 1
+
+    local entry name index
+    while IFS= read -r -d '' entry; do
+        [[ -f "$entry" && ! -L "$entry" ]] || return 1
+        name=${entry##*/}
+        case "$name" in
+            terraform-version.json) ;;
+            init-*.log|validate-*.log)
+                [[ "$name" =~ ^(init|validate)-([1-9][0-9]*)\.log$ ]] || return 1
+                index=${BASH_REMATCH[2]}
+                ((index <= root_count)) || return 1
+                ;;
+            *) return 1 ;;
+        esac
     done < <(find "$directory" -mindepth 1 -maxdepth 1 -print0)
 }
 
@@ -119,6 +171,13 @@ preparation_manifest_is_valid() {
             .artifact_name == ("preparation-" + env.RECONCILE_RUN_ID + "-" +
                 env.RECONCILE_RUN_ATTEMPT + "-" + env.RECONCILE_AUTOMATION_POLICY_ID +
                 "-" + env.RECONCILE_REF_HASH);
+        def failure_stage_matches_classification:
+            (.classification == "branch-update" and .failure.stage == "tf-version-bump") or
+            (.classification == "branch-init" and .failure.stage == "terraform init") or
+            (.classification == "branch-format" and .failure.stage == "terraform fmt") or
+            (.classification == "automation" and
+                (.failure.stage == "tf-version-bump report" or
+                 .failure.stage == "provider lock policy"));
         identity and
         if .classification == "success" or .classification == "no-change" then
             keys == ["artifact_name", "automation_policy_id", "base_oid", "classification",
@@ -176,7 +235,8 @@ preparation_manifest_is_valid() {
             (.failure.stage | type == "string" and length > 0) and
             (.failure.root | type == "string") and
             (.failure.command | type == "string" and length > 0) and
-            (.failure.status | type == "number" and . > 0 and floor == .)
+            (.failure.status | type == "number" and . > 0 and floor == .) and
+            failure_stage_matches_classification
         else false end
     ' "$1" >/dev/null
 }
@@ -202,7 +262,8 @@ validation_outcome_is_valid() {
                      "run_attempt", "run_id", "schema_version", "state_branch"] and
             (.command_status | type == "number" and . > 0 and floor == .) and
             (.failure | keys) == ["root", "stage", "status"] and
-            (.failure.stage | type == "string" and length > 0) and
+            (.failure.stage == "terraform init" or
+             .failure.stage == "terraform validate") and
             (.failure.root | type == "string") and
             .failure.status == .command_status
         else
@@ -484,7 +545,7 @@ verify_clean_checkout() {
 
 verify_preparation_entries() {
     local classification=$1 manifest=$2
-    logs_are_bounded_regular_files "$RECONCILE_PREPARATION_BUNDLE_DIR/logs" \
+    preparation_logs_are_valid "$RECONCILE_PREPARATION_BUNDLE_DIR/logs" "$manifest" \
         || reconcile_error "preparation logs are invalid"
     if [[ "$classification" == "success" ]]; then
         if jq -e '.formatting | has("patch_sha256")' "$manifest" >/dev/null; then
@@ -573,7 +634,8 @@ verify_result() {
         || reconcile_error "validation outcome must be a regular file"
     directory_has_exact_entries "$RECONCILE_VALIDATION_OUTCOME_DIR" logs manifest.json \
         || reconcile_error "validation outcome contains unexpected entries"
-    logs_are_bounded_regular_files "$RECONCILE_VALIDATION_OUTCOME_DIR/logs" \
+    validation_logs_are_valid "$RECONCILE_VALIDATION_OUTCOME_DIR/logs" \
+        "$preparation_manifest" \
         || reconcile_error "validation logs are invalid"
     validation_outcome_is_valid "$outcome" "$preparation_classification" \
         "$preparation_digest" \
@@ -762,6 +824,13 @@ verified_manifest_is_valid() {
                 (.sha256 | digest)) and
             ([.[].path] == ([.[].path] | sort)) and
             (([.[].path] | unique | length) == length);
+        def failure_stage_matches_classification:
+            (.classification == "branch-update" and .failure.stage == "tf-version-bump") or
+            (.classification == "branch-init" and .failure.stage == "terraform init") or
+            (.classification == "branch-format" and .failure.stage == "terraform fmt") or
+            (.classification == "automation" and
+                (.failure.stage == "tf-version-bump report" or
+                 .failure.stage == "provider lock policy"));
         .schema_version == 2 and
         .run_id == env.RECONCILE_RUN_ID and
         .run_attempt == env.RECONCILE_RUN_ATTEMPT and
@@ -814,7 +883,8 @@ verified_manifest_is_valid() {
                      "validation_outcome_sha256"] and
             (.validation_outcome_sha256 | digest) and
             (.failure | keys) == ["root", "stage", "status"] and
-            (.failure.stage | type == "string" and length > 0) and
+            (.failure.stage == "terraform init" or
+             .failure.stage == "terraform validate") and
             (.failure.root | type == "string") and
             (.failure.status | type == "number" and . > 0 and floor == .) and
             (.run_url | type == "string" and test("^https://[^[:space:]]+$"))
@@ -827,6 +897,7 @@ verified_manifest_is_valid() {
             (.failure.stage | type == "string" and length > 0) and
             (.failure.root | type == "string") and
             (.failure.status | type == "number" and . > 0 and floor == .) and
+            failure_stage_matches_classification and
             (.run_url | type == "string" and test("^https://[^[:space:]]+$"))
         else false end
     ' "$1" >/dev/null
