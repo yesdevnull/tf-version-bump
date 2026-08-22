@@ -381,6 +381,65 @@ func TestCommandReportCountsForceAddedModuleBlock(t *testing.T) {
 	}
 }
 
+func TestProcessFilesSkipsReportBookkeepingWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	flags := &cliFlags{}
+	updates := []ModuleUpdate{{Source: "example/module", Version: "2.0.0"}}
+
+	var updatesApplied, updateErrors int
+	captureStdout(t, func() {
+		updatesApplied, updateErrors = processFiles([]string{file}, updates, flags)
+	})
+
+	if updatesApplied != 1 || updateErrors != 0 {
+		t.Fatalf("processFiles() = (%d, %d), want (1, 0)", updatesApplied, updateErrors)
+	}
+	if flags.report.moduleBlockIDs != nil || flags.report.fileIdentities != nil {
+		t.Fatalf("disabled report bookkeeping = %#v", flags.report)
+	}
+}
+
+func TestProviderModesSkipReportBookkeepingWhenDisabled(t *testing.T) {
+	for _, mode := range []string{"CLI", "config"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			file := writeTestFile(t, dir, "main.tf", `terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+`)
+			flags := &cliFlags{providerName: "aws", toVersion: "~> 5.0", output: "text"}
+			if mode == "config" {
+				flags = &cliFlags{configFile: writeTestFile(t, dir, "updates.yml", "providers:\n  - name: aws\n    version: '~> 5.0'\n"), output: "text"}
+			}
+
+			var runErr error
+			captureStdout(t, func() {
+				if mode == "CLI" {
+					runErr = runCLIMode([]string{file}, flags)
+				} else {
+					runErr = runConfigFileMode([]string{file}, flags)
+				}
+			})
+
+			if runErr != nil {
+				t.Fatalf("provider mode error = %v", runErr)
+			}
+			if flags.report.providerBlockIDs != nil || flags.report.fileIdentities != nil {
+				t.Fatalf("disabled report bookkeeping = %#v", flags.report)
+			}
+			if got := readTestFile(t, file); !strings.Contains(got, `version = "~> 5.0"`) {
+				t.Fatalf("updated Terraform content = %q", got)
+			}
+		})
+	}
+}
+
 func TestCommandReportCountsEachBlockOnce(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "main.tf", `terraform {
