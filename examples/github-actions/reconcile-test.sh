@@ -597,6 +597,86 @@ test_rejects_zero_status_preparation_failures() {
     done
 }
 
+test_rejects_unexpected_contract_logs() {
+    # Production break caught: an unknown regular log basename is accepted into either source
+    # artefact and can reach a trusted verified result despite the bounded stage-log contract.
+    local contract
+    for contract in preparation outcome; do
+        setup_success_fixture
+        if [[ "$contract" == "preparation" ]]; then
+            printf '%s\n' sensitive >"$FIXTURE_BUNDLE/logs/unexpected.log"
+        else
+            printf '%s\n' sensitive >"$FIXTURE_OUTCOME/logs/unexpected.log"
+        fi
+        assert_verification_failure "unexpected $contract log"
+    done
+}
+
+test_binds_failure_classifications_to_stages_at_every_boundary() {
+    # Production breaks caught: a branch or automation classification carries an unrelated stage
+    # through preparation, outcome reconciliation, or final publication and misroutes lifecycle
+    # handling while still satisfying the structural failure schema.
+    local classification valid_stage
+    for classification in branch-update branch-init branch-format automation; do
+        setup_success_fixture
+        case "$classification" in
+            branch-update) valid_stage="tf-version-bump" ;;
+            branch-init) valid_stage="terraform init" ;;
+            branch-format) valid_stage="terraform fmt" ;;
+            automation) valid_stage="tf-version-bump report" ;;
+        esac
+        configure_preparation_failure "$classification" "$valid_stage" 1
+        jq '.failure.stage = "unrelated stage"' "$FIXTURE_BUNDLE/manifest.json" \
+            >"$FIXTURE_ROOT/mismatched-preparation.json"
+        mv "$FIXTURE_ROOT/mismatched-preparation.json" "$FIXTURE_BUNDLE/manifest.json"
+        assert_verification_failure "$classification mismatched preparation stage"
+        unset RECONCILE_VALIDATION_OUTCOME_DIR
+    done
+
+    setup_success_fixture
+    jq '.classification = "branch-validation" | .command_status = 1 |
+        .failure = {stage: "terraform fmt", root: "root", status: 1}' \
+        "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/mismatched-outcome.json"
+    mv "$FIXTURE_ROOT/mismatched-outcome.json" "$FIXTURE_OUTCOME/manifest.json"
+    assert_verification_failure "branch-validation mismatched outcome stage"
+
+    for classification in branch-validation branch-update branch-init branch-format automation; do
+        setup_success_fixture
+        case "$classification" in
+            branch-validation)
+                jq '.classification = "branch-validation" | .command_status = 1 |
+                    .failure = {stage: "terraform validate", root: "root", status: 1}' \
+                    "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/valid-outcome.json"
+                mv "$FIXTURE_ROOT/valid-outcome.json" "$FIXTURE_OUTCOME/manifest.json"
+                run_verify
+                ;;
+            branch-update) valid_stage="tf-version-bump" ;;
+            branch-init) valid_stage="terraform init" ;;
+            branch-format) valid_stage="terraform fmt" ;;
+            automation) valid_stage="tf-version-bump report" ;;
+        esac
+        if [[ "$classification" != "branch-validation" ]]; then
+            configure_preparation_failure "$classification" "$valid_stage" 1
+            run_verify
+        fi
+        chmod -R u+w "$FIXTURE_VERIFIED"
+        jq '.failure.stage = "unrelated stage"' "$FIXTURE_VERIFIED/manifest.json" \
+            >"$FIXTURE_ROOT/mismatched-verified.json"
+        mv "$FIXTURE_ROOT/mismatched-verified.json" "$FIXTURE_VERIFIED/manifest.json"
+        setup_gh_capture
+        if run_publish >"$FIXTURE_ROOT/mismatched-publish.stdout" \
+            2>"$FIXTURE_ROOT/mismatched-publish.stderr"; then
+            fail "publication accepted $classification mismatched verified stage"
+        fi
+        unset RECONCILE_VALIDATION_OUTCOME_DIR
+    done
+
+    setup_success_fixture
+    configure_preparation_failure automation "provider lock policy" 1
+    run_verify || fail "provider-lock automation stage was rejected"
+    unset RECONCILE_VALIDATION_OUTCOME_DIR
+}
+
 test_rejects_post_terraform_mutation() {
     # Production breaks caught: the trusted reconciliation pass accepts accidental mutation after
     # Terraform exits instead of rechecking both source artefacts and the already-applied checkout.
@@ -1318,6 +1398,8 @@ if [[ $# -eq 0 ]]; then
     test_emits_strict_verified_result_variants
     test_workflow_classifies_verified_results_after_reconciliation
     test_rejects_zero_status_preparation_failures
+    test_rejects_unexpected_contract_logs
+    test_binds_failure_classifications_to_stages_at_every_boundary
     test_rejects_post_terraform_mutation
     test_publication_rejects_ambiguous_verified_results
     test_publication_rejects_zero_status_failure_results
