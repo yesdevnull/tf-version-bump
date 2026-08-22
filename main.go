@@ -135,6 +135,13 @@ type preparedReportFile struct {
 	file        *os.File
 }
 
+func (flags *cliFlags) reportRecorder() *updateReport {
+	if flags.reportFile == "" {
+		return nil
+	}
+	return &flags.report
+}
+
 func (report *updateReport) recordModuleBlocks(filename string, blockIndexes []int) {
 	fileID := report.fileIdentity(filename)
 	if report.moduleBlockIDs == nil {
@@ -257,8 +264,8 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (tota
 				continue
 			}
 			if updated {
-				if !flags.dryRun {
-					flags.report.recordModuleBlocks(file, changedBlocks)
+				if report := flags.reportRecorder(); report != nil && !flags.dryRun && len(changedBlocks) > 0 {
+					report.recordModuleBlocks(file, changedBlocks)
 				}
 				prefix := "✓"
 				action := "Updated"
@@ -568,7 +575,7 @@ func runConfigFileMode(files []string, flags *cliFlags) error {
 
 	// Process provider updates if specified
 	for _, provider := range config.Providers {
-		count, errors := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output, &flags.report)
+		count, errors := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output, flags.reportRecorder())
 		providerUpdates += count
 		providerErrors += errors
 	}
@@ -608,7 +615,7 @@ func runCLIMode(files []string, flags *cliFlags) error {
 			fatalf("Error: -to flag is required when using -provider")
 		}
 		var totalErrors int
-		totalUpdates, totalErrors = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output, &flags.report)
+		totalUpdates, totalErrors = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output, flags.reportRecorder())
 		printProviderSummary(flags.providerName, totalUpdates, flags.dryRun, flags.output)
 		if totalErrors > 0 {
 			return fmt.Errorf("%d provider update error(s)", totalErrors)
@@ -748,7 +755,7 @@ func processProviderVersion(files []string, providerName, version string, dryRun
 			continue
 		}
 		if updated {
-			if !dryRun {
+			if report != nil && !dryRun && len(changedBlocks) > 0 {
 				report.recordProviderBlocks(file, changedBlocks)
 			}
 			prefix := "✓"
