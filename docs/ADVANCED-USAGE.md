@@ -19,9 +19,12 @@ validates only the control config with `tf-version-bump`; full state-branch dry 
 deferred.
 
 The POC is designed for organisation-authored modules, official HashiCorp or organisation-developed
-providers, and NVA-controlled egress. It is not a malicious-Terraform sandbox;
-private and first-party providers are trusted code that can execute in the runner. Read the
-example's limits and operator-run disposable-repository battle test before enabling publication.
+providers, and NVA-controlled egress. It is not a malicious-Terraform sandbox; private and
+first-party providers are trusted code that can execute in the runner, and private and first-party
+module sources are trusted code. Post-Terraform checks run on the same runner and detect only
+accidental or non-adversarial mutation. Untrusted provider or module code requires independent
+verification or isolation. Read the example's limits and operator-run disposable-repository battle
+test before enabling publication.
 
 `terraform_fmt` defaults to `false`; both callers opt in with `terraform_fmt: true`. For every
 configured root, preparation runs the updater and `terraform init -upgrade` before formatting is

@@ -4,7 +4,7 @@ This copyable proof of concept discovers selected Terraform state branches, prep
 
 ## Operating assumptions and limits
 
-Use this POC only where Terraform modules are written by your organisation, providers are official HashiCorp providers or organisation-developed providers, and provider/module egress is controlled by an NVA. The scripts do not sandbox malicious Terraform, providers, or modules; private and first-party providers are trusted code that can execute in the runner. A successful validation is only the observed result of Terraform in that run.
+Use this POC only where Terraform modules are written by your organisation, providers are official HashiCorp providers or organisation-developed providers, and provider/module egress is controlled by an NVA. The scripts do not sandbox malicious Terraform, providers, or modules; private and first-party providers are trusted code that can execute in the runner, and private and first-party module sources are trusted code. Post-Terraform checks run on the same runner and detect only accidental or non-adversarial mutation. Untrusted provider or module code requires independent verification or isolation. A successful validation is only the observed result of Terraform in that run.
 
 It intentionally omits comprehensive hostile-content defence, recovery after interrupted publication, automatic clean-up, and exhaustive publication-race handling. A lease or ownership failure is reported for the next run to handle. Review the workflow and helper scripts before using them with a different trust model.
 

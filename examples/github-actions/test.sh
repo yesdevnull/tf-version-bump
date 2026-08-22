@@ -976,12 +976,14 @@ test_copyable_workflow_layout() {
 
 test_operator_documentation_describes_stage_two_contract() {
     # Production break caught: operators copy a stage-one guide that omits the formatting,
-    # verification, publication, and trusted-provider contracts enforced by this workflow.
+    # verification, publication, and trusted-code contracts enforced by this workflow.
     local readme="$SCRIPT_DIR/README.md"
     local advanced_usage="$REPOSITORY_ROOT/docs/ADVANCED-USAGE.md"
 
     for document in "$readme" "$advanced_usage"; do
         [[ -f "$document" ]] || fail "operator documentation is missing: $document"
+        local normalised_document
+        normalised_document=$(tr '\n' ' ' < "$document")
         grep -F '`terraform_fmt` defaults to `false`' "$document" >/dev/null \
             || fail "operator documentation omits the terraform_fmt default: $document"
         grep -F '`discover`, `prepare`, `validate`, and `publish`' "$document" >/dev/null \
@@ -991,8 +993,16 @@ test_operator_documentation_describes_stage_two_contract() {
         grep -F '38428a229a77671fd192fd6a18f5d1f9c404b5557124883f04e6a8bec154b1d2' \
             "$document" >/dev/null \
             || fail "operator documentation omits the pinned archive SHA-256: $document"
-        grep -F 'private and first-party providers are trusted code' "$document" >/dev/null \
+        [[ "$normalised_document" == *"private and first-party providers are trusted code"* ]] \
             || fail "operator documentation omits the trusted-provider limitation: $document"
+        [[ "$normalised_document" == *"private and first-party module sources are trusted code"* ]] \
+            || fail "operator documentation omits the trusted-module limitation: $document"
+        [[ "$normalised_document" == *"Post-Terraform checks run on the same runner"* ]] \
+            || fail "operator documentation omits same-runner post-Terraform checks: $document"
+        [[ "$normalised_document" == *"detect only accidental or non-adversarial mutation"* ]] \
+            || fail "operator documentation overstates post-Terraform mutation detection: $document"
+        [[ "$normalised_document" == *"Untrusted provider or module code requires independent verification or isolation"* ]] \
+            || fail "operator documentation omits the untrusted-code isolation warning: $document"
         grep -F 'chore: run Terraform fmt' "$document" >/dev/null \
             || fail "operator documentation omits the formatting commit subject: $document"
         grep -F 'Module blocks updated' "$document" >/dev/null \
