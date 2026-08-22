@@ -294,6 +294,93 @@ modules:
 	}
 }
 
+func TestCommandReportAggregatesDistinctFiles(t *testing.T) {
+	dir := t.TempDir()
+	firstFile := writeTestFile(t, dir, "first.tf", `terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+module "first" {
+  source  = "example/module"
+  version = "1.0.0"
+}
+`)
+	secondFile := writeTestFile(t, dir, "second.tf", `terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+module "second" {
+  source  = "example/module"
+  version = "1.0.0"
+}
+module "third" {
+  source  = "example/module"
+  version = "1.0.0"
+}
+`)
+	config := writeTestFile(t, dir, "updates.yml", `providers:
+  - name: aws
+    version: "~> 5.0"
+modules:
+  - source: example/module
+    version: 2.0.0
+`)
+	report := dir + "/report.json"
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", dir + "/*.tf", "-config", config, "-report-file", report,
+	})
+
+	if result.exitCode != -1 || result.diagnostics != "" {
+		t.Fatalf("result = %#v", result)
+	}
+	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 3,\n  \"provider_blocks_updated\": 2\n}\n"
+	if got := readTestFile(t, report); got != wantReport {
+		t.Errorf("report = %q, want %q", got, wantReport)
+	}
+	for _, file := range []string{firstFile, secondFile} {
+		content := readTestFile(t, file)
+		if !strings.Contains(content, `version = "~> 5.0"`) || !strings.Contains(content, `version = "2.0.0"`) {
+			t.Errorf("updated Terraform content for %s = %q", file, content)
+		}
+	}
+}
+
+func TestCommandReportCountsForceAddedModuleBlock(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", `module "vpc" {
+  source = "terraform-aws-modules/vpc/aws"
+}
+`)
+	report := dir + "/report.json"
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file,
+		"-module", "terraform-aws-modules/vpc/aws", "-to", "5.0.0",
+		"-force-add", "-report-file", report,
+	})
+
+	if result.exitCode != -1 || result.diagnostics != "" {
+		t.Fatalf("result = %#v", result)
+	}
+	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 0\n}\n"
+	if got := readTestFile(t, report); got != wantReport {
+		t.Errorf("report = %q, want %q", got, wantReport)
+	}
+	wantTerraform := "module \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"5.0.0\"\n}\n"
+	if got := readTestFile(t, file); got != wantTerraform {
+		t.Errorf("Terraform content = %q, want %q", got, wantTerraform)
+	}
+}
+
 func TestCommandReportCountsEachBlockOnce(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "main.tf", `terraform {
