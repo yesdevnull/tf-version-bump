@@ -187,11 +187,11 @@ Success is prefixed `✓`; dry-run lines use `→` with the verb "Would update".
 `quote(s, format)`: `'vpc'` for `text` output, `` `vpc` `` for `md`. Thread `outputFormat`
 through rather than hardcoding quotes.
 
-`-report-file` is the machine-readable automation contract. It writes schema version 1 JSON with
-exact counts of unique module and provider blocks whose version values changed across the complete
-command. Keep human summaries and the report separate: existing summaries count source/file
-operations, while the report counts individual changed blocks. Dry-run reports contain zero counts
-because no file values changed.
+`-report-file` is the machine-readable automation contract. It writes schema version 2 JSON with
+exact counts of unique Terraform, module, and provider blocks whose version values changed across
+the complete command. Keep human summaries and the report separate: existing summaries count
+source/file operations, while the report counts individual changed blocks. Dry-run reports contain
+zero counts because no file values changed.
 
 `-check` uses the existing dry-run update paths but has a separate automation exit contract. The
 mode runners return their update-operation total to `main`: a processing error exits 1, a successful
