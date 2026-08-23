@@ -42,7 +42,9 @@ sources, and version strings; empty items in module filter lists are discarded.
 
 The repository's [JSON Schema](../schema/config-schema.json) provides editor completion and
 validates Terraform-style version-constraint syntax. The CLI's YAML loader does not execute that
-JSON Schema, so use an editor or separate schema validator when you need schema enforcement.
+JSON Schema, so use an editor or separate schema validator when you need schema enforcement. The
+maintained configurations under [`examples/`](../examples/README.md#yaml-configurations) include
+the schema declaration shown above and can be copied as editor-enabled starting points.
 
 ## Validate without updating
 
@@ -55,8 +57,8 @@ tf-version-bump -validate-config versions.yml
 The command rejects malformed YAML, multiple YAML documents, unknown fields, missing required
 entry fields, and configs without any Terraform, provider, or module updates. It trims and
 validates values in the same way as update mode. It does not execute the JSON Schema or validate
-Terraform version-constraint syntax. Validation is standalone and cannot be combined with update
-or report flags.
+Terraform version-constraint syntax. Validation is standalone and cannot be combined with update,
+check, or report flags.
 
 ## Top-level fields
 

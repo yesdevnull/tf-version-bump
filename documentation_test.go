@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 func TestExampleConfigsMatchDocumentedContract(t *testing.T) {
 	configFiles := append(globTestFiles(t, "examples/config-*.yml"), globTestFiles(t, "examples/github-actions/.github/tf-version-bump/*.yml")...)
+	configFiles = append(configFiles, globTestFiles(t, "examples/scenarios/*/config.yml")...)
 	constraintPatterns := compileConstraintRegexps(t, loadConfigSchema(t).Definitions.VersionConstraint)
 
 	for _, filename := range configFiles {
@@ -35,6 +37,17 @@ func TestExampleConfigsMatchDocumentedContract(t *testing.T) {
 		for _, provider := range config.Providers {
 			assertDocumentedVersionConstraint(t, filename, "provider version", provider.Version, constraintPatterns)
 		}
+	}
+}
+
+func TestDocumentationExampleScenariosRunSuccessfully(t *testing.T) {
+	command := exec.Command("examples/run-scenarios.sh")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run example scenarios: %v\n%s", err, output)
+	}
+	if got, want := string(output), "Example scenarios passed\n"; got != want {
+		t.Fatalf("scenario output = %q, want %q", got, want)
 	}
 }
 

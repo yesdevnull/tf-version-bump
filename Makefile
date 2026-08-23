@@ -13,7 +13,7 @@ help:
 	@echo "  clean          - Clean build artifacts and coverage files"
 	@echo "  build          - Build the binary"
 	@echo "  install        - Install the binary"
-	@echo "  docs-check     - Check documentation links, schema, and example configs"
+	@echo "  docs-check     - Check documentation, schema, configs, and runnable examples"
 	@echo "  branch-automation-test - Alias for test-github-actions"
 	@echo "  test-github-actions - Run GitHub Actions example checks (harness + actionlint)"
 	@echo "  actionlint     - Lint GitHub Actions workflows"
@@ -58,7 +58,7 @@ build:
 install:
 	go install -v .
 
-# Check user documentation, its local links, the config schema, and maintained YAML examples.
+# Check user documentation, its local links, the config schema, and maintained examples.
 docs-check:
 	go test -v -run 'Test(ConfigSchema|Documentation|ExampleConfigs)' ./...
 

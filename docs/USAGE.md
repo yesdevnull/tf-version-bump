@@ -21,8 +21,8 @@ tf-version-bump -validate-config <file>
 with the three direct operation flags or their module filters. `-validate-config` checks only the
 YAML runtime contract and cannot be combined with update or report flags.
 
-An eligible module, provider, or Terraform version that already equals its requested literal value
-is a no-op: the command does not rewrite the file or count it as an update.
+An eligible module, provider, or Terraform version that already evaluates to its requested constant
+string is a no-op: the command does not rewrite the file or count it as an update.
 
 ## Flag reference
 
@@ -40,9 +40,10 @@ is a no-op: the command does not rewrite the file or count it as an update.
 | `-provider <name>` | Direct provider mode | Local provider name within `required_providers`. |
 | `-force-add` | Module updates | Add a missing module `version` attribute to registry modules. |
 | `-dry-run` | All update modes | Report changes without writing files. |
+| `-check` | All update modes | Report changes without writing files; exit 2 when updates are required. |
 | `-verbose` | Module updates | Report modules skipped by name or version filters. |
 | `-output <format>` | All update modes | `text` (default) uses single quotes; `md` uses backticks in messages. |
-| `-report-file <path>` | All update modes | Write exact updated module and provider block counts as JSON. |
+| `-report-file <path>` | All update modes | Write exact updated Terraform, module, and provider block counts as JSON. |
 | `-version` | Standalone | Print version, commit, and build date metadata, then exit. |
 
 `-output md` changes quoting in human-readable update messages; it does not emit a structured
@@ -65,19 +66,20 @@ The report has this stable shape:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "terraform_blocks_updated": 1,
   "module_blocks_updated": 4,
   "provider_blocks_updated": 2
 }
 ```
 
-Counts represent unique individual blocks whose version value changed across the complete command.
-Repeated config entries that update the same block count it once. Blocks already at the requested
-version are excluded. Dry runs write zero counts because they do not change files. The report is
-written only after the update operation completes without errors. Its destination is validated
-before Terraform files are modified and cannot be one of the selected Terraform or YAML config
-inputs. Terraform `required_version` changes and changed-file counts are outside this report;
-automation can derive file counts from its version-control diff.
+Counts represent unique individual Terraform, module, and provider blocks whose version value
+changed across the complete command. Repeated config entries that update the same block count it
+once. Blocks already at the requested version are excluded. Dry runs write zero counts because they
+do not change files. The report is written only after the update operation completes without
+errors. Its destination is validated before Terraform files are modified and cannot be one of the
+selected Terraform or YAML config inputs. Changed-file counts are outside this report; automation
+can derive them from its version-control diff.
 
 ## Module updates
 
@@ -104,8 +106,11 @@ module "test_vpc" {
 }
 ```
 
-The tool is designed for literal source and version strings. It does not evaluate HCL
-expressions, Terraform variables, semantic versions, or version constraints.
+Source and version-filter matching use literal strings; the tool does not interpret semantic
+versions or version constraints. For idempotency only, a version expression that HCL can evaluate
+as a wholly known constant string is compared with the requested value before rewriting. Variables,
+function calls, and other context-dependent expressions are not evaluated and are replaced with the
+requested literal string when their block is otherwise eligible.
 
 ### Version filters
 
@@ -250,8 +255,8 @@ Config mode applies updates in this order for each selected set of files:
 2. Providers, in YAML order
 3. Modules, in YAML order
 
-Use `-force-add`, `-dry-run`, `-verbose`, or `-output md` with config mode when required. See
-[Configuration](CONFIGURATION.md) for the complete YAML contract.
+Use `-force-add`, `-dry-run`, `-check`, `-verbose`, or `-output md` with config mode when required.
+See [Configuration](CONFIGURATION.md) for the complete YAML contract.
 
 Config summaries count module entry/file applications as `update(s)`, not distinct files. A file
 matched by two module entries therefore contributes two module updates.
@@ -292,12 +297,17 @@ An invalid pattern or a pattern with no matching files is a fatal command error.
 - Local modules and matching modules without versions produce warnings on standard error.
 - `-verbose` adds explanations for name and version filter skips.
 - `-dry-run` parses every selected file and reports proposed updates without writing.
+- `-check` performs the same no-write preview, exits 0 when no updates are required, and exits 2
+  after a successful run that found updates. Errors exit 1 and take precedence over status 2.
 - Parse, stat, read, and write errors for an individual file are logged and processing continues
   with later files or updates.
 
 File-level errors do not stop processing: the command writes every diagnostic and continues with
 later files or configured updates. After processing, and after any summary, it exits non-zero if
 any selected operation encountered a file-level error.
+
+`-check` cannot be combined with `-dry-run` because their exit contracts differ. It also rejects
+`-report-file` so the check promise covers every output file, not only Terraform inputs.
 
 ## File-writing behaviour
 

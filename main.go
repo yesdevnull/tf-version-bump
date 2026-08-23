@@ -231,7 +231,7 @@ func parseFlags() *cliFlags {
 	flag.StringVar(&flags.output, "output", "text", "Output format: 'text' (default) or 'md' (Markdown)")
 	flag.StringVar(&flags.terraformVersion, "terraform-version", "", "Update Terraform required_version in terraform blocks")
 	flag.StringVar(&flags.providerName, "provider", "", "Provider name to update (e.g., 'aws', 'azurerm')")
-	flag.StringVar(&flags.reportFile, "report-file", "", "Write exact updated module and provider block counts as JSON")
+	flag.StringVar(&flags.reportFile, "report-file", "", "Write exact updated Terraform, module, and provider block counts as JSON")
 	flag.Parse()
 
 	// Validate output format

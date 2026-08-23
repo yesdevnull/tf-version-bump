@@ -90,6 +90,8 @@ Only the named provider is changed; other providers and `required_version` are l
 Create `versions.yml`:
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yesdevnull/tf-version-bump/main/schema/config-schema.json
+
 terraform_version: ">= 1.9"
 
 providers:
@@ -120,7 +122,8 @@ tf-version-bump -validate-config versions.yml
 
 Config mode is exclusive with `-module`, `-provider`, `-terraform-version`, `-to`, and the
 module-filter flags. It can still be combined with global behaviour flags such as `-dry-run`,
-`-force-add`, `-verbose`, `-output`, and `-report-file`.
+`-check`, `-force-add`, `-verbose`, `-output`, and `-report-file`, subject to the check-mode
+restrictions below.
 
 ## Preview and review
 
@@ -147,9 +150,14 @@ terraform validate
 with your Terraform configuration. Use your normal validation and planning workflow before
 deployment.
 
-Automation can pass `-report-file update-report.json` to receive exact updated module and
-provider block counts as JSON. See the [usage reference](docs/USAGE.md#machine-readable-update-report)
-for the report contract.
+For CI, use `-check` instead of `-dry-run`. It writes nothing and exits 0 when all selected values
+are current, 2 when updates are required, and 1 on an error. It cannot be combined with `-dry-run`
+or `-report-file`.
+
+Automation can pass `-report-file update-report.json` in write mode to receive exact updated
+Terraform, module, and provider block counts as JSON. See the
+[usage reference](docs/USAGE.md#machine-readable-update-report) for the report contract and the
+[examples cookbook](examples/README.md#automation-cookbook) for a complete workflow.
 
 ## Common controls
 
