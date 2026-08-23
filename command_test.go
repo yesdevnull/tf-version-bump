@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseFlagsContract(t *testing.T) {
@@ -837,27 +838,34 @@ func TestCommandDoesNotPrepareReportBeforeRequiredFlagValidation(t *testing.T) {
 	}
 }
 
-func TestCommandReportOmitsSameTargetUpdates(t *testing.T) {
+func TestCommandReportOmitsEquivalentLiteralUpdates(t *testing.T) {
 	dir := t.TempDir()
-	file := writeTestFile(t, dir, "main.tf", `terraform {
+	input := `terraform {
+  required_version = "\u003e= 1.5"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "\u007e> 5.0"
     }
   }
 }
 module "current" {
   source  = "example/module"
-  version = "2.0.0"
+  version = "\u0032.0.0"
 }
-`)
+`
+	file := writeTestFile(t, dir, "main.tf", input)
+	wantModTime := time.Unix(1, 0)
+	if err := os.Chtimes(file, wantModTime, wantModTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
 	config := writeTestFile(t, dir, "updates.yml", `providers:
   - name: aws
     version: "~> 5.0"
 modules:
   - source: example/module
     version: 2.0.0
+terraform_version: ">= 1.5"
 `)
 	report := dir + "/report.json"
 
@@ -873,6 +881,16 @@ modules:
 	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 0,\n  \"provider_blocks_updated\": 0\n}\n"
 	if got := readTestFile(t, report); got != wantReport {
 		t.Fatalf("report = %q, want %q", got, wantReport)
+	}
+	if got := readTestFile(t, file); got != input {
+		t.Errorf("content = %q, want unchanged %q", got, input)
+	}
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.ModTime(); !got.Equal(wantModTime) {
+		t.Errorf("modification time = %v, want unchanged %v", got, wantModTime)
 	}
 }
 
