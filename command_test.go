@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"errors"
+	"flag"
 	"os"
 	"reflect"
 	"strings"
@@ -37,6 +39,28 @@ func TestParseFlagsRejectsInvalidOutput(t *testing.T) {
 	})
 	if got != "Error: Invalid output format 'invalid'. Must be 'text' or 'md'\n" {
 		t.Fatalf("diagnostic: %q", got)
+	}
+}
+
+func TestParseFlagsPreservesConfiguredUsageOutput(t *testing.T) {
+	originalArgs := os.Args
+	originalFlagSet := flag.CommandLine
+	t.Cleanup(func() {
+		os.Args = originalArgs
+		flag.CommandLine = originalFlagSet
+	})
+
+	var usage bytes.Buffer
+	configuredFlagSet := flag.NewFlagSet("tf-version-bump", flag.ContinueOnError)
+	configuredFlagSet.SetOutput(&usage)
+	flag.CommandLine = configuredFlagSet
+	os.Args = []string{"tf-version-bump", "-version"}
+
+	_ = parseFlags()
+	flag.PrintDefaults()
+
+	if !strings.Contains(usage.String(), "-check") {
+		t.Fatalf("usage output = %q, want registered flags on the configured writer", usage.String())
 	}
 }
 
