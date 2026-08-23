@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestUpdateProviderVersionContract(t *testing.T) {
@@ -199,6 +200,50 @@ terraform {
 			}
 			if got := readTestFile(t, filename); got != tt.want {
 				t.Errorf("content mismatch:\n--- got ---\n%s--- want ---\n%s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUpdateProviderVersionMatchingVersionDoesNotWrite(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "block syntax",
+			input: "terraform {\nrequired_providers {\naws {\nsource=\"hashicorp/aws\"\nversion=\"~> 5.0\"\n}\n}\n}\n",
+		},
+		{
+			name:  "attribute syntax",
+			input: "terraform {\nrequired_providers {\naws={source=\"hashicorp/aws\",version=\"~> 5.0\"}\n}\n}\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filename := writeTestFile(t, t.TempDir(), "main.tf", tt.input)
+			wantModTime := time.Unix(1, 0)
+			if err := os.Chtimes(filename, wantModTime, wantModTime); err != nil {
+				t.Fatalf("chtimes: %v", err)
+			}
+
+			updated, err := updateProviderVersion(filename, "aws", "~> 5.0", false)
+			if err != nil {
+				t.Fatalf("updateProviderVersion returned error: %v", err)
+			}
+			if updated {
+				t.Fatal("updated = true, want false")
+			}
+			if got := readTestFile(t, filename); got != tt.input {
+				t.Errorf("content = %q, want unchanged %q", got, tt.input)
+			}
+			info, err := os.Stat(filename)
+			if err != nil {
+				t.Fatalf("stat: %v", err)
+			}
+			if got := info.ModTime(); !got.Equal(wantModTime) {
+				t.Errorf("modification time = %v, want unchanged %v", got, wantModTime)
 			}
 		})
 	}

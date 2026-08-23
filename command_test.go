@@ -757,7 +757,7 @@ func TestCommandDoesNotPrepareReportBeforeRequiredFlagValidation(t *testing.T) {
 	}
 }
 
-func TestCommandReportPreservesSameTargetHumanOutput(t *testing.T) {
+func TestCommandReportOmitsSameTargetUpdates(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "main.tf", `terraform {
   required_providers {
@@ -785,14 +785,8 @@ modules:
 		"tf-version-bump", "-pattern", file, "-config", config, "-report-file", report,
 	})
 
-	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n" +
-		"✓ Updated provider 'aws' to version '~> 5.0' in " + file + "\n" +
-		"✓ Updated module source 'example/module' to version '2.0.0' in " + file + "\n\n" +
-		"==================================================\n" +
-		"Config File Update Summary\n" +
-		"==================================================\n" +
-		"Providers: 1 update(s) applied\n" +
-		"Modules: 1 update(s) applied\n"
+	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\n" +
+		"No updates were performed. Config file may be empty or contain no matching items.\n"
 	if result.exitCode != -1 || result.diagnostics != "" || result.stdout != wantStdout {
 		t.Fatalf("result = %#v, want stdout %q", result, wantStdout)
 	}
