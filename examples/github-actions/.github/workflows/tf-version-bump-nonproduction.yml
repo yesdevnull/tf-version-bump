@@ -46,8 +46,8 @@ jobs:
       terraform_directories: .
       terraform_fmt: true
       terraform_version: 1.15.5
-      tf_version_bump_version: v1.0.0-rc.9
-      tf_version_bump_archive_sha256: 38428a229a77671fd192fd6a18f5d1f9c404b5557124883f04e6a8bec154b1d2
+      tf_version_bump_version: v1.0.0-rc.10
+      tf_version_bump_archive_sha256: 532783cd3c6834a37616ed81ed76ef99ec343cc64d9664dd67c7eb325420c830
       dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
       max_parallel: 4
       commit_author_name: github-actions[bot]

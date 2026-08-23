@@ -37,9 +37,9 @@ SUCCESSFUL_PREPARATION_READY=false
 TEST_TMP_ROOT=$(mktemp -d)
 TEST_TMP_ROOT=$(realpath "$TEST_TMP_ROOT")
 
-TF_VERSION_BUMP_VERSION="v1.0.0-rc.9"
-TF_VERSION_BUMP_ARCHIVE_SHA256="38428a229a77671fd192fd6a18f5d1f9c404b5557124883f04e6a8bec154b1d2"
-TF_VERSION_BUMP_ARCHIVE_URL="https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0-rc.9/tf-version-bump_1.0.0-rc.9_linux_x86_64.tar.gz"
+TF_VERSION_BUMP_VERSION="v1.0.0-rc.10"
+TF_VERSION_BUMP_ARCHIVE_SHA256="532783cd3c6834a37616ed81ed76ef99ec343cc64d9664dd67c7eb325420c830"
+TF_VERSION_BUMP_ARCHIVE_URL="https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0-rc.10/tf-version-bump_1.0.0-rc.10_linux_x86_64.tar.gz"
 TF_VERSION_BUMP_PREFETCH_CONNECT_TIMEOUT_SECONDS=10
 TF_VERSION_BUMP_PREFETCH_MAX_TIME_SECONDS=120
 TERRAFORM_VERSION="1.15.5"
@@ -560,7 +560,7 @@ prepopulate_verified_processing_release_cache() {
     local actual_sha256
     actual_sha256=$(sha256_file "$verified_archive")
     [[ "$actual_sha256" == "$TF_VERSION_BUMP_ARCHIVE_SHA256" ]] \
-        || fail "independently downloaded rc.9 fixture archive failed checksum verification"
+        || fail "independently downloaded rc.10 fixture archive failed checksum verification"
 
     local cache_directory="$PROCESS_RUNNER_TEMP/tf-version-bump-release-cache"
     local cached_archive="$cache_directory/$TF_VERSION_BUMP_ARCHIVE_SHA256.tar.gz"
@@ -959,11 +959,6 @@ test_operator_documentation_describes_stage_two_contract() {
             || fail "operator documentation omits the terraform_fmt default: $document"
         grep -F '`discover`, `prepare`, `validate`, and `publish`' "$document" >/dev/null \
             || fail "operator documentation omits the four-job topology: $document"
-        grep -F 'v1.0.0-rc.9' "$document" >/dev/null \
-            || fail "operator documentation omits the rc.9 pin: $document"
-        grep -F '38428a229a77671fd192fd6a18f5d1f9c404b5557124883f04e6a8bec154b1d2' \
-            "$document" >/dev/null \
-            || fail "operator documentation omits the pinned archive SHA-256: $document"
         [[ "$normalised_document" == *"private and first-party providers are trusted code"* ]] \
             || fail "operator documentation omits the trusted-provider limitation: $document"
         [[ "$normalised_document" == *"private and first-party module sources are trusted code"* ]] \
@@ -992,6 +987,14 @@ test_operator_documentation_describes_stage_two_contract() {
 
     grep -F 'both supplied callers set `terraform_fmt: true`' "$readme" >/dev/null \
         || fail "example README omits caller formatting opt-in"
+    grep -F "$TF_VERSION_BUMP_VERSION" "$readme" >/dev/null \
+        || fail "example README omits the rc.10 pin"
+    grep -F "$TF_VERSION_BUMP_ARCHIVE_SHA256" "$readme" >/dev/null \
+        || fail "example README omits the pinned archive SHA-256"
+    local normalised_readme
+    normalised_readme=$(tr '\n' ' ' < "$readme")
+    [[ "$normalised_readme" == *"validate only the YAML runtime contract without selecting Terraform files"* ]] \
+        || fail "example README does not describe standalone configuration validation"
     grep -F 'updater and `terraform init -upgrade` before formatting is eligible' "$readme" >/dev/null \
         || fail "example README omits per-root update and initialisation ordering"
     grep -F '`terraform fmt -recursive` in every configured root' "$readme" >/dev/null \
@@ -1254,12 +1257,16 @@ test_config_validation_workflow_is_read_only() {
             (.run | contains("tar -xzf")) and
             ((.run | index("sha256sum --check --status")) < (.run | index("tar -xzf"))) and
             (.run | contains("tf-version-bump " + $release_version))) and
-        any(.[]; .name == "Validate configuration dry runs" and
-            (.run | contains("mktemp -d")) and
+        any(.[]; .name == "Validate configuration" and
             (.run | contains(".github/tf-version-bump/nonproduction.yml")) and
             (.run | contains(".github/tf-version-bump/production.yml")) and
-            (.run | contains("-pattern \"$fixture_directory/main.tf\" -config \"$config\" -dry-run")))
-    ' >/dev/null || fail "config validation workflow does not verify and dry-run both example configs"
+            (.run | contains("\"$TF_VERSION_BUMP_BINARY\" -validate-config \"$config\"")) and
+            (.run | contains("mktemp -d") | not) and
+            (.run | contains("fixture") | not) and
+            (.run | contains("-pattern") | not) and
+            (.run | test("(^|[[:space:]])-config([[:space:]]|$)") | not) and
+            (.run | contains("-dry-run") | not))
+    ' >/dev/null || fail "config validation workflow does not directly validate both example configs"
 }
 
 test_workflows_keep_representative_execution_boundaries() {
@@ -2321,7 +2328,7 @@ EOF
 }
 
 test_processing_rejects_invalid_update_reports_as_automation() {
-    # Production break caught: preparation accepts absent, malformed, non-v1, non-integral, or
+    # Production break caught: preparation accepts absent, malformed, non-v2, non-integral, or
     # extended updater reports and exposes their partial working-tree changes for publication.
     local row report_payload
     while IFS=$'\t' read -r row report_payload; do
@@ -2346,10 +2353,13 @@ test_processing_rejects_invalid_update_reports_as_automation() {
     done <<'EOF'
 missing	__MISSING__
 malformed	not json
-schema-2	{"schema_version":2,"module_blocks_updated":0,"provider_blocks_updated":0}
-negative-count	{"schema_version":1,"module_blocks_updated":-1,"provider_blocks_updated":0}
-fractional-count	{"schema_version":1,"module_blocks_updated":0,"provider_blocks_updated":1.5}
-extra-key	{"schema_version":1,"module_blocks_updated":0,"provider_blocks_updated":0,"extra":true}
+schema-1	{"schema_version":1,"terraform_blocks_updated":0,"module_blocks_updated":0,"provider_blocks_updated":0}
+missing-terraform-count	{"schema_version":2,"module_blocks_updated":0,"provider_blocks_updated":0}
+negative-terraform-count	{"schema_version":2,"terraform_blocks_updated":-1,"module_blocks_updated":0,"provider_blocks_updated":0}
+fractional-terraform-count	{"schema_version":2,"terraform_blocks_updated":1.5,"module_blocks_updated":0,"provider_blocks_updated":0}
+negative-module-count	{"schema_version":2,"terraform_blocks_updated":0,"module_blocks_updated":-1,"provider_blocks_updated":0}
+fractional-provider-count	{"schema_version":2,"terraform_blocks_updated":0,"module_blocks_updated":0,"provider_blocks_updated":1.5}
+extra-key	{"schema_version":2,"terraform_blocks_updated":0,"module_blocks_updated":0,"provider_blocks_updated":0,"extra":true}
 EOF
 }
 

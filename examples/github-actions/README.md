@@ -37,7 +37,8 @@ Review and commit the copied files. The example supplies two callers:
 Both callers run only when the workflow revision is on the default branch. Their schedules are Monday 04:17 and Sunday 04:43 respectively in `Australia/Melbourne`.
 Changing `.github/tf-version-bump/nonproduction.yml` or `production.yml` on that branch also starts
 the matching caller. The separate configuration-validation workflow runs for pull requests that
-change either file.
+change either file. Pull requests validate only the YAML runtime contract without selecting
+Terraform files.
 
 Configure Actions to permit the workflow's `contents`, `pull-requests`, and `issues` write permissions. Before live publication, enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** for the repository or organisation.
 
@@ -79,7 +80,7 @@ Each configured root is processed independently. Keep the config path repository
 When a root has provider selections, its resulting `.terraform.lock.hcl` change is included in the
 update branch for reproducible runs. A provider-free root can legitimately have no lock file.
 
-The callers pin `tf-version-bump` to `v1.0.0-rc.9` and verify the archive SHA-256 `38428a229a77671fd192fd6a18f5d1f9c404b5557124883f04e6a8bec154b1d2` before execution.
+The callers pin `tf-version-bump` to `v1.0.0-rc.10` and verify the archive SHA-256 `532783cd3c6834a37616ed81ed76ef99ec343cc64d9664dd67c7eb325420c830` before execution.
 
 ## Results, failures, and pull requests
 

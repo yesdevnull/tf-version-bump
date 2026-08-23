@@ -276,8 +276,9 @@ accumulate_update_report() {
     local report=$1 relative_root=$2
     jq -e '
         type == "object" and
-        (keys == ["module_blocks_updated", "provider_blocks_updated", "schema_version"]) and
-        .schema_version == 1 and
+        (keys == ["module_blocks_updated", "provider_blocks_updated", "schema_version", "terraform_blocks_updated"]) and
+        .schema_version == 2 and
+        (.terraform_blocks_updated | type == "number" and . >= 0 and floor == .) and
         (.module_blocks_updated | type == "number" and . >= 0 and floor == .) and
         (.provider_blocks_updated | type == "number" and . >= 0 and floor == .)
     ' "$report" >/dev/null || return 1
