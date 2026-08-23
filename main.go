@@ -13,7 +13,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -833,18 +832,13 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 
 	// Track if we made any changes
 	updated := false
-	targetVersionTokens := bytes.TrimSpace(hclwrite.TokensForValue(cty.StringVal(version)).Bytes())
-
 	// Iterate through all blocks in the file
 	for _, block := range file.Body().Blocks() {
 		// Look for terraform blocks
 		if block.Type() == "terraform" {
 			currentVersion := block.Body().GetAttribute("required_version")
-			if currentVersion != nil {
-				currentTokens := currentVersion.Expr().BuildTokens(nil)
-				if bytes.Equal(bytes.TrimSpace(currentTokens.Bytes()), targetVersionTokens) {
-					continue
-				}
+			if currentVersion != nil && attributeHasStringValue(currentVersion, version) {
+				continue
 			}
 			// Update or add the required_version attribute
 			block.Body().SetAttributeValue("required_version", cty.StringVal(version))
@@ -1058,8 +1052,13 @@ func replaceProviderObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression 
 }
 
 func expressionHasStringValue(expression []byte, value string) bool {
-	target := hclwrite.TokensForValue(cty.StringVal(value)).Bytes()
-	return bytes.Equal(bytes.TrimSpace(expression), bytes.TrimSpace(target))
+	expr, diags := hclsyntax.ParseExpression(expression, "inline", hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		return false
+	}
+	expressionValue, diags := expr.Value(&hcl.EvalContext{})
+	return !diags.HasErrors() && expressionValue.IsKnown() && !expressionValue.IsNull() &&
+		expressionValue.Type().Equals(cty.String) && expressionValue.AsString() == value
 }
 
 func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
