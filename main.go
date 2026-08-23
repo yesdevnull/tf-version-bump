@@ -808,6 +808,10 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 	for _, block := range file.Body().Blocks() {
 		// Look for terraform blocks
 		if block.Type() == "terraform" {
+			currentVersion := block.Body().GetAttribute("required_version")
+			if currentVersion != nil && attributeStringValue(currentVersion) == version {
+				continue
+			}
 			// Update or add the required_version attribute
 			block.Body().SetAttributeValue("required_version", cty.StringVal(version))
 			updated = true

@@ -354,6 +354,48 @@ modules:
 	}
 }
 
+func TestCommandReportCountsChangedBlockStyleProviders(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", `terraform {
+  required_providers {
+    aws {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+terraform {
+  required_providers {
+    aws {
+      source  = "hashicorp/aws"
+      version = "~> 4.1"
+    }
+  }
+}
+terraform {
+  required_providers {
+    aws {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+`)
+	report := dir + "/report.json"
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-provider", "aws", "-to", "~> 5.0", "-report-file", report,
+	})
+
+	if result.exitCode != -1 || result.diagnostics != "" {
+		t.Fatalf("result = %#v", result)
+	}
+	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 0,\n  \"provider_blocks_updated\": 2\n}\n"
+	if got := readTestFile(t, report); got != wantReport {
+		t.Errorf("report = %q, want %q", got, wantReport)
+	}
+}
+
 func TestCommandReportCountsForceAddedModuleBlock(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "main.tf", `module "vpc" {
@@ -485,14 +527,31 @@ modules:
 	}
 }
 
-func TestCommandReportCountsHardLinkedBlockOnce(t *testing.T) {
+func TestCommandReportCountsHardLinkedBlocksOnce(t *testing.T) {
 	dir := t.TempDir()
-	file := writeTestFile(t, dir, "a.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	file := writeTestFile(t, dir, "a.tf", `terraform {
+  required_providers {
+    aws {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+module "example" {
+  source  = "example/module"
+  version = "1.0.0"
+}
+`)
 	linkedFile := dir + "/b.tf"
 	if err := os.Link(file, linkedFile); err != nil {
 		t.Skipf("cannot create hard link: %v", err)
 	}
-	config := writeTestFile(t, dir, "updates.yml", `modules:
+	config := writeTestFile(t, dir, "updates.yml", `providers:
+  - name: aws
+    version: "~> 5.0"
+  - name: aws
+    version: "~> 6.0"
+modules:
   - source: example/module
     version: 2.0.0
   - source: example/module
@@ -507,12 +566,30 @@ func TestCommandReportCountsHardLinkedBlockOnce(t *testing.T) {
 	if result.exitCode != -1 || result.diagnostics != "" {
 		t.Fatalf("result = %#v", result)
 	}
-	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 0\n}\n"
+	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 1\n}\n"
 	if got := readTestFile(t, report); got != wantReport {
 		t.Errorf("report = %q, want %q", got, wantReport)
 	}
-	if got := readTestFile(t, linkedFile); !strings.Contains(got, `version = "3.0.0"`) {
+	if got := readTestFile(t, linkedFile); !strings.Contains(got, `version = "3.0.0"`) || !strings.Contains(got, `version = "~> 6.0"`) {
 		t.Errorf("final Terraform content = %q", got)
+	}
+}
+
+func TestCommandReplacesExistingReportAfterSuccessfulUpdate(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	report := writeTestFile(t, dir, "report.json", "stale report\n")
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-report-file", report,
+	})
+
+	if result.exitCode != -1 || result.diagnostics != "" {
+		t.Fatalf("result = %#v", result)
+	}
+	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 0\n}\n"
+	if got := readTestFile(t, report); got != wantReport {
+		t.Errorf("report = %q, want %q", got, wantReport)
 	}
 }
 
@@ -626,7 +703,8 @@ func TestCommandRejectsReportDirectoryBeforeUpdating(t *testing.T) {
 func TestCommandDiscardsPreparedReportAfterUpdateFailure(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "main.tf", "!!!\n")
-	report := dir + "/report.json"
+	reportContent := "previous report\n"
+	report := writeTestFile(t, dir, "report.json", reportContent)
 
 	result := runMainCommand(t, []string{
 		"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-report-file", report,
@@ -639,8 +717,11 @@ func TestCommandDiscardsPreparedReportAfterUpdateFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read temporary directory: %v", err)
 	}
-	if len(entries) != 1 || entries[0].Name() != "main.tf" {
-		t.Errorf("temporary directory entries = %v, want only main.tf", entries)
+	if len(entries) != 2 || entries[0].Name() != "main.tf" || entries[1].Name() != "report.json" {
+		t.Errorf("temporary directory entries = %v, want main.tf and report.json", entries)
+	}
+	if got := readTestFile(t, report); got != reportContent {
+		t.Errorf("report = %q, want preserved %q", got, reportContent)
 	}
 }
 

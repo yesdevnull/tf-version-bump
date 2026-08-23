@@ -219,6 +219,28 @@ func TestUpdateProviderVersionDryRunContract(t *testing.T) {
 	}
 }
 
+func TestUpdateProviderVersionPreservesPermissions(t *testing.T) {
+	filename := writeTestFile(t, t.TempDir(), "main.tf", "terraform {\n  required_providers {\n    aws {\n      version = \"~> 4.0\"\n    }\n  }\n}\n")
+	if err := os.Chmod(filename, 0o640); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+
+	updated, err := updateProviderVersion(filename, "aws", "~> 5.0", false)
+	if err != nil {
+		t.Fatalf("updateProviderVersion returned error: %v", err)
+	}
+	if !updated {
+		t.Fatal("updated = false, want true")
+	}
+	info, err := os.Stat(filename)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Errorf("permissions = %o, want 640", got)
+	}
+}
+
 func TestUpdateProviderVersionErrors(t *testing.T) {
 	t.Run("missing file", func(t *testing.T) {
 		_, err := updateProviderVersion(t.TempDir()+"/missing.tf", "aws", "~> 5.0", false)
