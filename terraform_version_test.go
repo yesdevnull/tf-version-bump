@@ -70,6 +70,13 @@ terraform {
 `,
 		},
 		{
+			name: "leaves matching required version unchanged",
+			input: `terraform { required_version = ">= 1.5" }
+`,
+			want: `terraform { required_version = ">= 1.5" }
+`,
+		},
+		{
 			name: "adds required version to terraform block without one",
 			input: `terraform {
   required_providers {
@@ -106,6 +113,28 @@ terraform {
 				t.Errorf("content mismatch:\n--- got ---\n%s--- want ---\n%s", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestUpdateTerraformVersionPreservesPermissions(t *testing.T) {
+	filename := writeTestFile(t, t.TempDir(), "main.tf", "terraform {\n  required_version = \">= 1.0\"\n}\n")
+	if err := os.Chmod(filename, 0o640); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+
+	updated, err := updateTerraformVersion(filename, ">= 1.5", false)
+	if err != nil {
+		t.Fatalf("updateTerraformVersion returned error: %v", err)
+	}
+	if !updated {
+		t.Fatal("updated = false, want true")
+	}
+	info, err := os.Stat(filename)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Errorf("permissions = %o, want 640", got)
 	}
 }
 
