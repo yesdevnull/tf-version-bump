@@ -45,8 +45,9 @@ is a no-op: the command does not rewrite the file or count it as an update.
 | `-report-file <path>` | All update modes | Write exact updated module and provider block counts as JSON. |
 | `-version` | Standalone | Print version, commit, and build date metadata, then exit. |
 
-`-output md` changes quoting in human-readable messages; it does not emit a structured Markdown
-document or machine-readable result.
+`-output md` changes quoting in human-readable update messages; it does not emit a structured
+Markdown document or machine-readable result. Standalone validation keeps its fixed
+`Config '<path>' is valid` success message in every output format.
 
 ### Machine-readable update report
 
