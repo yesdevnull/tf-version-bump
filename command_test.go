@@ -313,6 +313,41 @@ func TestCommandCheckRejectsConflictingFlags(t *testing.T) {
 	}
 }
 
+func TestCommandCheckRejectsInvalidArgumentsWithErrorStatus(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "unknown flag",
+			args: []string{"-check", "-module", "example/module", "-to", "2.0.0", "-bogus"},
+			want: "Error: flag provided but not defined: -bogus\n",
+		},
+		{
+			name: "missing flag value",
+			args: []string{"-check", "-module", "example/module", "-to", "2.0.0", "-pattern"},
+			want: "Error: flag needs an argument: -pattern\n",
+		},
+		{
+			name: "positional argument",
+			args: []string{"-check", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "trailing"},
+			want: "Error: unexpected positional argument(s): trailing\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := runMainCommand(t, append([]string{"tf-version-bump"}, tt.args...))
+			if result.stdout != "" || result.diagnostics != tt.want || result.exitCode != 1 {
+				t.Fatalf("result = %#v, want diagnostic %q and exit 1", result, tt.want)
+			}
+		})
+	}
+}
+
 func TestRunConfigFileModeReturnsLoadErrorContract(t *testing.T) {
 	_, err := runConfigFileMode(nil, &cliFlags{configFile: "does-not-exist"})
 	if err == nil || !errors.Is(err, os.ErrNotExist) || !strings.HasPrefix(err.Error(), "Error loading config file:") {

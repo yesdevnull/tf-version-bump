@@ -79,7 +79,7 @@ golangci-lint run --fix                                   # Auto-fix issues
 # Dry run
 ./tf-version-bump -pattern "*.tf" -module "..." -to "..." -dry-run
 
-# CI check: 0 when current, 2 when updates are required, 1 on error
+# CI check: 0 with no eligible update, 2 when updates are required, 1 on error
 ./tf-version-bump -pattern "**/*.tf" -config examples/config-basic.yml -check
 
 # Update Terraform version

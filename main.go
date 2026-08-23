@@ -14,8 +14,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -214,25 +216,43 @@ func canonicalFileIdentity(filename string) string {
 // parseFlags parses and validates command-line flags
 func parseFlags() *cliFlags {
 	flags := &cliFlags{}
+	flagSet := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	flagSet.SetOutput(io.Discard)
+	flag.CommandLine = flagSet
 
-	flag.StringVar(&flags.pattern, "pattern", "", "Glob pattern for Terraform files; '**' matches any depth (e.g., '*.tf' or 'modules/**/*.tf')")
-	flag.StringVar(&flags.moduleSource, "module", "", "Source of the module to update (e.g., 'terraform-aws-modules/vpc/aws')")
-	flag.StringVar(&flags.toVersion, "to", "", "Desired version number")
-	flag.Var(&flags.fromVersions, "from", "Optional: version to update from (can be specified multiple times, e.g., -from 3.0.0 -from '~> 3.0')")
-	flag.Var(&flags.ignoreVersions, "ignore-version", "Optional: version(s) to skip (can be specified multiple times, e.g., -ignore-version 3.0.0 -ignore-version '~> 3.0')")
-	flag.StringVar(&flags.ignoreModules, "ignore-modules", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
-	flag.StringVar(&flags.configFile, "config", "", "Path to YAML config file with multiple module updates")
-	flag.StringVar(&flags.validationConfigFile, "validate-config", "", "Validate a YAML config file without updating Terraform files")
-	flag.BoolVar(&flags.forceAdd, "force-add", false, "Add a missing version attribute to registry modules (default: skip with warning)")
-	flag.BoolVar(&flags.dryRun, "dry-run", false, "Show what changes would be made without actually modifying files")
-	flag.BoolVar(&flags.check, "check", false, "Exit 2 when updates are required without modifying files")
-	flag.BoolVar(&flags.verbose, "verbose", false, "Show verbose output including skipped modules")
-	flag.BoolVar(&flags.showVersion, "version", false, "Print version information and exit")
-	flag.StringVar(&flags.output, "output", "text", "Output format: 'text' (default) or 'md' (Markdown)")
-	flag.StringVar(&flags.terraformVersion, "terraform-version", "", "Update Terraform required_version in terraform blocks")
-	flag.StringVar(&flags.providerName, "provider", "", "Provider name to update (e.g., 'aws', 'azurerm')")
-	flag.StringVar(&flags.reportFile, "report-file", "", "Write exact updated Terraform, module, and provider block counts as JSON")
-	flag.Parse()
+	flagSet.StringVar(&flags.pattern, "pattern", "", "Glob pattern for Terraform files; '**' matches any depth (e.g., '*.tf' or 'modules/**/*.tf')")
+	flagSet.StringVar(&flags.moduleSource, "module", "", "Source of the module to update (e.g., 'terraform-aws-modules/vpc/aws')")
+	flagSet.StringVar(&flags.toVersion, "to", "", "Desired version number")
+	flagSet.Var(&flags.fromVersions, "from", "Optional: version to update from (can be specified multiple times, e.g., -from 3.0.0 -from '~> 3.0')")
+	flagSet.Var(&flags.ignoreVersions, "ignore-version", "Optional: version(s) to skip (can be specified multiple times, e.g., -ignore-version 3.0.0 -ignore-version '~> 3.0')")
+	flagSet.StringVar(&flags.ignoreModules, "ignore-modules", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
+	flagSet.StringVar(&flags.configFile, "config", "", "Path to YAML config file with multiple module updates")
+	flagSet.StringVar(&flags.validationConfigFile, "validate-config", "", "Validate a YAML config file without updating Terraform files")
+	flagSet.BoolVar(&flags.forceAdd, "force-add", false, "Add a missing version attribute to registry modules (default: skip with warning)")
+	flagSet.BoolVar(&flags.dryRun, "dry-run", false, "Show what changes would be made without actually modifying files")
+	flagSet.BoolVar(&flags.check, "check", false, "Exit 2 when updates are required without modifying files")
+	flagSet.BoolVar(&flags.verbose, "verbose", false, "Show verbose output including skipped modules")
+	flagSet.BoolVar(&flags.showVersion, "version", false, "Print version information and exit")
+	flagSet.StringVar(&flags.output, "output", "text", "Output format: 'text' (default) or 'md' (Markdown)")
+	flagSet.StringVar(&flags.terraformVersion, "terraform-version", "", "Update Terraform required_version in terraform blocks")
+	flagSet.StringVar(&flags.providerName, "provider", "", "Provider name to update (e.g., 'aws', 'azurerm')")
+	flagSet.StringVar(&flags.reportFile, "report-file", "", "Write exact updated Terraform, module, and provider block counts as JSON")
+	if err := flagSet.Parse(os.Args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			flagSet.SetOutput(os.Stderr)
+			fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+			flagSet.PrintDefaults()
+			exitFunc(0)
+			return flags
+		}
+		fatalf("Error: %v", err)
+		return flags
+	}
+	flagSet.SetOutput(os.Stderr)
+	if flagSet.NArg() > 0 {
+		fatalf("Error: unexpected positional argument(s): %s", strings.Join(flagSet.Args(), " "))
+		return flags
+	}
 
 	// Validate output format
 	if flags.output != "text" && flags.output != "md" {

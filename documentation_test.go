@@ -41,7 +41,11 @@ func TestExampleConfigsMatchDocumentedContract(t *testing.T) {
 }
 
 func TestDocumentationExampleScenariosRunSuccessfully(t *testing.T) {
-	command := exec.Command("examples/run-scenarios.sh")
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is required to run the maintained example scenarios")
+	}
+	command := exec.Command(bash, "examples/run-scenarios.sh")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run example scenarios: %v\n%s", err, output)

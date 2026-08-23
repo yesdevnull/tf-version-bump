@@ -297,8 +297,9 @@ An invalid pattern or a pattern with no matching files is a fatal command error.
 - Local modules and matching modules without versions produce warnings on standard error.
 - `-verbose` adds explanations for name and version filter skips.
 - `-dry-run` parses every selected file and reports proposed updates without writing.
-- `-check` performs the same no-write preview, exits 0 when no updates are required, and exits 2
-  after a successful run that found updates. Errors exit 1 and take precedence over status 2.
+- `-check` performs the same no-write preview, exits 0 when no eligible version value would change,
+  and exits 2 after a successful run that found updates. Errors exit 1 and take precedence over
+  status 2.
 - Parse, stat, read, and write errors for an individual file are logged and processing continues
   with later files or updates.
 
@@ -308,6 +309,9 @@ any selected operation encountered a file-level error.
 
 `-check` cannot be combined with `-dry-run` because their exit contracts differ. It also rejects
 `-report-file` so the check promise covers every output file, not only Terraform inputs.
+Status 0 does not prove that every requested source or block exists: filters, ignored modules,
+unmatched targets, and missing module versions skipped without `-force-add` can leave no eligible
+update.
 
 ## File-writing behaviour
 
