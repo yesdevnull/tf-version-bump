@@ -43,12 +43,12 @@ Preview the human-readable changes without writing:
 tf-version-bump -pattern "**/*.tf" -config versions.yml -dry-run
 ```
 
-For a CI or pre-commit gate, use `-check`. Status 0 means the selected values are current, status 2
-means updates are required, and status 1 means validation or processing failed:
+For a CI or pre-commit gate, use `-check`. Status 0 means no eligible version value would change,
+status 2 means updates are required, and status 1 means validation or processing failed:
 
 ```bash
 if tf-version-bump -pattern "**/*.tf" -config versions.yml -check; then
-  echo "Terraform versions are current"
+  echo "No eligible Terraform version updates found"
 else
   check_status=$?
   if [ "$check_status" -eq 2 ]; then
@@ -58,6 +58,9 @@ else
   fi
 fi
 ```
+
+Status 0 does not prove that every configured target exists or was eligible. Ignored or unmatched
+modules and matching modules skipped for a missing `version` can also produce no eligible update.
 
 Apply the updates and write exact block counts independently of the human-readable summary:
 

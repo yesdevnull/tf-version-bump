@@ -150,9 +150,10 @@ terraform validate
 with your Terraform configuration. Use your normal validation and planning workflow before
 deployment.
 
-For CI, use `-check` instead of `-dry-run`. It writes nothing and exits 0 when all selected values
-are current, 2 when updates are required, and 1 on an error. It cannot be combined with `-dry-run`
-or `-report-file`.
+For CI, use `-check` instead of `-dry-run`. It writes nothing and exits 0 when no eligible version
+value would change, 2 when updates are required, and 1 on an error. Ignored modules, unmatched
+targets, and matching modules skipped for a missing `version` can still return 0. Check mode cannot
+be combined with `-dry-run` or `-report-file`.
 
 Automation can pass `-report-file update-report.json` in write mode to receive exact updated
 Terraform, module, and provider block counts as JSON. See the

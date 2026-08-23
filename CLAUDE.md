@@ -195,9 +195,9 @@ zero counts because no file values changed.
 
 `-check` uses the existing dry-run update paths but has a separate automation exit contract. The
 mode runners return their update-operation total to `main`: a processing error exits 1, a successful
-check with a positive total exits 2, and a successful already-current check returns normally with
-status 0. Check mode rejects `-dry-run` and `-report-file`, so it never writes Terraform or report
-files.
+check with a positive total exits 2, and a successful check with no eligible update returns normally
+with status 0. Check mode rejects `-dry-run` and `-report-file`, so it never writes Terraform or
+report files.
 
 ## Testing
 
