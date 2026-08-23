@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yesdevnull/tf-version-bump/main/schema/config-schema.json
+
+terraform_version: ">= 1.5"
+
+providers:
+  - name: aws
+    version: "~> 5.0"
+
+modules:
+  - source: example/module
+    version: 2.0.0
