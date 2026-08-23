@@ -7,17 +7,22 @@ For a short introduction, start with the [README](../README.md#quick-start).
 
 ## Command modes
 
-The command supports four mutually exclusive entry points:
+The command supports five mutually exclusive entry points:
 
 ```text
 tf-version-bump -pattern <glob> -module <source> -to <version>
 tf-version-bump -pattern <glob> -terraform-version <constraint>
 tf-version-bump -pattern <glob> -provider <name> -to <constraint>
 tf-version-bump -pattern <glob> -config <file>
+tf-version-bump -validate-config <file>
 ```
 
 `-config` can combine module, Terraform, and provider updates internally. It cannot be combined
-with the three direct operation flags or their module filters.
+with the three direct operation flags or their module filters. `-validate-config` checks only the
+YAML runtime contract and cannot be combined with update or report flags.
+
+An eligible module, provider, or Terraform version that already equals its requested literal value
+is a no-op: the command does not rewrite the file or count it as an update.
 
 ## Flag reference
 
@@ -30,6 +35,7 @@ with the three direct operation flags or their module filters.
 | `-ignore-version <version>` | Direct module mode | Skip this exact current-version string. Repeatable. |
 | `-ignore-modules <patterns>` | Direct module mode | Comma-separated module block labels; `*` is a wildcard. |
 | `-config <file>` | Config mode | YAML file containing one or more update groups. |
+| `-validate-config <file>` | Standalone | Validate a non-empty YAML update config without selecting Terraform files. |
 | `-terraform-version <constraint>` | Direct Terraform mode | Value to set as `required_version`. |
 | `-provider <name>` | Direct provider mode | Local provider name within `required_providers`. |
 | `-force-add` | Module updates | Add a missing module `version` attribute to registry modules. |

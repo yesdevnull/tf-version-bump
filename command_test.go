@@ -9,10 +9,10 @@ import (
 )
 
 func TestParseFlagsContract(t *testing.T) {
-	args := []string{"tf-version-bump", "-pattern", "**/*.tf", "-module", "example/module", "-to", "2.0.0", "-from", "1.0.0", "-from", "1.5.0", "-ignore-version", "3.0.0", "-ignore-modules", "vpc, legacy-*", "-config", "config.yml", "-force-add", "-dry-run", "-verbose", "-version", "-output", "md", "-terraform-version", ">= 1.5", "-provider", "aws"}
+	args := []string{"tf-version-bump", "-pattern", "**/*.tf", "-module", "example/module", "-to", "2.0.0", "-from", "1.0.0", "-from", "1.5.0", "-ignore-version", "3.0.0", "-ignore-modules", "vpc, legacy-*", "-config", "config.yml", "-validate-config", "validate.yml", "-force-add", "-dry-run", "-verbose", "-version", "-output", "md", "-terraform-version", ">= 1.5", "-provider", "aws"}
 	withFlagArgs(t, args, func() {
 		got := parseFlags()
-		want := &cliFlags{pattern: "**/*.tf", moduleSource: "example/module", toVersion: "2.0.0", fromVersions: stringSliceFlag{"1.0.0", "1.5.0"}, ignoreVersions: stringSliceFlag{"3.0.0"}, ignoreModules: "vpc, legacy-*", configFile: "config.yml", forceAdd: true, dryRun: true, verbose: true, showVersion: true, output: "md", terraformVersion: ">= 1.5", providerName: "aws"}
+		want := &cliFlags{pattern: "**/*.tf", moduleSource: "example/module", toVersion: "2.0.0", fromVersions: stringSliceFlag{"1.0.0", "1.5.0"}, ignoreVersions: stringSliceFlag{"3.0.0"}, ignoreModules: "vpc, legacy-*", configFile: "config.yml", validationConfigFile: "validate.yml", forceAdd: true, dryRun: true, verbose: true, showVersion: true, output: "md", terraformVersion: ">= 1.5", providerName: "aws"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("flags = %#v, want %#v", got, want)
 		}
@@ -98,6 +98,73 @@ func TestCommandVersion(t *testing.T) {
 	result := runMainCommand(t, []string{"tf-version-bump", "-version"})
 	if result.stdout != "tf-version-bump 1.2.3\n  commit: abc123\n  built:  2026-08-20\n" || result.diagnostics != "" || result.exitCode != 0 {
 		t.Fatalf("result %#v", result)
+	}
+}
+
+func TestCommandValidatesConfigWithoutTerraformFiles(t *testing.T) {
+	config := writeTestFile(t, t.TempDir(), "versions.yml", "providers:\n  - name: aws\n    version: '~> 5.0'\n")
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-validate-config", config})
+
+	want := "Config '" + config + "' is valid\n"
+	if result.stdout != want || result.diagnostics != "" || result.exitCode != 0 {
+		t.Fatalf("result = %#v, want stdout %q and exit 0", result, want)
+	}
+}
+
+func TestCommandConfigValidationRejectsInvalidConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		content    string
+		wantDetail string
+	}{
+		{name: "malformed", content: "providers:\n  - name: [\n", wantDetail: "failed to parse YAML"},
+		{name: "empty operations", content: "# no updates\n", wantDetail: "config contains no updates"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := writeTestFile(t, t.TempDir(), "versions.yml", tt.content)
+			result := runMainCommand(t, []string{"tf-version-bump", "-validate-config", config})
+
+			if result.stdout != "" || result.exitCode != 1 || !strings.Contains(result.diagnostics, "Error validating config file: "+tt.wantDetail) {
+				t.Fatalf("result = %#v, want validation error containing %q", result, tt.wantDetail)
+			}
+		})
+	}
+}
+
+func TestCommandConfigValidationRejectsUpdateAndReportFlags(t *testing.T) {
+	config := writeTestFile(t, t.TempDir(), "versions.yml", "terraform_version: '>= 1.5'\n")
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "pattern", args: []string{"-pattern", "*.tf"}},
+		{name: "config update", args: []string{"-config", config}},
+		{name: "module", args: []string{"-module", "example/module"}},
+		{name: "target version", args: []string{"-to", "2.0.0"}},
+		{name: "source version", args: []string{"-from", "1.0.0"}},
+		{name: "ignored version", args: []string{"-ignore-version", "1.0.0"}},
+		{name: "ignored module", args: []string{"-ignore-modules", "legacy-*"}},
+		{name: "Terraform version", args: []string{"-terraform-version", ">= 1.5"}},
+		{name: "provider", args: []string{"-provider", "aws"}},
+		{name: "force add", args: []string{"-force-add"}},
+		{name: "dry run", args: []string{"-dry-run"}},
+		{name: "verbose", args: []string{"-verbose"}},
+		{name: "report", args: []string{"-report-file", "report.json"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := append([]string{"tf-version-bump", "-validate-config", config}, tt.args...)
+			result := runMainCommand(t, args)
+
+			want := "Error: Cannot use -validate-config with update or report flags\n"
+			if result.stdout != "" || result.diagnostics != want || result.exitCode != 1 {
+				t.Fatalf("result = %#v, want diagnostic %q and exit 1", result, want)
+			}
+		})
 	}
 }
 

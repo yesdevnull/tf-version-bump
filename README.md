@@ -112,6 +112,12 @@ Then apply it:
 tf-version-bump -pattern "**/*.tf" -config versions.yml
 ```
 
+Validate the config structure without selecting or changing Terraform files:
+
+```bash
+tf-version-bump -validate-config versions.yml
+```
+
 Config mode is exclusive with `-module`, `-provider`, `-terraform-version`, `-to`, and the
 module-filter flags. It can still be combined with global behaviour flags such as `-dry-run`,
 `-force-add`, `-verbose`, `-output`, and `-report-file`.
