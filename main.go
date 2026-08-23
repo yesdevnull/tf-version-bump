@@ -322,7 +322,7 @@ func main() {
 		if err := validateConfigFile(flags.validationConfigFile); err != nil {
 			fatalf("Error validating config file: %v", err)
 		}
-		fmt.Printf("Config %s is valid\n", quote(flags.validationConfigFile, flags.output))
+		fmt.Printf("Config '%s' is valid\n", flags.validationConfigFile)
 		exitFunc(0)
 	}
 
@@ -469,10 +469,7 @@ func validateReportFileDoesNotOverwriteInput(reportFile string, inputFiles []str
 // validateOperationModes validates that the CLI flags are properly set
 func validateOperationModes(flags *cliFlags) {
 	if flags.validationConfigFile != "" {
-		if flags.pattern != "" || flags.configFile != "" || flags.moduleSource != "" || flags.toVersion != "" ||
-			len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" ||
-			flags.terraformVersion != "" || flags.providerName != "" || flags.forceAdd || flags.dryRun ||
-			flags.verbose || flags.reportFile != "" {
+		if configValidationHasConflicts(flags) {
 			fatalf("Error: Cannot use -validate-config with update or report flags")
 		}
 		return
@@ -480,10 +477,7 @@ func validateOperationModes(flags *cliFlags) {
 
 	// Config file mode is exclusive with all other CLI flags
 	if flags.configFile != "" {
-		if flags.moduleSource != "" || flags.terraformVersion != "" || flags.providerName != "" ||
-			flags.toVersion != "" || len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" {
-			fatalf("Error: Cannot use -config with other operation flags (-module, -to, -terraform-version, -provider, -from, -ignore-version, -ignore-modules)")
-		}
+		validateConfigUpdateMode(flags)
 		return
 	}
 
@@ -513,6 +507,20 @@ func validateOperationModes(flags *cliFlags) {
 	if modesSet > 1 {
 		fatalf("Error: Cannot use -module, -terraform-version, and -provider flags together. Choose one operation mode or use a config file.")
 	}
+}
+
+func validateConfigUpdateMode(flags *cliFlags) {
+	if flags.moduleSource != "" || flags.terraformVersion != "" || flags.providerName != "" ||
+		flags.toVersion != "" || len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" {
+		fatalf("Error: Cannot use -config with other operation flags (-module, -to, -terraform-version, -provider, -from, -ignore-version, -ignore-modules)")
+	}
+}
+
+func configValidationHasConflicts(flags *cliFlags) bool {
+	return flags.pattern != "" || flags.configFile != "" || flags.moduleSource != "" || flags.toVersion != "" ||
+		len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" ||
+		flags.terraformVersion != "" || flags.providerName != "" || flags.forceAdd || flags.dryRun ||
+		flags.verbose || flags.reportFile != ""
 }
 
 // findMatchingFiles finds all files matching the pattern
@@ -960,7 +968,7 @@ func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, 
 			continue
 		}
 		versionAttribute := providerBlock.Body().GetAttribute("version")
-		if versionAttribute != nil && attributeStringValue(versionAttribute) == version {
+		if versionAttribute != nil && attributeHasStringValue(versionAttribute, version) {
 			continue
 		}
 		changedBlocks = append(changedBlocks, providerIndex)
@@ -1033,7 +1041,7 @@ func replaceProviderObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression 
 			return nil, false, false
 		}
 		hasVersion = true
-		if attributeExpressionStringValue(expression[valueRange.Start.Byte:valueRange.End.Byte]) == newVersion {
+		if expressionHasStringValue(expression[valueRange.Start.Byte:valueRange.End.Byte], newVersion) {
 			continue
 		}
 
@@ -1048,8 +1056,9 @@ func replaceProviderObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression 
 	return updated, hasVersion, changed
 }
 
-func attributeExpressionStringValue(expression []byte) string {
-	return trimQuotes(strings.TrimSpace(string(expression)))
+func expressionHasStringValue(expression []byte, value string) bool {
+	target := hclwrite.TokensForValue(cty.StringVal(value)).Bytes()
+	return bytes.Equal(bytes.TrimSpace(expression), bytes.TrimSpace(target))
 }
 
 func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
@@ -1212,7 +1221,7 @@ func updateModuleBlockResult(block *hclwrite.Block, opts *moduleUpdateOptions) (
 		if shouldSkipModuleVersion(moduleName, currentVersion, opts) {
 			return false, false
 		}
-		if currentVersion == opts.version {
+		if attributeHasStringValue(versionAttr, opts.version) {
 			return false, false
 		}
 		block.Body().SetAttributeValue("version", cty.StringVal(opts.version))
@@ -1241,6 +1250,10 @@ func moduleSourceValue(block *hclwrite.Block) (string, bool) {
 func attributeStringValue(attr *hclwrite.Attribute) string {
 	tokens := attr.Expr().BuildTokens(nil)
 	return trimQuotes(strings.TrimSpace(string(tokens.Bytes())))
+}
+
+func attributeHasStringValue(attr *hclwrite.Attribute, value string) bool {
+	return expressionHasStringValue(attr.Expr().BuildTokens(nil).Bytes(), value)
 }
 
 func shouldSkipModuleVersion(moduleName, currentVersion string, opts *moduleUpdateOptions) bool {

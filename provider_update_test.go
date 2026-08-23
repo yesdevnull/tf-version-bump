@@ -249,6 +249,74 @@ func TestUpdateProviderVersionMatchingVersionDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestUpdateProviderVersionReplacesMatchingNonLiteralExpression(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name: "block syntax",
+			input: `terraform {
+  required_providers {
+    aws {
+      source  = "hashicorp/aws"
+      version = var.constraint
+    }
+  }
+}
+`,
+			want: `terraform {
+  required_providers {
+    aws {
+      source  = "hashicorp/aws"
+      version = "var.constraint"
+    }
+  }
+}
+`,
+		},
+		{
+			name: "attribute syntax",
+			input: `terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = var.constraint
+    }
+  }
+}
+`,
+			want: `terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "var.constraint"
+    }
+  }
+}
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filename := writeTestFile(t, t.TempDir(), "main.tf", tt.input)
+
+			updated, err := updateProviderVersion(filename, "aws", "var.constraint", false)
+			if err != nil {
+				t.Fatalf("updateProviderVersion returned error: %v", err)
+			}
+			if !updated {
+				t.Fatal("updated = false, want true")
+			}
+			if got := readTestFile(t, filename); got != tt.want {
+				t.Errorf("content = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestUpdateProviderVersionDryRunContract(t *testing.T) {
 	input := "terraform {\n  required_providers {\n    aws {\n      source = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\n"
 	filename := writeTestFile(t, t.TempDir(), "main.tf", input)
