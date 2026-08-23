@@ -114,6 +114,7 @@ type cliFlags struct {
 	validationConfigFile string
 	forceAdd             bool
 	dryRun               bool
+	check                bool
 	verbose              bool
 	showVersion          bool
 	output               string
@@ -214,6 +215,7 @@ func parseFlags() *cliFlags {
 	flag.StringVar(&flags.validationConfigFile, "validate-config", "", "Validate a YAML config file without updating Terraform files")
 	flag.BoolVar(&flags.forceAdd, "force-add", false, "Add a missing version attribute to registry modules (default: skip with warning)")
 	flag.BoolVar(&flags.dryRun, "dry-run", false, "Show what changes would be made without actually modifying files")
+	flag.BoolVar(&flags.check, "check", false, "Exit 2 when updates are required without modifying files")
 	flag.BoolVar(&flags.verbose, "verbose", false, "Show verbose output including skipped modules")
 	flag.BoolVar(&flags.showVersion, "version", false, "Print version information and exit")
 	flag.StringVar(&flags.output, "output", "text", "Output format: 'text' (default) or 'md' (Markdown)")
@@ -325,6 +327,9 @@ func main() {
 		fmt.Printf("Config '%s' is valid\n", flags.validationConfigFile)
 		exitFunc(0)
 	}
+	if flags.check {
+		flags.dryRun = true
+	}
 
 	// Find and validate matching files
 	files := findMatchingFiles(flags)
@@ -339,10 +344,11 @@ func main() {
 	}
 
 	// Run the appropriate operation mode
+	var totalUpdates int
 	if flags.configFile != "" {
-		err = runConfigFileMode(files, flags)
+		totalUpdates, err = runConfigFileMode(files, flags)
 	} else {
-		err = runCLIMode(files, flags)
+		totalUpdates, err = runCLIMode(files, flags)
 	}
 	if err != nil {
 		if preparedReport != nil {
@@ -357,6 +363,9 @@ func main() {
 		if publishErr := preparedReport.publish(flags.report); publishErr != nil {
 			fatalf("Error writing update report: %v", publishErr)
 		}
+	}
+	if flags.check && totalUpdates > 0 {
+		exitFunc(2)
 	}
 }
 
@@ -474,6 +483,12 @@ func validateOperationModes(flags *cliFlags) {
 		}
 		return
 	}
+	if flags.check && flags.dryRun {
+		fatalf("Error: Cannot use -check with -dry-run")
+	}
+	if flags.check && flags.reportFile != "" {
+		fatalf("Error: Cannot use -check with -report-file")
+	}
 
 	// Config file mode is exclusive with all other CLI flags
 	if flags.configFile != "" {
@@ -520,7 +535,7 @@ func configValidationHasConflicts(flags *cliFlags) bool {
 	return flags.pattern != "" || flags.configFile != "" || flags.moduleSource != "" || flags.toVersion != "" ||
 		len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" ||
 		flags.terraformVersion != "" || flags.providerName != "" || flags.forceAdd || flags.dryRun ||
-		flags.verbose || flags.reportFile != ""
+		flags.check || flags.verbose || flags.reportFile != ""
 }
 
 // findMatchingFiles finds all files matching the pattern
@@ -580,7 +595,9 @@ func findMatchingFiles(flags *cliFlags) []string {
 
 	fmt.Printf("Found %d file(s) matching pattern %s\n", len(files), quote(flags.pattern, flags.output))
 
-	if flags.dryRun {
+	if flags.check {
+		fmt.Println("Running in check mode - no files will be modified")
+	} else if flags.dryRun {
 		fmt.Println("Running in dry-run mode - no files will be modified")
 	}
 
@@ -588,11 +605,11 @@ func findMatchingFiles(flags *cliFlags) []string {
 }
 
 // runConfigFileMode handles config file mode operations.
-func runConfigFileMode(files []string, flags *cliFlags) error {
+func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 	config, err := loadConfig(flags.configFile)
 	if err != nil {
 		//nolint:staticcheck // The capitalised prefix is user-facing CLI output.
-		return fmt.Errorf("Error loading config file: %w", err)
+		return 0, fmt.Errorf("Error loading config file: %w", err)
 	}
 
 	var terraformUpdates, terraformErrors, providerUpdates, providerErrors, moduleUpdates, moduleErrors int
@@ -616,17 +633,18 @@ func runConfigFileMode(files []string, flags *cliFlags) error {
 
 	// Print summary
 	printConfigSummary(terraformUpdates, providerUpdates, moduleUpdates, flags.dryRun)
+	totalUpdates := terraformUpdates + providerUpdates + moduleUpdates
 	if terraformErrors == 0 && providerErrors == 0 && moduleErrors > 0 {
-		return fmt.Errorf("%d module update error(s)", moduleErrors)
+		return totalUpdates, fmt.Errorf("%d module update error(s)", moduleErrors)
 	}
 	if totalErrors := terraformErrors + providerErrors + moduleErrors; totalErrors > 0 {
-		return fmt.Errorf("%d update error(s)", totalErrors)
+		return totalUpdates, fmt.Errorf("%d update error(s)", totalErrors)
 	}
-	return nil
+	return totalUpdates, nil
 }
 
 // runCLIMode handles CLI mode operations
-func runCLIMode(files []string, flags *cliFlags) error {
+func runCLIMode(files []string, flags *cliFlags) (int, error) {
 	var totalUpdates int
 	var updates []ModuleUpdate
 
@@ -636,9 +654,9 @@ func runCLIMode(files []string, flags *cliFlags) error {
 		totalUpdates, totalErrors = processTerraformVersion(files, flags.terraformVersion, flags.dryRun, flags.output)
 		printTerraformSummary(totalUpdates, flags.dryRun)
 		if totalErrors > 0 {
-			return fmt.Errorf("%d Terraform version update error(s)", totalErrors)
+			return totalUpdates, fmt.Errorf("%d Terraform version update error(s)", totalErrors)
 		}
-		return nil
+		return totalUpdates, nil
 	case flags.providerName != "":
 		if flags.toVersion == "" {
 			fatalf("Error: -to flag is required when using -provider")
@@ -647,18 +665,18 @@ func runCLIMode(files []string, flags *cliFlags) error {
 		totalUpdates, totalErrors = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output, flags.reportRecorder())
 		printProviderSummary(flags.providerName, totalUpdates, flags.dryRun, flags.output)
 		if totalErrors > 0 {
-			return fmt.Errorf("%d provider update error(s)", totalErrors)
+			return totalUpdates, fmt.Errorf("%d provider update error(s)", totalErrors)
 		}
-		return nil
+		return totalUpdates, nil
 	default:
 		updates = loadModuleUpdates(flags)
 		var totalErrors int
 		totalUpdates, totalErrors = processFiles(files, updates, flags)
 		printSummary(totalUpdates, len(updates), flags.dryRun)
 		if totalErrors > 0 {
-			return fmt.Errorf("%d module update error(s)", totalErrors)
+			return totalUpdates, fmt.Errorf("%d module update error(s)", totalErrors)
 		}
-		return nil
+		return totalUpdates, nil
 	}
 }
 

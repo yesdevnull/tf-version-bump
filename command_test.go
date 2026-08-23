@@ -10,10 +10,10 @@ import (
 )
 
 func TestParseFlagsContract(t *testing.T) {
-	args := []string{"tf-version-bump", "-pattern", "**/*.tf", "-module", "example/module", "-to", "2.0.0", "-from", "1.0.0", "-from", "1.5.0", "-ignore-version", "3.0.0", "-ignore-modules", "vpc, legacy-*", "-config", "config.yml", "-validate-config", "validate.yml", "-force-add", "-dry-run", "-verbose", "-version", "-output", "md", "-terraform-version", ">= 1.5", "-provider", "aws"}
+	args := []string{"tf-version-bump", "-pattern", "**/*.tf", "-module", "example/module", "-to", "2.0.0", "-from", "1.0.0", "-from", "1.5.0", "-ignore-version", "3.0.0", "-ignore-modules", "vpc, legacy-*", "-config", "config.yml", "-validate-config", "validate.yml", "-force-add", "-dry-run", "-check", "-verbose", "-version", "-output", "md", "-terraform-version", ">= 1.5", "-provider", "aws"}
 	withFlagArgs(t, args, func() {
 		got := parseFlags()
-		want := &cliFlags{pattern: "**/*.tf", moduleSource: "example/module", toVersion: "2.0.0", fromVersions: stringSliceFlag{"1.0.0", "1.5.0"}, ignoreVersions: stringSliceFlag{"3.0.0"}, ignoreModules: "vpc, legacy-*", configFile: "config.yml", validationConfigFile: "validate.yml", forceAdd: true, dryRun: true, verbose: true, showVersion: true, output: "md", terraformVersion: ">= 1.5", providerName: "aws"}
+		want := &cliFlags{pattern: "**/*.tf", moduleSource: "example/module", toVersion: "2.0.0", fromVersions: stringSliceFlag{"1.0.0", "1.5.0"}, ignoreVersions: stringSliceFlag{"3.0.0"}, ignoreModules: "vpc, legacy-*", configFile: "config.yml", validationConfigFile: "validate.yml", forceAdd: true, dryRun: true, check: true, verbose: true, showVersion: true, output: "md", terraformVersion: ">= 1.5", providerName: "aws"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("flags = %#v, want %#v", got, want)
 		}
@@ -86,7 +86,7 @@ func TestLoadModuleUpdatesRequiresFlags(t *testing.T) {
 func TestRunCLIModeRequiresProviderVersion(t *testing.T) {
 	restore, _ := stubExit(t)
 	t.Cleanup(restore)
-	diag := captureLog(t, func() { requireExitCall(t, func() { _ = runCLIMode(nil, &cliFlags{providerName: "aws"}) }) })
+	diag := captureLog(t, func() { requireExitCall(t, func() { _, _ = runCLIMode(nil, &cliFlags{providerName: "aws"}) }) })
 	if diag != "Error: -to flag is required when using -provider\n" {
 		t.Fatalf("diagnostics: %q", diag)
 	}
@@ -165,6 +165,7 @@ func TestCommandConfigValidationRejectsUpdateAndReportFlags(t *testing.T) {
 		{name: "provider", args: []string{"-provider", "aws"}},
 		{name: "force add", args: []string{"-force-add"}},
 		{name: "dry run", args: []string{"-dry-run"}},
+		{name: "check", args: []string{"-check"}},
 		{name: "verbose", args: []string{"-verbose"}},
 		{name: "report", args: []string{"-report-file", "report.json"}},
 	}
@@ -182,8 +183,138 @@ func TestCommandConfigValidationRejectsUpdateAndReportFlags(t *testing.T) {
 	}
 }
 
+func TestCommandCheckProposesModuleUpdateWithoutWriting(t *testing.T) {
+	dir := t.TempDir()
+	input := "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+	file := writeTestFile(t, dir, "main.tf", input)
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-check",
+	})
+
+	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n" +
+		"Running in check mode - no files will be modified\n" +
+		"→ Would update module source 'example/module' to version '2.0.0' in " + file + "\n\n" +
+		"Dry run: would update 1 file(s)\n"
+	if result.stdout != wantStdout || result.diagnostics != "" || result.exitCode != 2 {
+		t.Fatalf("result = %#v, want stdout %q and exit 2", result, wantStdout)
+	}
+	if got := readTestFile(t, file); got != input {
+		t.Fatalf("check changed content to %q, want %q", got, input)
+	}
+}
+
+func TestCommandCheckConfigReportsAllUpdateModesWithoutWriting(t *testing.T) {
+	dir := t.TempDir()
+	input := `terraform {
+  required_version = ">= 1.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+module "example" {
+  source  = "example/module"
+  version = "1.0.0"
+}
+`
+	file := writeTestFile(t, dir, "main.tf", input)
+	config := writeTestFile(t, dir, "versions.yml", `terraform_version: ">= 1.5"
+providers:
+  - name: aws
+    version: "~> 5.0"
+modules:
+  - source: example/module
+    version: 2.0.0
+`)
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-config", config, "-check",
+	})
+
+	for _, fragment := range []string{
+		"Running in check mode - no files will be modified\n",
+		"→ Would update Terraform required_version to '>= 1.5'",
+		"→ Would update provider 'aws' to version '~> 5.0'",
+		"→ Would update module source 'example/module' to version '2.0.0'",
+	} {
+		if !strings.Contains(result.stdout, fragment) {
+			t.Errorf("stdout %q does not contain %q", result.stdout, fragment)
+		}
+	}
+	if result.diagnostics != "" || result.exitCode != 2 {
+		t.Fatalf("result = %#v, want no diagnostics and exit 2", result)
+	}
+	if got := readTestFile(t, file); got != input {
+		t.Fatalf("check changed content to %q, want %q", got, input)
+	}
+}
+
+func TestCommandCheckReturnsSuccessWhenCurrent(t *testing.T) {
+	dir := t.TempDir()
+	input := "module \"example\" {\n  source  = \"example/module\"\n  version = \"2.0.0\"\n}\n"
+	file := writeTestFile(t, dir, "main.tf", input)
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-check",
+	})
+
+	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n" +
+		"Running in check mode - no files will be modified\n\n" +
+		"Dry run: would update 0 file(s)\n"
+	if result.stdout != wantStdout || result.diagnostics != "" || result.exitCode != -1 {
+		t.Fatalf("result = %#v, want stdout %q and normal return", result, wantStdout)
+	}
+	if got := readTestFile(t, file); got != input {
+		t.Fatalf("check changed content to %q, want %q", got, input)
+	}
+}
+
+func TestCommandCheckProcessingErrorWinsOverUpdatesRequired(t *testing.T) {
+	dir := t.TempDir()
+	bad := writeTestFile(t, dir, "bad.tf", "module {")
+	goodInput := "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+	good := writeTestFile(t, dir, "good.tf", goodInput)
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", dir + "/*.tf", "-module", "example/module", "-to", "2.0.0", "-check",
+	})
+
+	if result.exitCode != 1 || !strings.Contains(result.diagnostics, "Error processing "+bad) || !strings.Contains(result.diagnostics, "1 module update error(s)") {
+		t.Fatalf("result = %#v, want processing diagnostics and exit 1", result)
+	}
+	if got := readTestFile(t, good); got != goodInput {
+		t.Fatalf("check changed valid content to %q, want %q", got, goodInput)
+	}
+}
+
+func TestCommandCheckRejectsConflictingFlags(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"example\" {\n  source = \"example/module\"\n}\n")
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "dry run", args: []string{"-dry-run"}, want: "Error: Cannot use -check with -dry-run\n"},
+		{name: "report", args: []string{"-report-file", dir + "/report.json"}, want: "Error: Cannot use -check with -report-file\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := []string{"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-check"}
+			result := runMainCommand(t, append(args, tt.args...))
+			if result.stdout != "" || result.diagnostics != tt.want || result.exitCode != 1 {
+				t.Fatalf("result = %#v, want diagnostic %q and exit 1", result, tt.want)
+			}
+		})
+	}
+}
+
 func TestRunConfigFileModeReturnsLoadErrorContract(t *testing.T) {
-	err := runConfigFileMode(nil, &cliFlags{configFile: "does-not-exist"})
+	_, err := runConfigFileMode(nil, &cliFlags{configFile: "does-not-exist"})
 	if err == nil || !errors.Is(err, os.ErrNotExist) || !strings.HasPrefix(err.Error(), "Error loading config file:") {
 		t.Fatalf("error = %v", err)
 	}
@@ -544,9 +675,9 @@ func TestProviderModesSkipReportBookkeepingWhenDisabled(t *testing.T) {
 			var runErr error
 			captureStdout(t, func() {
 				if mode == "CLI" {
-					runErr = runCLIMode([]string{file}, flags)
+					_, runErr = runCLIMode([]string{file}, flags)
 				} else {
-					runErr = runConfigFileMode([]string{file}, flags)
+					_, runErr = runConfigFileMode([]string{file}, flags)
 				}
 			})
 
