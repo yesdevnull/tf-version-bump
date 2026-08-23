@@ -940,9 +940,10 @@ func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, 
 			continue
 		}
 		versionAttribute := providerBlock.Body().GetAttribute("version")
-		if versionAttribute == nil || attributeStringValue(versionAttribute) != version {
-			changedBlocks = append(changedBlocks, providerIndex)
+		if versionAttribute != nil && attributeStringValue(versionAttribute) == version {
+			continue
 		}
+		changedBlocks = append(changedBlocks, providerIndex)
 		providerBlock.Body().SetAttributeValue("version", cty.StringVal(version))
 		updated = true
 	}
@@ -959,7 +960,7 @@ func updateProviderAttributeVersionResult(nestedBlock *hclwrite.Block, providerN
 	}
 
 	updatedExpression, hasVersion, changed := replaceProviderObjectVersion(objExpr, expression, newVersion)
-	if !hasVersion {
+	if !hasVersion || !changed {
 		return false, false
 	}
 
@@ -1191,8 +1192,11 @@ func updateModuleBlockResult(block *hclwrite.Block, opts *moduleUpdateOptions) (
 		if shouldSkipModuleVersion(moduleName, currentVersion, opts) {
 			return false, false
 		}
+		if currentVersion == opts.version {
+			return false, false
+		}
 		block.Body().SetAttributeValue("version", cty.StringVal(opts.version))
-		return true, currentVersion != opts.version
+		return true, true
 	}
 
 	block.Body().SetAttributeValue("version", cty.StringVal(opts.version))

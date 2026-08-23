@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type capturedStreams struct {
@@ -238,6 +239,37 @@ func TestUpdateModuleVersionPreservesPermissions(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o640 {
 		t.Errorf("mode = %o, want 640", got)
+	}
+}
+
+func TestUpdateModuleVersionMatchingVersionDoesNotWrite(t *testing.T) {
+	input := `module "vpc" {
+source="terraform-aws-modules/vpc/aws"
+version="5.0.0"
+}
+`
+	filename := writeTestFile(t, t.TempDir(), "main.tf", input)
+	wantModTime := time.Unix(1, 0)
+	if err := os.Chtimes(filename, wantModTime, wantModTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	updated, err := updateModuleVersion(filename, "terraform-aws-modules/vpc/aws", "5.0.0", nil, nil, nil, false, false, false, "text")
+	if err != nil {
+		t.Fatalf("updateModuleVersion returned error: %v", err)
+	}
+	if updated {
+		t.Fatal("updated = true, want false")
+	}
+	if got := readTestFile(t, filename); got != input {
+		t.Errorf("content = %q, want unchanged %q", got, input)
+	}
+	info, err := os.Stat(filename)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.ModTime(); !got.Equal(wantModTime) {
+		t.Errorf("modification time = %v, want unchanged %v", got, wantModTime)
 	}
 }
 
