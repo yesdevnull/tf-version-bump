@@ -22,7 +22,10 @@ func TestRunCLIModeContinuesAfterFileFailure(t *testing.T) {
 				flags.providerName = "aws"
 				flags.toVersion = "~> 5.0"
 			}
-			stdout, diag, err := captureRunnerOutput(t, func() error { return runCLIMode([]string{bad, good}, flags) })
+			stdout, diag, err := captureRunnerOutput(t, func() error {
+				_, err := runCLIMode([]string{bad, good}, flags)
+				return err
+			})
 			parser := "failed to parse HCL: " + bad + ":1,11-12: Unclosed configuration block; There is no closing brace for this block before the end of the file. This may be caused by incorrect brace nesting elsewhere in this file."
 			wantDiag := "Error processing " + bad + ": " + parser + "\n"
 			wantOut := tt.output + good + "\n\nSuccessfully updated 1 file(s)\n"
@@ -66,7 +69,8 @@ modules:
     version: 2.0.0
 `)
 	stdout, diag, err := captureRunnerOutput(t, func() error {
-		return runConfigFileMode([]string{first, second}, &cliFlags{configFile: cfg, output: "text"})
+		_, err := runConfigFileMode([]string{first, second}, &cliFlags{configFile: cfg, output: "text"})
+		return err
 	})
 	wantStdout := "✓ Updated Terraform required_version to '>= 1.5' in " + first + "\n" +
 		"✓ Updated Terraform required_version to '>= 1.5' in " + second + "\n" +
@@ -143,7 +147,8 @@ modules:
     version: 6.0.0
 `)
 	stdout, diag, err := captureRunnerOutput(t, func() error {
-		return runConfigFileMode([]string{bad1, bad2, good}, &cliFlags{configFile: cfg, output: "text"})
+		_, err := runConfigFileMode([]string{bad1, bad2, good}, &cliFlags{configFile: cfg, output: "text"})
+		return err
 	})
 	wantPrefix := "✓ Updated Terraform required_version to '>= 1.6' in " + good + "\n✓ Updated provider 'aws' to version '~> 5.0' in " + good + "\n✓ Updated provider 'azurerm' to version '~> 4.0' in " + good + "\n✓ Updated module source 'terraform-aws-modules/vpc/aws' to version '5.0.0' in " + good + "\n✓ Updated module source 'terraform-aws-modules/ec2-instance/aws' to version '6.0.0' in " + good + "\n\n==================================================\nConfig File Update Summary\n==================================================\nTerraform version: 1 file(s) updated\nProviders: 2 update(s) applied\nModules: 2 update(s) applied\n"
 	if err == nil || err.Error() != "10 update error(s)" || stdout != wantPrefix {
