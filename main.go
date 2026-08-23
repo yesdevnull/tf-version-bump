@@ -216,6 +216,7 @@ func canonicalFileIdentity(filename string) string {
 // parseFlags parses and validates command-line flags
 func parseFlags() *cliFlags {
 	flags := &cliFlags{}
+	usageOutput := flag.CommandLine.Output()
 	flagSet := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
 	flag.CommandLine = flagSet
@@ -239,8 +240,8 @@ func parseFlags() *cliFlags {
 	flagSet.StringVar(&flags.reportFile, "report-file", "", "Write exact updated Terraform, module, and provider block counts as JSON")
 	if err := flagSet.Parse(os.Args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			flagSet.SetOutput(os.Stderr)
-			fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+			flagSet.SetOutput(usageOutput)
+			fmt.Fprintf(usageOutput, "Usage of %s:\n", os.Args[0])
 			flagSet.PrintDefaults()
 			exitFunc(0)
 			return flags
@@ -248,7 +249,7 @@ func parseFlags() *cliFlags {
 		fatalf("Error: %v", err)
 		return flags
 	}
-	flagSet.SetOutput(os.Stderr)
+	flagSet.SetOutput(usageOutput)
 	if flagSet.NArg() > 0 {
 		fatalf("Error: unexpected positional argument(s): %s", strings.Join(flagSet.Args(), " "))
 		return flags
