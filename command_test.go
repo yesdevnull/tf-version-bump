@@ -103,12 +103,24 @@ func TestCommandVersion(t *testing.T) {
 
 func TestCommandValidatesConfigWithoutTerraformFiles(t *testing.T) {
 	config := writeTestFile(t, t.TempDir(), "versions.yml", "providers:\n  - name: aws\n    version: '~> 5.0'\n")
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "default output"},
+		{name: "Markdown output", args: []string{"-output", "md"}},
+	}
 
-	result := runMainCommand(t, []string{"tf-version-bump", "-validate-config", config})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := append([]string{"tf-version-bump", "-validate-config", config}, tt.args...)
+			result := runMainCommand(t, args)
 
-	want := "Config '" + config + "' is valid\n"
-	if result.stdout != want || result.diagnostics != "" || result.exitCode != 0 {
-		t.Fatalf("result = %#v, want stdout %q and exit 0", result, want)
+			want := "Config '" + config + "' is valid\n"
+			if result.stdout != want || result.diagnostics != "" || result.exitCode != 0 {
+				t.Fatalf("result = %#v, want stdout %q and exit 0", result, want)
+			}
+		})
 	}
 }
 
@@ -120,6 +132,7 @@ func TestCommandConfigValidationRejectsInvalidConfig(t *testing.T) {
 	}{
 		{name: "malformed", content: "providers:\n  - name: [\n", wantDetail: "failed to parse YAML"},
 		{name: "empty operations", content: "# no updates\n", wantDetail: "config contains no updates"},
+		{name: "multiple documents", content: "terraform_version: '>= 1.5'\n---\nunknown: true\n", wantDetail: "multiple YAML documents are not supported"},
 	}
 
 	for _, tt := range tests {

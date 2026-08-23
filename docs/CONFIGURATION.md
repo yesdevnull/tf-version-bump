@@ -52,10 +52,11 @@ Validate the runtime YAML contract without selecting, parsing, or changing Terra
 tf-version-bump -validate-config versions.yml
 ```
 
-The command rejects malformed YAML, unknown fields, missing required entry fields, and configs
-without any Terraform, provider, or module updates. It trims and validates values in the same way
-as update mode. It does not execute the JSON Schema or validate Terraform version-constraint
-syntax. Validation is standalone and cannot be combined with update or report flags.
+The command rejects malformed YAML, multiple YAML documents, unknown fields, missing required
+entry fields, and configs without any Terraform, provider, or module updates. It trims and
+validates values in the same way as update mode. It does not execute the JSON Schema or validate
+Terraform version-constraint syntax. Validation is standalone and cannot be combined with update
+or report flags.
 
 ## Top-level fields
 

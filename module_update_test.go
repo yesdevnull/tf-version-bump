@@ -273,6 +273,31 @@ version="5.0.0"
 	}
 }
 
+func TestUpdateModuleVersionReplacesMatchingNonLiteralExpression(t *testing.T) {
+	input := `module "example" {
+  source  = "example/module"
+  version = var.constraint
+}
+`
+	filename := writeTestFile(t, t.TempDir(), "main.tf", input)
+
+	updated, err := updateModuleVersion(filename, "example/module", "var.constraint", nil, nil, nil, false, false, false, "text")
+	if err != nil {
+		t.Fatalf("updateModuleVersion returned error: %v", err)
+	}
+	if !updated {
+		t.Fatal("updated = false, want true")
+	}
+	want := `module "example" {
+  source  = "example/module"
+  version = "var.constraint"
+}
+`
+	if got := readTestFile(t, filename); got != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+}
+
 func TestUpdateModuleVersionDryRunContract(t *testing.T) {
 	input := "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"1.0.0\"\n}\n"
 	file := writeTestFile(t, t.TempDir(), "main.tf", input)

@@ -127,6 +127,13 @@ func loadConfig(filename string) (*Config, error) {
 		}
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
+	var additionalDocument yaml.Node
+	if err := decoder.Decode(&additionalDocument); err != io.EOF {
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse YAML: %w", err)
+		}
+		return nil, fmt.Errorf("multiple YAML documents are not supported")
+	}
 
 	// Trim and validate terraform_version
 	config.TerraformVersion = strings.TrimSpace(config.TerraformVersion)
