@@ -14,7 +14,7 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
+	stderrors "errors"
 	"flag"
 	"fmt"
 	"io"
@@ -150,26 +150,32 @@ func (flags *cliFlags) reportRecorder() *updateReport {
 }
 
 func (report *updateReport) recordTerraformBlocks(filename string, blockIndexes []int) {
-	report.recordTopLevelBlocks(filename, blockIndexes, &report.terraformBlockIDs, &report.TerraformBlocksUpdated)
+	var recorded int
+	report.terraformBlockIDs, recorded = report.recordTopLevelBlocks(filename, blockIndexes, report.terraformBlockIDs)
+	report.TerraformBlocksUpdated += recorded
 }
 
 func (report *updateReport) recordModuleBlocks(filename string, blockIndexes []int) {
-	report.recordTopLevelBlocks(filename, blockIndexes, &report.moduleBlockIDs, &report.ModuleBlocksUpdated)
+	var recorded int
+	report.moduleBlockIDs, recorded = report.recordTopLevelBlocks(filename, blockIndexes, report.moduleBlockIDs)
+	report.ModuleBlocksUpdated += recorded
 }
 
-func (report *updateReport) recordTopLevelBlocks(filename string, blockIndexes []int, blockIDs *map[string]struct{}, count *int) {
+func (report *updateReport) recordTopLevelBlocks(filename string, blockIndexes []int, existingBlockIDs map[string]struct{}) (blockIDs map[string]struct{}, recordedBlocks int) {
 	fileID := report.fileIdentity(filename)
-	if *blockIDs == nil {
-		*blockIDs = make(map[string]struct{})
+	blockIDs = existingBlockIDs
+	if blockIDs == nil {
+		blockIDs = make(map[string]struct{})
 	}
 	for _, blockIndex := range blockIndexes {
 		blockID := fmt.Sprintf("%s\x00%d", fileID, blockIndex)
-		if _, recorded := (*blockIDs)[blockID]; recorded {
+		if _, recorded := blockIDs[blockID]; recorded {
 			continue
 		}
-		(*blockIDs)[blockID] = struct{}{}
-		*count++
+		blockIDs[blockID] = struct{}{}
+		recordedBlocks++
 	}
+	return blockIDs, recordedBlocks
 }
 
 func (report *updateReport) recordProviderBlocks(filename string, blockLocations []string) {
@@ -239,9 +245,12 @@ func parseFlags() *cliFlags {
 	flagSet.StringVar(&flags.providerName, "provider", "", "Provider name to update (e.g., 'aws', 'azurerm')")
 	flagSet.StringVar(&flags.reportFile, "report-file", "", "Write exact updated Terraform, module, and provider block counts as JSON")
 	if err := flagSet.Parse(os.Args[1:]); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
+		if stderrors.Is(err, flag.ErrHelp) {
 			flagSet.SetOutput(usageOutput)
-			fmt.Fprintf(usageOutput, "Usage of %s:\n", os.Args[0])
+			if _, writeErr := fmt.Fprintf(usageOutput, "Usage of %s:\n", os.Args[0]); writeErr != nil {
+				fatalf("Error writing help: %v", writeErr)
+				return flags
+			}
 			flagSet.PrintDefaults()
 			exitFunc(0)
 			return flags
@@ -391,7 +400,7 @@ func main() {
 	}
 	if preparedReport != nil {
 		flags.report.SchemaVersion = 2
-		if publishErr := preparedReport.publish(flags.report); publishErr != nil {
+		if publishErr := preparedReport.publish(&flags.report); publishErr != nil {
 			fatalf("Error writing update report: %v", publishErr)
 		}
 	}
@@ -424,7 +433,7 @@ func prepareUpdateReport(reportFile string, inputFiles []string) (*preparedRepor
 	return &preparedReportFile{destination: reportFile, file: file}, nil
 }
 
-func (prepared *preparedReportFile) publish(report updateReport) error {
+func (prepared *preparedReportFile) publish(report *updateReport) error {
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		_ = prepared.discard()
@@ -652,9 +661,9 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 
 	// Process provider updates if specified
 	for _, provider := range config.Providers {
-		count, errors := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output, flags.reportRecorder())
+		count, updateErrors := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output, flags.reportRecorder())
 		providerUpdates += count
-		providerErrors += errors
+		providerErrors += updateErrors
 	}
 
 	// Process module updates if specified
@@ -893,17 +902,17 @@ func updateTerraformVersionWithCount(filename, version string, dryRun bool) (upd
 	changedBlocks = nil
 	// Iterate through all blocks in the file
 	for blockIndex, block := range file.Body().Blocks() {
-		// Look for terraform blocks
-		if block.Type() == "terraform" {
-			currentVersion := block.Body().GetAttribute("required_version")
-			if currentVersion != nil && attributeHasStringValue(currentVersion, version) {
-				continue
-			}
-			// Update or add the required_version attribute
-			block.Body().SetAttributeValue("required_version", cty.StringVal(version))
-			updated = true
-			changedBlocks = append(changedBlocks, blockIndex)
+		if block.Type() != "terraform" {
+			continue
 		}
+		currentVersion := block.Body().GetAttribute("required_version")
+		if currentVersion != nil && attributeHasStringValue(currentVersion, version) {
+			continue
+		}
+		// Update or add the required_version attribute
+		block.Body().SetAttributeValue("required_version", cty.StringVal(version))
+		updated = true
+		changedBlocks = append(changedBlocks, blockIndex)
 	}
 
 	// If we made changes, write the file back (unless in dry-run mode)
