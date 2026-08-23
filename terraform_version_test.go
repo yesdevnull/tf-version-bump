@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestUpdateTerraformVersionContract(t *testing.T) {
@@ -70,11 +71,24 @@ terraform {
 `,
 		},
 		{
-			name: "leaves matching required version unchanged",
-			input: `terraform { required_version = ">= 1.5" }
+			name: "updates differing block when another already matches",
+			input: `terraform {
+  required_version = ">= 1.5"
+}
+
+terraform {
+  required_version = ">= 1.0"
+}
 `,
-			want: `terraform { required_version = ">= 1.5" }
+			want: `terraform {
+  required_version = ">= 1.5"
+}
+
+terraform {
+  required_version = ">= 1.5"
+}
 `,
+			wantUpdated: true,
 		},
 		{
 			name: "adds required version to terraform block without one",
@@ -113,6 +127,50 @@ terraform {
 				t.Errorf("content mismatch:\n--- got ---\n%s--- want ---\n%s", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestUpdateTerraformVersionRepairsMatchingNonStringExpression(t *testing.T) {
+	filename := writeTestFile(t, t.TempDir(), "main.tf", "terraform {\n  required_version = 1.5\n}\n")
+
+	updated, err := updateTerraformVersion(filename, "1.5", false)
+	if err != nil {
+		t.Fatalf("updateTerraformVersion returned error: %v", err)
+	}
+	if !updated {
+		t.Fatal("updated = false, want true")
+	}
+	want := "terraform {\n  required_version = \"1.5\"\n}\n"
+	if got := readTestFile(t, filename); got != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+}
+
+func TestUpdateTerraformVersionMatchingVersionDoesNotWrite(t *testing.T) {
+	input := `terraform { required_version = ">= 1.5" }
+`
+	filename := writeTestFile(t, t.TempDir(), "main.tf", input)
+	wantModTime := time.Unix(1, 0)
+	if err := os.Chtimes(filename, wantModTime, wantModTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	updated, err := updateTerraformVersion(filename, ">= 1.5", false)
+	if err != nil {
+		t.Fatalf("updateTerraformVersion returned error: %v", err)
+	}
+	if updated {
+		t.Fatal("updated = true, want false")
+	}
+	if got := readTestFile(t, filename); got != input {
+		t.Errorf("content = %q, want unchanged %q", got, input)
+	}
+	info, err := os.Stat(filename)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.ModTime(); !got.Equal(wantModTime) {
+		t.Errorf("modification time = %v, want unchanged %v", got, wantModTime)
 	}
 }
 

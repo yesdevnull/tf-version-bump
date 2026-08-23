@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -809,8 +810,12 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 		// Look for terraform blocks
 		if block.Type() == "terraform" {
 			currentVersion := block.Body().GetAttribute("required_version")
-			if currentVersion != nil && attributeStringValue(currentVersion) == version {
-				continue
+			if currentVersion != nil {
+				currentTokens := currentVersion.Expr().BuildTokens(nil)
+				targetTokens := hclwrite.TokensForValue(cty.StringVal(version))
+				if bytes.Equal(bytes.TrimSpace(currentTokens.Bytes()), targetTokens.Bytes()) {
+					continue
+				}
 			}
 			// Update or add the required_version attribute
 			block.Body().SetAttributeValue("required_version", cty.StringVal(version))
