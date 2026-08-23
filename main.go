@@ -1,11 +1,12 @@
 // Package main provides a CLI tool for updating Terraform module versions, Terraform versions,
 // and provider versions across multiple files.
 //
-// The tool supports four modes of operation:
+// The tool supports five modes of operation:
 //  1. Single Module Mode: Update one module at a time via command-line flags
 //  2. Config File Mode: Update multiple modules using a YAML configuration file
-//  3. Terraform Version Mode: Update Terraform required_version in terraform blocks
-//  4. Provider Version Mode: Update provider versions in terraform required_providers blocks
+//  3. Config Validation Mode: Validate a YAML configuration file without updating Terraform files
+//  4. Terraform Version Mode: Update Terraform required_version in terraform blocks
+//  5. Provider Version Mode: Update provider versions in terraform required_providers blocks
 //
 // It uses the official HashiCorp HCL library to parse and modify Terraform files while retaining
 // comments and HCL structure. Changed files are normalised by hclwrite.Format.
