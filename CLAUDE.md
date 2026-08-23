@@ -105,8 +105,9 @@ not atomic. Files are processed in memory, so very large files (>100MB) are impr
 
 ### Update flow
 
-`main()` → `validateOperationModes` → `findMatchingFiles` → either `runConfigFileMode`
-(YAML) or `runCLIMode` (one direct operation). Each dispatches to one of three update paths:
+`main()` → `validateOperationModes` → either standalone config validation or
+`findMatchingFiles` → `runConfigFileMode` (YAML) / `runCLIMode` (one direct operation).
+Each update mode dispatches to one of three update paths:
 `updateModuleVersionWithCount`, `updateTerraformVersion`, or `updateProviderVersionWithCount`.
 
 `updateModuleVersionWithCount` reads and parses the file, then bundles its many

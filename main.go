@@ -104,22 +104,23 @@ func quote(s, format string) string {
 
 // cliFlags holds all command-line flags
 type cliFlags struct {
-	pattern          string
-	moduleSource     string
-	toVersion        string
-	fromVersions     stringSliceFlag
-	ignoreVersions   stringSliceFlag
-	ignoreModules    string
-	configFile       string
-	forceAdd         bool
-	dryRun           bool
-	verbose          bool
-	showVersion      bool
-	output           string
-	terraformVersion string
-	providerName     string
-	reportFile       string
-	report           updateReport
+	pattern              string
+	moduleSource         string
+	toVersion            string
+	fromVersions         stringSliceFlag
+	ignoreVersions       stringSliceFlag
+	ignoreModules        string
+	configFile           string
+	validationConfigFile string
+	forceAdd             bool
+	dryRun               bool
+	verbose              bool
+	showVersion          bool
+	output               string
+	terraformVersion     string
+	providerName         string
+	reportFile           string
+	report               updateReport
 }
 
 type updateReport struct {
@@ -210,6 +211,7 @@ func parseFlags() *cliFlags {
 	flag.Var(&flags.ignoreVersions, "ignore-version", "Optional: version(s) to skip (can be specified multiple times, e.g., -ignore-version 3.0.0 -ignore-version '~> 3.0')")
 	flag.StringVar(&flags.ignoreModules, "ignore-modules", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
 	flag.StringVar(&flags.configFile, "config", "", "Path to YAML config file with multiple module updates")
+	flag.StringVar(&flags.validationConfigFile, "validate-config", "", "Validate a YAML config file without updating Terraform files")
 	flag.BoolVar(&flags.forceAdd, "force-add", false, "Add a missing version attribute to registry modules (default: skip with warning)")
 	flag.BoolVar(&flags.dryRun, "dry-run", false, "Show what changes would be made without actually modifying files")
 	flag.BoolVar(&flags.verbose, "verbose", false, "Show verbose output including skipped modules")
@@ -316,6 +318,13 @@ func main() {
 
 	// Validate operation modes
 	validateOperationModes(flags)
+	if flags.validationConfigFile != "" {
+		if err := validateConfigFile(flags.validationConfigFile); err != nil {
+			fatalf("Error validating config file: %v", err)
+		}
+		fmt.Printf("Config %s is valid\n", quote(flags.validationConfigFile, flags.output))
+		exitFunc(0)
+	}
 
 	// Find and validate matching files
 	files := findMatchingFiles(flags)
@@ -459,6 +468,16 @@ func validateReportFileDoesNotOverwriteInput(reportFile string, inputFiles []str
 
 // validateOperationModes validates that the CLI flags are properly set
 func validateOperationModes(flags *cliFlags) {
+	if flags.validationConfigFile != "" {
+		if flags.pattern != "" || flags.configFile != "" || flags.moduleSource != "" || flags.toVersion != "" ||
+			len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" ||
+			flags.terraformVersion != "" || flags.providerName != "" || flags.forceAdd || flags.dryRun ||
+			flags.verbose || flags.reportFile != "" {
+			fatalf("Error: Cannot use -validate-config with update or report flags")
+		}
+		return
+	}
+
 	// Config file mode is exclusive with all other CLI flags
 	if flags.configFile != "" {
 		if flags.moduleSource != "" || flags.terraformVersion != "" || flags.providerName != "" ||
@@ -484,6 +503,7 @@ func validateOperationModes(flags *cliFlags) {
 		fmt.Println("Usage:")
 		fmt.Println("  Module update:     tf-version-bump -pattern <glob> -module <source> -to <version>")
 		fmt.Println("  Config file:       tf-version-bump -pattern <glob> -config <config-file>")
+		fmt.Println("  Config validation: tf-version-bump -validate-config <config-file>")
 		fmt.Println("  Terraform version: tf-version-bump -pattern <glob> -terraform-version <version>")
 		fmt.Println("  Provider version:  tf-version-bump -pattern <glob> -provider <name> -to <version>")
 		flag.PrintDefaults()

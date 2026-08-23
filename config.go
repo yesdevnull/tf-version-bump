@@ -141,6 +141,17 @@ func loadConfig(filename string) (*Config, error) {
 	return &config, nil
 }
 
+func validateConfigFile(filename string) error {
+	config, err := loadConfig(filename)
+	if err != nil {
+		return err
+	}
+	if config.TerraformVersion == "" && len(config.Providers) == 0 && len(config.Modules) == 0 {
+		return fmt.Errorf("config contains no updates")
+	}
+	return nil
+}
+
 func sanitizeProviderUpdates(providers []ProviderUpdate) error {
 	for i := range providers {
 		providers[i].Name = strings.TrimSpace(providers[i].Name)

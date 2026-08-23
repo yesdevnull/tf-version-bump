@@ -44,6 +44,19 @@ The repository's [JSON Schema](../schema/config-schema.json) provides editor com
 validates Terraform-style version-constraint syntax. The CLI's YAML loader does not execute that
 JSON Schema, so use an editor or separate schema validator when you need schema enforcement.
 
+## Validate without updating
+
+Validate the runtime YAML contract without selecting, parsing, or changing Terraform files:
+
+```bash
+tf-version-bump -validate-config versions.yml
+```
+
+The command rejects malformed YAML, unknown fields, missing required entry fields, and configs
+without any Terraform, provider, or module updates. It trims and validates values in the same way
+as update mode. It does not execute the JSON Schema or validate Terraform version-constraint
+syntax. Validation is standalone and cannot be combined with update or report flags.
+
 ## Top-level fields
 
 | Field | Type | Purpose |
