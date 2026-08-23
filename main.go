@@ -804,6 +804,7 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 
 	// Track if we made any changes
 	updated := false
+	targetVersionTokens := bytes.TrimSpace(hclwrite.TokensForValue(cty.StringVal(version)).Bytes())
 
 	// Iterate through all blocks in the file
 	for _, block := range file.Body().Blocks() {
@@ -812,8 +813,7 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 			currentVersion := block.Body().GetAttribute("required_version")
 			if currentVersion != nil {
 				currentTokens := currentVersion.Expr().BuildTokens(nil)
-				targetTokens := hclwrite.TokensForValue(cty.StringVal(version))
-				if bytes.Equal(bytes.TrimSpace(currentTokens.Bytes()), targetTokens.Bytes()) {
+				if bytes.Equal(bytes.TrimSpace(currentTokens.Bytes()), targetVersionTokens) {
 					continue
 				}
 			}
