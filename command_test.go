@@ -439,7 +439,7 @@ func TestCommandConfigDryRunOutputContract(t *testing.T) {
 	if got := readTestFile(t, file); got != input {
 		t.Errorf("config dry run content = %q, want %q", got, input)
 	}
-	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 0,\n  \"provider_blocks_updated\": 0\n}\n"
+	wantReport := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 0,\n  \"module_blocks_updated\": 0,\n  \"provider_blocks_updated\": 0\n}\n"
 	if got := readTestFile(t, report); got != wantReport {
 		t.Errorf("dry-run report = %q, want %q", got, wantReport)
 	}
@@ -448,7 +448,8 @@ func TestCommandConfigDryRunOutputContract(t *testing.T) {
 func TestCommandWritesExactUpdatedBlockCounts(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "main.tf", `terraform {
-  required_providers {
+	  required_version = ">= 1.0"
+	  required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 4.0"
@@ -456,7 +457,8 @@ func TestCommandWritesExactUpdatedBlockCounts(t *testing.T) {
   }
 }
 terraform {
-  required_providers {
+	  required_version = ">= 1.5"
+	  required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 4.0"
@@ -464,7 +466,16 @@ terraform {
   }
 }
 terraform {
-  required_providers {
+	  required_providers {
+	    aws = {
+	      source  = "hashicorp/aws"
+	      version = "~> 5.0"
+	    }
+	  }
+	}
+	terraform {
+	  required_version = "${">= 2.0"}"
+	  required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
@@ -490,6 +501,7 @@ module "current" {
 modules:
   - source: example/module
     version: 2.0.0
+terraform_version: ">= 2.0"
 `)
 	report := dir + "/report.json"
 
@@ -500,7 +512,57 @@ modules:
 	if result.exitCode != -1 || result.diagnostics != "" {
 		t.Fatalf("result = %#v", result)
 	}
-	want := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 2,\n  \"provider_blocks_updated\": 2\n}\n"
+	want := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 3,\n  \"module_blocks_updated\": 2,\n  \"provider_blocks_updated\": 2\n}\n"
+	if got := readTestFile(t, report); got != want {
+		t.Fatalf("report = %q, want %q", got, want)
+	}
+}
+
+func TestCommandReportCountsTerraformBlocksInDirectMode(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", `terraform {
+  required_version = ">= 1.0"
+}
+
+terraform {
+  required_version = "${">= 1.5"}"
+}
+
+terraform {
+}
+`)
+	report := dir + "/report.json"
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-terraform-version", ">= 1.5", "-report-file", report,
+	})
+
+	if result.exitCode != -1 || result.diagnostics != "" {
+		t.Fatalf("result = %#v", result)
+	}
+	want := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 2,\n  \"module_blocks_updated\": 0,\n  \"provider_blocks_updated\": 0\n}\n"
+	if got := readTestFile(t, report); got != want {
+		t.Fatalf("report = %q, want %q", got, want)
+	}
+}
+
+func TestCommandReportCountsHardLinkedTerraformBlocksOnce(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "a.tf", "terraform {\n  required_version = \">= 1.0\"\n}\n")
+	linkedFile := dir + "/b.tf"
+	if err := os.Link(file, linkedFile); err != nil {
+		t.Skipf("cannot create hard link: %v", err)
+	}
+	report := dir + "/report.json"
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", dir + "/*.tf", "-terraform-version", ">= 1.5", "-report-file", report,
+	})
+
+	if result.exitCode != -1 || result.diagnostics != "" {
+		t.Fatalf("result = %#v", result)
+	}
+	want := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 1,\n  \"module_blocks_updated\": 0,\n  \"provider_blocks_updated\": 0\n}\n"
 	if got := readTestFile(t, report); got != want {
 		t.Fatalf("report = %q, want %q", got, want)
 	}
@@ -554,7 +616,7 @@ modules:
 	if result.exitCode != -1 || result.diagnostics != "" {
 		t.Fatalf("result = %#v", result)
 	}
-	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 3,\n  \"provider_blocks_updated\": 2\n}\n"
+	wantReport := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 0,\n  \"module_blocks_updated\": 3,\n  \"provider_blocks_updated\": 2\n}\n"
 	if got := readTestFile(t, report); got != wantReport {
 		t.Errorf("report = %q, want %q", got, wantReport)
 	}
@@ -602,7 +664,7 @@ terraform {
 	if result.exitCode != -1 || result.diagnostics != "" {
 		t.Fatalf("result = %#v", result)
 	}
-	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 0,\n  \"provider_blocks_updated\": 2\n}\n"
+	wantReport := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 0,\n  \"module_blocks_updated\": 0,\n  \"provider_blocks_updated\": 2\n}\n"
 	if got := readTestFile(t, report); got != wantReport {
 		t.Errorf("report = %q, want %q", got, wantReport)
 	}
@@ -625,7 +687,7 @@ func TestCommandReportCountsForceAddedModuleBlock(t *testing.T) {
 	if result.exitCode != -1 || result.diagnostics != "" {
 		t.Fatalf("result = %#v", result)
 	}
-	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 0\n}\n"
+	wantReport := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 0,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 0\n}\n"
 	if got := readTestFile(t, report); got != wantReport {
 		t.Errorf("report = %q, want %q", got, wantReport)
 	}
@@ -729,7 +791,7 @@ modules:
 	if result.exitCode != -1 || result.diagnostics != "" {
 		t.Fatalf("result = %#v", result)
 	}
-	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 1\n}\n"
+	wantReport := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 0,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 1\n}\n"
 	if got := readTestFile(t, report); got != wantReport {
 		t.Errorf("report = %q, want %q", got, wantReport)
 	}
@@ -778,7 +840,7 @@ modules:
 	if result.exitCode != -1 || result.diagnostics != "" {
 		t.Fatalf("result = %#v", result)
 	}
-	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 1\n}\n"
+	wantReport := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 0,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 1\n}\n"
 	if got := readTestFile(t, report); got != wantReport {
 		t.Errorf("report = %q, want %q", got, wantReport)
 	}
@@ -799,7 +861,7 @@ func TestCommandReplacesExistingReportAfterSuccessfulUpdate(t *testing.T) {
 	if result.exitCode != -1 || result.diagnostics != "" {
 		t.Fatalf("result = %#v", result)
 	}
-	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 0\n}\n"
+	wantReport := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 0,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 0\n}\n"
 	if got := readTestFile(t, report); got != wantReport {
 		t.Errorf("report = %q, want %q", got, wantReport)
 	}
@@ -1009,7 +1071,7 @@ terraform_version: ">= 1.5"
 	if result.exitCode != -1 || result.diagnostics != "" || result.stdout != wantStdout {
 		t.Fatalf("result = %#v, want stdout %q", result, wantStdout)
 	}
-	wantReport := "{\n  \"schema_version\": 1,\n  \"module_blocks_updated\": 0,\n  \"provider_blocks_updated\": 0\n}\n"
+	wantReport := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 0,\n  \"module_blocks_updated\": 0,\n  \"provider_blocks_updated\": 0\n}\n"
 	if got := readTestFile(t, report); got != wantReport {
 		t.Fatalf("report = %q, want %q", got, wantReport)
 	}

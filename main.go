@@ -125,12 +125,14 @@ type cliFlags struct {
 }
 
 type updateReport struct {
-	SchemaVersion         int `json:"schema_version"`
-	ModuleBlocksUpdated   int `json:"module_blocks_updated"`
-	ProviderBlocksUpdated int `json:"provider_blocks_updated"`
-	moduleBlockIDs        map[string]struct{}
-	providerBlockIDs      map[string]struct{}
-	fileIdentities        []fs.FileInfo
+	SchemaVersion          int `json:"schema_version"`
+	TerraformBlocksUpdated int `json:"terraform_blocks_updated"`
+	ModuleBlocksUpdated    int `json:"module_blocks_updated"`
+	ProviderBlocksUpdated  int `json:"provider_blocks_updated"`
+	terraformBlockIDs      map[string]struct{}
+	moduleBlockIDs         map[string]struct{}
+	providerBlockIDs       map[string]struct{}
+	fileIdentities         []fs.FileInfo
 }
 
 type preparedReportFile struct {
@@ -145,18 +147,26 @@ func (flags *cliFlags) reportRecorder() *updateReport {
 	return &flags.report
 }
 
+func (report *updateReport) recordTerraformBlocks(filename string, blockIndexes []int) {
+	report.recordTopLevelBlocks(filename, blockIndexes, &report.terraformBlockIDs, &report.TerraformBlocksUpdated)
+}
+
 func (report *updateReport) recordModuleBlocks(filename string, blockIndexes []int) {
+	report.recordTopLevelBlocks(filename, blockIndexes, &report.moduleBlockIDs, &report.ModuleBlocksUpdated)
+}
+
+func (report *updateReport) recordTopLevelBlocks(filename string, blockIndexes []int, blockIDs *map[string]struct{}, count *int) {
 	fileID := report.fileIdentity(filename)
-	if report.moduleBlockIDs == nil {
-		report.moduleBlockIDs = make(map[string]struct{})
+	if *blockIDs == nil {
+		*blockIDs = make(map[string]struct{})
 	}
 	for _, blockIndex := range blockIndexes {
 		blockID := fmt.Sprintf("%s\x00%d", fileID, blockIndex)
-		if _, recorded := report.moduleBlockIDs[blockID]; recorded {
+		if _, recorded := (*blockIDs)[blockID]; recorded {
 			continue
 		}
-		report.moduleBlockIDs[blockID] = struct{}{}
-		report.ModuleBlocksUpdated++
+		(*blockIDs)[blockID] = struct{}{}
+		*count++
 	}
 }
 
@@ -359,7 +369,7 @@ func main() {
 		fatalf("%v", err)
 	}
 	if preparedReport != nil {
-		flags.report.SchemaVersion = 1
+		flags.report.SchemaVersion = 2
 		if publishErr := preparedReport.publish(flags.report); publishErr != nil {
 			fatalf("Error writing update report: %v", publishErr)
 		}
@@ -616,7 +626,7 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 
 	// Process terraform version if specified
 	if config.TerraformVersion != "" {
-		terraformUpdates, terraformErrors = processTerraformVersion(files, config.TerraformVersion, flags.dryRun, flags.output)
+		terraformUpdates, terraformErrors = processTerraformVersion(files, config.TerraformVersion, flags.dryRun, flags.output, flags.reportRecorder())
 	}
 
 	// Process provider updates if specified
@@ -651,7 +661,7 @@ func runCLIMode(files []string, flags *cliFlags) (int, error) {
 	switch {
 	case flags.terraformVersion != "":
 		var totalErrors int
-		totalUpdates, totalErrors = processTerraformVersion(files, flags.terraformVersion, flags.dryRun, flags.output)
+		totalUpdates, totalErrors = processTerraformVersion(files, flags.terraformVersion, flags.dryRun, flags.output, flags.reportRecorder())
 		printTerraformSummary(totalUpdates, flags.dryRun)
 		if totalErrors > 0 {
 			return totalUpdates, fmt.Errorf("%d Terraform version update error(s)", totalErrors)
@@ -759,15 +769,18 @@ func containsVersion(versions []string, version string) bool {
 // Returns:
 //   - totalUpdates: Number of files that were updated (or would be updated in dry-run mode)
 //   - totalErrors: Number of files that could not be processed
-func processTerraformVersion(files []string, version string, dryRun bool, outputFormat string) (totalUpdates, totalErrors int) {
+func processTerraformVersion(files []string, version string, dryRun bool, outputFormat string, report *updateReport) (totalUpdates, totalErrors int) {
 	for _, file := range files {
-		updated, err := updateTerraformVersion(file, version, dryRun)
+		updated, changedBlocks, err := updateTerraformVersionWithCount(file, version, dryRun)
 		if err != nil {
 			log.Printf("Error processing %s: %v", file, err)
 			totalErrors++
 			continue
 		}
 		if updated {
+			if report != nil && !dryRun && len(changedBlocks) > 0 {
+				report.recordTerraformBlocks(file, changedBlocks)
+			}
 			prefix := "✓"
 			action := "Updated"
 			if dryRun {
@@ -829,29 +842,36 @@ func processProviderVersion(files []string, providerName, version string, dryRun
 //   - bool: true if a terraform block was updated (or would be updated in dry-run mode)
 //   - error: Any error encountered during file reading, parsing, or writing
 func updateTerraformVersion(filename, version string, dryRun bool) (bool, error) {
+	updated, _, err := updateTerraformVersionWithCount(filename, version, dryRun)
+	return updated, err
+}
+
+// updateTerraformVersionWithCount updates required_version and identifies changed terraform blocks.
+func updateTerraformVersionWithCount(filename, version string, dryRun bool) (updated bool, changedBlocks []int, err error) {
 	// Get original file permissions to preserve them when writing
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
-		return false, fmt.Errorf("failed to stat file: %w", err)
+		return false, nil, fmt.Errorf("failed to stat file: %w", err)
 	}
 	originalMode := fileInfo.Mode()
 
 	// Read the file
 	src, err := os.ReadFile(filename)
 	if err != nil {
-		return false, fmt.Errorf("failed to read file: %w", err)
+		return false, nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
 	// Parse the file with hclwrite
 	file, diags := hclwrite.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return false, fmt.Errorf("failed to parse HCL: %s", diags.Error())
+		return false, nil, fmt.Errorf("failed to parse HCL: %s", diags.Error())
 	}
 
 	// Track if we made any changes
-	updated := false
+	updated = false
+	changedBlocks = nil
 	// Iterate through all blocks in the file
-	for _, block := range file.Body().Blocks() {
+	for blockIndex, block := range file.Body().Blocks() {
 		// Look for terraform blocks
 		if block.Type() == "terraform" {
 			currentVersion := block.Body().GetAttribute("required_version")
@@ -861,6 +881,7 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 			// Update or add the required_version attribute
 			block.Body().SetAttributeValue("required_version", cty.StringVal(version))
 			updated = true
+			changedBlocks = append(changedBlocks, blockIndex)
 		}
 	}
 
@@ -869,11 +890,11 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 		output := hclwrite.Format(file.Bytes())
 		// Preserve original file permissions
 		if err := os.WriteFile(filename, output, originalMode.Perm()); err != nil {
-			return false, fmt.Errorf("failed to write file: %w", err)
+			return false, nil, fmt.Errorf("failed to write file: %w", err)
 		}
 	}
 
-	return updated, nil
+	return updated, changedBlocks, nil
 }
 
 // updateProviderVersionWithCount updates a provider version and counts blocks whose values changed.

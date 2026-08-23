@@ -3,10 +3,40 @@ package main
 import (
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestUpdateTerraformVersionWithCountIdentifiesChangedBlocks(t *testing.T) {
+	input := `terraform {
+  required_version = ">= 1.0"
+}
+
+terraform {
+  required_version = "${">= 1.5"}"
+}
+
+terraform {
+}
+`
+	filename := writeTestFile(t, t.TempDir(), "main.tf", input)
+
+	updated, changedBlocks, err := updateTerraformVersionWithCount(filename, ">= 1.5", true)
+	if err != nil {
+		t.Fatalf("updateTerraformVersionWithCount returned error: %v", err)
+	}
+	if !updated {
+		t.Fatal("updated = false, want true")
+	}
+	if want := []int{0, 2}; !reflect.DeepEqual(changedBlocks, want) {
+		t.Fatalf("changed blocks = %v, want %v", changedBlocks, want)
+	}
+	if got := readTestFile(t, filename); got != input {
+		t.Fatalf("dry run content = %q, want unchanged %q", got, input)
+	}
+}
 
 func TestUpdateTerraformVersionContract(t *testing.T) {
 	tests := []struct {
