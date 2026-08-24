@@ -25,24 +25,50 @@ binary=${TF_VERSION_BUMP_BIN:-tf-version-bump}
 config_file=${TF_VERSION_BUMP_CONFIG:-versions.yml}
 pattern=${TF_VERSION_BUMP_PATTERN:-**/*.tf}
 
-if ! command -v "$binary" >/dev/null 2>&1; then
+is_repository_relative() {
+    local value=$1
+    [[ -n $value && $value != /* && $value != ".." && $value != ../* && $value != */../* && $value != */.. ]]
+}
+
+if ! is_repository_relative "$config_file"; then
+    printf 'tf-version-bump pre-commit: config path must be repository-relative: %s\n' "$config_file" >&2
+    exit 1
+fi
+if ! is_repository_relative "$pattern"; then
+    printf 'tf-version-bump pre-commit: pattern must be repository-relative: %s\n' "$pattern" >&2
+    exit 1
+fi
+
+if ! binary_path=$(command -v "$binary"); then
     printf 'tf-version-bump pre-commit: executable not found: %s\n' "$binary" >&2
     exit 1
+fi
+if [[ $binary_path != /* ]]; then
+    binary_path=$(cd -- "$(dirname -- "$binary_path")" && pwd -P)/$(basename -- "$binary_path")
 fi
 
 if ! repository_root=$(git rev-parse --show-toplevel 2>/dev/null); then
     printf 'tf-version-bump pre-commit: not inside a Git worktree\n' >&2
     exit 1
 fi
-cd -- "$repository_root"
+staged_root=$(mktemp -d "${TMPDIR:-/tmp}/tf-version-bump-pre-commit.XXXXXX")
+cleanup() {
+    rm -rf -- "$staged_root"
+}
+trap cleanup EXIT
+if ! git -C "$repository_root" checkout-index --all --prefix="$staged_root/"; then
+    printf 'tf-version-bump pre-commit: could not materialise the staged index\n' >&2
+    exit 1
+fi
+cd -- "$staged_root"
 
-if ! "$binary" -validate-config "$config_file"; then
+if ! "$binary_path" -validate-config "$config_file"; then
     printf 'tf-version-bump pre-commit: configuration validation failed: %s\n' "$config_file" >&2
     exit 1
 fi
 
 set +e
-"$binary" -pattern "$pattern" -config "$config_file" -check
+"$binary_path" -pattern "$pattern" -config "$config_file" -check
 check_exit=$?
 set -e
 
