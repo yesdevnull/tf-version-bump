@@ -26,8 +26,14 @@ type workflowJob struct {
 	With        map[string]any    `yaml:"with"`
 }
 
+type workflowTrigger struct {
+	Paths       []string `yaml:"paths"`
+	PathsIgnore []string `yaml:"paths-ignore"`
+}
+
 type githubWorkflow struct {
-	Jobs map[string]workflowJob `yaml:"jobs"`
+	On   map[string]workflowTrigger `yaml:"on"`
+	Jobs map[string]workflowJob     `yaml:"jobs"`
 }
 
 func loadWorkflow(t *testing.T, filename string) githubWorkflow {
@@ -100,6 +106,25 @@ func TestCIRejectsUntidyModuleFiles(t *testing.T) {
 		}
 	}
 	t.Fatal("CI test job does not run go mod tidy -diff")
+}
+
+func TestRequiredStatusWorkflowsRunForEveryMainChange(t *testing.T) {
+	for _, filename := range []string{".github/workflows/ci.yml", ".github/workflows/lint.yml"} {
+		workflow := loadWorkflow(t, filename)
+		for _, event := range []string{"push", "pull_request"} {
+			trigger, ok := workflow.On[event]
+			if !ok {
+				t.Errorf("%s does not run on %s", filename, event)
+				continue
+			}
+			if len(trigger.Paths) != 0 {
+				t.Errorf("%s %s paths = %q, want every changed path", filename, event, trigger.Paths)
+			}
+			if len(trigger.PathsIgnore) != 0 {
+				t.Errorf("%s %s paths-ignore = %q, want no ignored paths", filename, event, trigger.PathsIgnore)
+			}
+		}
+	}
 }
 
 func TestGoReleaserCreatesReplaceableDraftRelease(t *testing.T) {
