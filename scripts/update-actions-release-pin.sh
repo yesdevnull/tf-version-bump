@@ -78,6 +78,13 @@ pin_files=(
     "$readme_file" "$readme_file"
     "$guide_file" "$guide_file"
 )
+pin_markers=(
+    "      tf_version_bump_version:" "      tf_version_bump_archive_sha256:"
+    "      tf_version_bump_version:" "      tf_version_bump_archive_sha256:"
+    "TF_VERSION_BUMP_VERSION=" "TF_VERSION_BUMP_ARCHIVE_SHA256=" "TF_VERSION_BUMP_ARCHIVE_URL="
+    "" ""
+    "" ""
+)
 current_values=(
     "tf_version_bump_version: $current_version" "tf_version_bump_archive_sha256: $current_digest"
     "tf_version_bump_version: $current_version" "tf_version_bump_archive_sha256: $current_digest"
@@ -107,6 +114,11 @@ count_literal() {
     ' "$filename"
 }
 
+count_line_prefix() {
+    local filename=$1 prefix=$2
+    awk -v prefix="$prefix" 'index($0, prefix) == 1 { count++ } END { print count + 0 }' "$filename"
+}
+
 for relative_file in "${files[@]}"; do
     source_file="$repository_root/$relative_file"
     if [[ ! -f $source_file ]]; then
@@ -116,10 +128,14 @@ for relative_file in "${files[@]}"; do
 done
 for index in "${!pin_files[@]}"; do
     relative_file=${pin_files[$index]}
+    marker_count=1
+    if [[ -n ${pin_markers[$index]} ]]; then
+        marker_count=$(count_line_prefix "$repository_root/$relative_file" "${pin_markers[$index]}")
+    fi
     occurrence_count=$(count_literal "$repository_root/$relative_file" "${current_values[$index]}")
-    if [[ $occurrence_count != 1 ]]; then
-        printf 'Unexpected release-pin layout in %s: expected one occurrence of %s, found %s\n' \
-            "$relative_file" "${current_values[$index]}" "$occurrence_count" >&2
+    if [[ $marker_count != 1 || $occurrence_count != 1 ]]; then
+        printf 'Unexpected release-pin layout in %s: field occurrences %s, expected-value occurrences %s\n' \
+            "$relative_file" "$marker_count" "$occurrence_count" >&2
         exit 1
     fi
 done
