@@ -293,6 +293,25 @@ func TestUpdateActionsReleasePinAcceptsStableRelease(t *testing.T) {
 	}
 }
 
+func TestUpdateActionsReleasePinAcceptsBuildMetadata(t *testing.T) {
+	repository := copyActionsReleasePinFixture(t)
+	const newVersion = "v1.0.0+build.7"
+	const newDigest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+	command := exec.Command("bash", "scripts/update-actions-release-pin.sh", newVersion, newDigest)
+	command.Dir = repository
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("update to release with build metadata: %v\n%s", err, output)
+	}
+	for _, filename := range actionsReleasePinFiles() {
+		contents := readTestFile(t, filepath.Join(repository, filename))
+		if !strings.Contains(contents, newVersion) || !strings.Contains(contents, newDigest) {
+			t.Errorf("%s does not contain the release pin with build metadata", filename)
+		}
+	}
+}
+
 func TestUpdateActionsReleasePinIsIdempotent(t *testing.T) {
 	repository := copyActionsReleasePinFixture(t)
 	before := readActionsReleasePinFiles(t, repository)
@@ -410,6 +429,46 @@ func TestUpdateActionsReleasePinRejectsDivergentDuplicateFieldWithoutPartialChan
 	}
 	if after := readActionsReleasePinFiles(t, repository); !reflect.DeepEqual(after, before) {
 		t.Fatal("divergent duplicate field caused partial release-pin changes")
+	}
+}
+
+func TestUpdateActionsReleasePinRejectsUnwritableTargetWithoutPartialChanges(t *testing.T) {
+	repository := copyActionsReleasePinFixture(t)
+	workflow := filepath.Join(repository, "examples", "github-actions", ".github", "workflows", "tf-version-bump-nonproduction.yml")
+	if err := os.Chmod(workflow, 0o444); err != nil {
+		t.Fatalf("make target unwritable: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(workflow, 0o644); err != nil {
+			t.Errorf("restore target permissions: %v", err)
+		}
+	})
+	before := readActionsReleasePinFiles(t, repository)
+
+	command := exec.Command("bash", "scripts/update-actions-release-pin.sh", "v1.0.0-rc.11", strings.Repeat("a", 64))
+	command.Dir = repository
+	output, err := command.CombinedOutput()
+	var exitError *exec.ExitError
+	if !errors.As(err, &exitError) || exitError.ExitCode() != 1 {
+		t.Fatalf("exit error = %v, output = %q, want status 1", err, output)
+	}
+	if !strings.Contains(string(output), "tf-version-bump-nonproduction.yml") {
+		t.Fatalf("output = %q, want unwritable filename", output)
+	}
+	if after := readActionsReleasePinFiles(t, repository); !reflect.DeepEqual(after, before) {
+		t.Fatal("unwritable target caused partial release-pin changes")
+	}
+}
+
+func TestRequiredStatusWorkflowDocumentationMatchesTriggers(t *testing.T) {
+	contents := readTestFile(t, "CLAUDE.md")
+	for _, outdatedClaim := range []string{"skipping `**/*.md`", "only on Go/dependency file changes"} {
+		if strings.Contains(contents, outdatedClaim) {
+			t.Errorf("CLAUDE.md retains outdated workflow claim %q", outdatedClaim)
+		}
+	}
+	if !strings.Contains(contents, "CI/Build and Lint run for every push and pull request targeting `main`") {
+		t.Fatal("CLAUDE.md does not document unconditional required status workflows")
 	}
 }
 

@@ -240,11 +240,12 @@ Copy files from `examples/` to a temporary directory before manual write-mode te
 
 ## CI
 
-The primary CI workflow runs on push/PR to `main`, skipping `**/*.md`.
+CI/Build and Lint run for every push and pull request targeting `main`, so their
+required status checks are always reported.
 
 - **Test** — Go 1.26, `-race` + coverage; uploads to Codecov
 - **Build** — needs Test; cross-compiles 6 targets (linux/darwin/windows × amd64/arm64)
-- **Lint** — golangci-lint, only on Go/dependency file changes
+- **Lint** — golangci-lint
 - **Documentation** — a separate path-filtered workflow runs `make docs-check` for Markdown,
   schema, maintained example, and documentation-test changes
 - **CodeQL** and **Release** (GoReleaser + SLSA, tag-triggered) run separately

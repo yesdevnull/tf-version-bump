@@ -12,13 +12,14 @@ USAGE
 }
 
 is_semantic_version() {
-    local candidate=$1 prerelease identifier
+    local candidate=$1 version_without_build prerelease identifier
     local identifiers=()
-    [[ $candidate =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+([.][0-9A-Za-z-]+)*))?$ ]] || return 1
-    if [[ $candidate != *-* ]]; then
+    [[ $candidate =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+([.][0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+([.][0-9A-Za-z-]+)*))?$ ]] || return 1
+    version_without_build=${candidate%%+*}
+    if [[ $version_without_build != *-* ]]; then
         return 0
     fi
-    prerelease=${candidate#*-}
+    prerelease=${version_without_build#*-}
     IFS='.' read -r -a identifiers <<<"$prerelease"
     for identifier in "${identifiers[@]}"; do
         if [[ $identifier =~ ^0[0-9]+$ ]]; then
@@ -158,18 +159,50 @@ replace_literal() {
     ' "$source" >"$destination"
 }
 
+changed_files=()
 for relative_file in "${files[@]}"; do
     source_file="$repository_root/$relative_file"
     current_file="$temporary_directory/current"
     updated_file="$temporary_directory/updated"
+    staged_file="$temporary_directory/staged/$relative_file"
+    backup_file="$temporary_directory/original/$relative_file"
+    mkdir -p -- "$(dirname -- "$staged_file")" "$(dirname -- "$backup_file")"
     cp -- "$source_file" "$current_file"
+    cp -- "$source_file" "$backup_file"
     for index in "${!pin_files[@]}"; do
         if [[ ${pin_files[$index]} == "$relative_file" ]]; then
             replace_literal "$current_file" "$updated_file" "${current_values[$index]}" "${new_values[$index]}"
             mv -- "$updated_file" "$current_file"
         fi
     done
-    cat "$current_file" >"$source_file"
+    cp -- "$current_file" "$staged_file"
+    if ! cmp -s -- "$source_file" "$staged_file"; then
+        changed_files+=("$relative_file")
+    fi
+done
+
+for relative_file in "${changed_files[@]}"; do
+    source_file="$repository_root/$relative_file"
+    if [[ ! -w $source_file ]]; then
+        printf 'Maintained release-pin file is not writable: %s\n' "$relative_file" >&2
+        exit 1
+    fi
+done
+
+written_files=()
+for relative_file in "${changed_files[@]}"; do
+    source_file="$repository_root/$relative_file"
+    staged_file="$temporary_directory/staged/$relative_file"
+    if ! cat "$staged_file" >"$source_file"; then
+        printf 'Could not update maintained release-pin file: %s\n' "$relative_file" >&2
+        for written_file in "${written_files[@]}"; do
+            if ! cat "$temporary_directory/original/$written_file" >"$repository_root/$written_file"; then
+                printf 'Could not restore maintained release-pin file: %s\n' "$written_file" >&2
+            fi
+        done
+        exit 1
+    fi
+    written_files+=("$relative_file")
 done
 
 printf 'Updated GitHub Actions example pin to %s\n' "$version"
