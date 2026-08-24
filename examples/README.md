@@ -71,10 +71,12 @@ cp examples/pre-commit-hook.sh .git/hooks/pre-commit
 chmod 755 .git/hooks/pre-commit
 ```
 
-The hook first runs standalone configuration validation, then uses `-check` without modifying
-Terraform files. It exits 0 when no eligible values would change, 2 when updates are required, and
-1 when validation or processing fails. Git blocks a commit for either non-zero status while keeping
-the distinction visible to people and wrapper automation.
+The hook materialises the staged Git index in a temporary directory, runs standalone configuration
+validation there, then uses `-check` without modifying either staged or worktree files. This means a
+partial commit is checked against the exact content Git will commit, not unrelated unstaged edits.
+It exits 0 when no eligible values would change, 2 when updates are required, and 1 when validation
+or processing fails. Git blocks a commit for either non-zero status while keeping the distinction
+visible to people and wrapper automation.
 
 Use environment overrides when the repository uses different paths or an explicitly installed
 binary:

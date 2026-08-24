@@ -57,6 +57,7 @@ modules:
   - source: example/module
     version: 2.0.0
 EOF
+git -C "$test_repository" add main.tf versions.yml
 
 run_hook() {
     local name=$1
@@ -76,6 +77,10 @@ run_hook clean
 sed 's/version: 2.0.0/version: 3.0.0/' "$test_repository/versions.yml" \
     >"$workspace/update-versions.yml"
 cp -- "$workspace/update-versions.yml" "$test_repository/versions.yml"
+git -C "$test_repository" add versions.yml
+sed 's/version = "2.0.0"/version = "3.0.0"/' "$test_repository/main.tf" \
+    >"$workspace/current-main.tf"
+cp -- "$workspace/current-main.tf" "$test_repository/main.tf"
 cp -- "$test_repository/main.tf" "$workspace/main-before-check.tf"
 run_hook updates-required
 [[ $hook_exit == 2 ]] || fail "outdated repository exited $hook_exit, want 2"
@@ -87,6 +92,7 @@ cmp -s "$test_repository/main.tf" "$workspace/main-before-check.tf" \
 cat >"$test_repository/invalid.yml" <<'EOF'
 unknown_field: true
 EOF
+git -C "$test_repository" add invalid.yml
 run_hook invalid-config TF_VERSION_BUMP_CONFIG=invalid.yml TF_VERSION_BUMP_PATTERN='['
 [[ $hook_exit == 1 ]] || fail "invalid configuration exited $hook_exit, want 1"
 grep -F 'configuration validation failed: invalid.yml' "$workspace/invalid-config.stderr" >/dev/null \
@@ -99,5 +105,15 @@ run_hook invalid-pattern TF_VERSION_BUMP_PATTERN='['
 [[ $hook_exit == 1 ]] || fail "invalid pattern exited $hook_exit, want 1"
 grep -F 'pattern' "$workspace/invalid-pattern.stderr" >/dev/null \
     || fail "processing failure diagnostic is missing"
+
+run_hook absolute-config TF_VERSION_BUMP_CONFIG="$test_repository/versions.yml"
+[[ $hook_exit == 1 ]] || fail "absolute configuration path exited $hook_exit, want 1"
+grep -F 'must be repository-relative' "$workspace/absolute-config.stderr" >/dev/null \
+    || fail "absolute configuration path diagnostic is missing"
+
+run_hook parent-pattern TF_VERSION_BUMP_PATTERN='../*.tf'
+[[ $hook_exit == 1 ]] || fail "parent-traversing pattern exited $hook_exit, want 1"
+grep -F 'must be repository-relative' "$workspace/parent-pattern.stderr" >/dev/null \
+    || fail "parent-traversing pattern diagnostic is missing"
 
 printf 'Pre-commit hook examples passed\n'
