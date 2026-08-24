@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -46,6 +48,33 @@ func TestDocumentationExampleScenariosRunSuccessfully(t *testing.T) {
 
 func TestDocumentationPreCommitHookRunsSuccessfully(t *testing.T) {
 	assertBashExampleSucceeds(t, "examples/pre-commit-hook_test.sh", "Pre-commit hook examples passed\n")
+}
+
+func TestDocumentationPreCommitHarnessReportsMissingCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("restricted PATH test uses Unix symbolic links")
+	}
+	binDirectory := t.TempDir()
+	for _, dependency := range []string{"chmod", "cmp", "cp", "dirname", "env", "git", "go", "grep", "mkdir", "mktemp", "rm", "sed"} {
+		path, err := exec.LookPath(dependency)
+		if err != nil {
+			t.Skipf("%s is required to test a restricted PATH", dependency)
+		}
+		if err := os.Symlink(path, filepath.Join(binDirectory, dependency)); err != nil {
+			t.Fatalf("link %s into restricted PATH: %v", dependency, err)
+		}
+	}
+
+	command := exec.Command(bashPath(t), "examples/pre-commit-hook_test.sh")
+	command.Env = append(os.Environ(), "PATH="+binDirectory)
+	output, err := command.CombinedOutput()
+	var exitError *exec.ExitError
+	if !errors.As(err, &exitError) || exitError.ExitCode() != 1 {
+		t.Fatalf("exit error = %v, output = %q, want status 1", err, output)
+	}
+	if got, want := string(output), "Pre-commit hook test failure: required command not found: cat\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
 }
 
 func assertBashExampleSucceeds(t *testing.T, script, expectedOutput string) {

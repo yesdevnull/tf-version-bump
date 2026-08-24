@@ -11,7 +11,7 @@ require_command() {
     command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
 
-for dependency in chmod cmp cp env git go grep mkdir mktemp sed; do
+for dependency in cat chmod cmp cp dirname env git go grep mkdir mktemp rm sed; do
     require_command "$dependency"
 done
 
