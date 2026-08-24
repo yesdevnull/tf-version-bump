@@ -11,6 +11,22 @@ independently verified tf-version-bump release and Linux x86-64 archive digest.
 USAGE
 }
 
+is_semantic_version() {
+    local candidate=$1 prerelease identifier
+    local identifiers=()
+    [[ $candidate =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+([.][0-9A-Za-z-]+)*))?$ ]] || return 1
+    if [[ $candidate != *-* ]]; then
+        return 0
+    fi
+    prerelease=${candidate#*-}
+    IFS='.' read -r -a identifiers <<<"$prerelease"
+    for identifier in "${identifiers[@]}"; do
+        if [[ $identifier =~ ^0[0-9]+$ ]]; then
+            return 1
+        fi
+    done
+}
+
 if [[ ${1:-} == "--help" ]]; then
     usage
     exit 0
@@ -22,7 +38,7 @@ fi
 
 version=$1
 digest=$2
-if [[ ! $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+if ! is_semantic_version "$version"; then
     printf 'Invalid release version: %s\n' "$version" >&2
     usage >&2
     exit 2
@@ -37,7 +53,7 @@ repository_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 production_workflow="$repository_root/examples/github-actions/.github/workflows/tf-version-bump-production.yml"
 current_version=$(awk '$1 == "tf_version_bump_version:" { print $2; exit }' "$production_workflow")
 current_digest=$(awk '$1 == "tf_version_bump_archive_sha256:" { print $2; exit }' "$production_workflow")
-if [[ ! $current_version =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+if ! is_semantic_version "$current_version"; then
     printf 'Could not determine the current release version from %s\n' "$production_workflow" >&2
     exit 1
 fi
@@ -46,14 +62,36 @@ if [[ ! $current_digest =~ ^[0-9a-f]{64}$ ]]; then
     exit 1
 fi
 
-files=(
-    "examples/github-actions/.github/workflows/tf-version-bump-production.yml"
-    "examples/github-actions/.github/workflows/tf-version-bump-nonproduction.yml"
-    "examples/github-actions/test.sh"
-    "examples/github-actions/README.md"
-    "docs/ADVANCED-USAGE.md"
+production_file="examples/github-actions/.github/workflows/tf-version-bump-production.yml"
+nonproduction_file="examples/github-actions/.github/workflows/tf-version-bump-nonproduction.yml"
+test_file="examples/github-actions/test.sh"
+readme_file="examples/github-actions/README.md"
+guide_file="docs/ADVANCED-USAGE.md"
+files=("$production_file" "$nonproduction_file" "$test_file" "$readme_file" "$guide_file")
+
+current_archive_url="https://github.com/yesdevnull/tf-version-bump/releases/download/$current_version/tf-version-bump_${current_version#v}_linux_x86_64.tar.gz"
+new_archive_url="https://github.com/yesdevnull/tf-version-bump/releases/download/$version/tf-version-bump_${version#v}_linux_x86_64.tar.gz"
+pin_files=(
+    "$production_file" "$production_file"
+    "$nonproduction_file" "$nonproduction_file"
+    "$test_file" "$test_file" "$test_file"
+    "$readme_file" "$readme_file"
+    "$guide_file" "$guide_file"
 )
-expected_version_counts=(1 1 3 1 1)
+current_values=(
+    "tf_version_bump_version: $current_version" "tf_version_bump_archive_sha256: $current_digest"
+    "tf_version_bump_version: $current_version" "tf_version_bump_archive_sha256: $current_digest"
+    "TF_VERSION_BUMP_VERSION=\"$current_version\"" "TF_VERSION_BUMP_ARCHIVE_SHA256=\"$current_digest\"" "TF_VERSION_BUMP_ARCHIVE_URL=\"$current_archive_url\""
+    "$current_version" "$current_digest"
+    "$current_version" "$current_digest"
+)
+new_values=(
+    "tf_version_bump_version: $version" "tf_version_bump_archive_sha256: $digest"
+    "tf_version_bump_version: $version" "tf_version_bump_archive_sha256: $digest"
+    "TF_VERSION_BUMP_VERSION=\"$version\"" "TF_VERSION_BUMP_ARCHIVE_SHA256=\"$digest\"" "TF_VERSION_BUMP_ARCHIVE_URL=\"$new_archive_url\""
+    "$version" "$digest"
+    "$version" "$digest"
+)
 
 count_literal() {
     local filename=$1 literal=$2
@@ -69,18 +107,19 @@ count_literal() {
     ' "$filename"
 }
 
-for index in "${!files[@]}"; do
-    relative_file=${files[$index]}
+for relative_file in "${files[@]}"; do
     source_file="$repository_root/$relative_file"
     if [[ ! -f $source_file ]]; then
         printf 'Maintained release-pin file is missing: %s\n' "$relative_file" >&2
         exit 1
     fi
-    version_count=$(count_literal "$source_file" "${current_version#v}")
-    digest_count=$(count_literal "$source_file" "$current_digest")
-    if [[ $version_count != "${expected_version_counts[$index]}" || $digest_count != 1 ]]; then
-        printf 'Unexpected release-pin layout in %s: version occurrences %s, digest occurrences %s\n' \
-            "$relative_file" "$version_count" "$digest_count" >&2
+done
+for index in "${!pin_files[@]}"; do
+    relative_file=${pin_files[$index]}
+    occurrence_count=$(count_literal "$repository_root/$relative_file" "${current_values[$index]}")
+    if [[ $occurrence_count != 1 ]]; then
+        printf 'Unexpected release-pin layout in %s: expected one occurrence of %s, found %s\n' \
+            "$relative_file" "${current_values[$index]}" "$occurrence_count" >&2
         exit 1
     fi
 done
@@ -105,11 +144,16 @@ replace_literal() {
 
 for relative_file in "${files[@]}"; do
     source_file="$repository_root/$relative_file"
-    version_file="$temporary_directory/version"
+    current_file="$temporary_directory/current"
     updated_file="$temporary_directory/updated"
-    replace_literal "$source_file" "$version_file" "${current_version#v}" "${version#v}"
-    replace_literal "$version_file" "$updated_file" "$current_digest" "$digest"
-    cat "$updated_file" >"$source_file"
+    cp -- "$source_file" "$current_file"
+    for index in "${!pin_files[@]}"; do
+        if [[ ${pin_files[$index]} == "$relative_file" ]]; then
+            replace_literal "$current_file" "$updated_file" "${current_values[$index]}" "${new_values[$index]}"
+            mv -- "$updated_file" "$current_file"
+        fi
+    done
+    cat "$current_file" >"$source_file"
 done
 
 printf 'Updated GitHub Actions example pin to %s\n' "$version"
