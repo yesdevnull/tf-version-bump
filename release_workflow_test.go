@@ -26,14 +26,9 @@ type workflowJob struct {
 	With        map[string]any    `yaml:"with"`
 }
 
-type workflowTrigger struct {
-	Paths       []string `yaml:"paths"`
-	PathsIgnore []string `yaml:"paths-ignore"`
-}
-
 type githubWorkflow struct {
-	On   map[string]workflowTrigger `yaml:"on"`
-	Jobs map[string]workflowJob     `yaml:"jobs"`
+	On   map[string]map[string]any `yaml:"on"`
+	Jobs map[string]workflowJob    `yaml:"jobs"`
 }
 
 func loadWorkflow(t *testing.T, filename string) githubWorkflow {
@@ -117,11 +112,10 @@ func TestRequiredStatusWorkflowsRunForEveryMainChange(t *testing.T) {
 				t.Errorf("%s does not run on %s", filename, event)
 				continue
 			}
-			if len(trigger.Paths) != 0 {
-				t.Errorf("%s %s paths = %q, want every changed path", filename, event, trigger.Paths)
-			}
-			if len(trigger.PathsIgnore) != 0 {
-				t.Errorf("%s %s paths-ignore = %q, want no ignored paths", filename, event, trigger.PathsIgnore)
+			for _, filter := range []string{"paths", "paths-ignore"} {
+				if value, exists := trigger[filter]; exists {
+					t.Errorf("%s %s %s = %#v, want filter omitted", filename, event, filter, value)
+				}
 			}
 		}
 	}
