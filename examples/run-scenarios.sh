@@ -110,7 +110,7 @@ cp -- "$repository_root/examples/scenarios/provider-targeting/config.yml" "$prov
 "$binary" -pattern "$provider_directory/main.tf" -config "$provider_directory/config.yml" -force-add \
     >"$workspace/provider-first.stdout" 2>"$workspace/provider-first.stderr"
 cmp -s "$provider_directory/main.tf" \
-    "$repository_root/examples/scenarios/provider-targeting/expected.tf" \
+    "$repository_root/examples/scenarios/provider-targeting/expected.tf.golden" \
     || fail "provider-targeting scenario did not produce the exact expected provider configuration"
 
 cp -- "$provider_directory/main.tf" "$workspace/provider-first.tf"
