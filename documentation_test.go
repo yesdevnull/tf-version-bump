@@ -41,17 +41,26 @@ func TestExampleConfigsMatchDocumentedContract(t *testing.T) {
 }
 
 func TestDocumentationExampleScenariosRunSuccessfully(t *testing.T) {
+	assertBashExampleSucceeds(t, "examples/run-scenarios.sh", "Example scenarios passed\n")
+}
+
+func TestDocumentationPreCommitHookRunsSuccessfully(t *testing.T) {
+	assertBashExampleSucceeds(t, "examples/pre-commit-hook_test.sh", "Pre-commit hook examples passed\n")
+}
+
+func assertBashExampleSucceeds(t *testing.T, script, expectedOutput string) {
+	t.Helper()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
-		t.Skip("bash is required to run the maintained example scenarios")
+		t.Skip("bash is required to run the maintained examples")
 	}
-	command := exec.Command(bash, "examples/run-scenarios.sh")
+	command := exec.Command(bash, script)
 	output, err := command.CombinedOutput()
 	if err != nil {
-		t.Fatalf("run example scenarios: %v\n%s", err, output)
+		t.Fatalf("run %s: %v\n%s", script, err, output)
 	}
-	if got, want := string(output), "Example scenarios passed\n"; got != want {
-		t.Fatalf("scenario output = %q, want %q", got, want)
+	if got := string(output); got != expectedOutput {
+		t.Fatalf("%s output = %q, want %q", script, got, expectedOutput)
 	}
 }
 

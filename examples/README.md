@@ -62,6 +62,34 @@ fi
 Status 0 does not prove that every configured target exists or was eligible. Ignored or unmatched
 modules and matching modules skipped for a missing `version` can also produce no eligible update.
 
+### Pre-commit hook
+
+Install the maintained hook when the repository keeps its update configuration at `versions.yml`:
+
+```bash
+cp examples/pre-commit-hook.sh .git/hooks/pre-commit
+chmod 755 .git/hooks/pre-commit
+```
+
+The hook first runs standalone configuration validation, then uses `-check` without modifying
+Terraform files. It exits 0 when no eligible values would change, 2 when updates are required, and
+1 when validation or processing fails. Git blocks a commit for either non-zero status while keeping
+the distinction visible to people and wrapper automation.
+
+Use environment overrides when the repository uses different paths or an explicitly installed
+binary:
+
+```bash
+TF_VERSION_BUMP_CONFIG=.github/tf-version-bump/versions.yml \
+TF_VERSION_BUMP_PATTERN='infrastructure/**/*.tf' \
+TF_VERSION_BUMP_BIN=/usr/local/bin/tf-version-bump \
+  .git/hooks/pre-commit
+```
+
+Run `examples/pre-commit-hook.sh --help` for the complete override reference. Environment variables
+must be available to the process that invokes Git; alternatively, set them in a small
+repository-specific wrapper around the maintained hook.
+
 Apply the updates and write exact block counts independently of the human-readable summary:
 
 ```bash
