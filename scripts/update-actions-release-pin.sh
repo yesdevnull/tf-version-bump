@@ -159,6 +159,23 @@ replace_literal() {
     ' "$source" >"$destination"
 }
 
+replace_file_atomically() {
+    local content=$1 destination=$2 replacement
+    replacement=$(mktemp "$(dirname -- "$destination")/.tf-version-bump-release-pin.XXXXXX") || return 1
+    if ! cp -p -- "$destination" "$replacement"; then
+        rm -f -- "$replacement"
+        return 1
+    fi
+    if ! cat "$content" >"$replacement"; then
+        rm -f -- "$replacement"
+        return 1
+    fi
+    if ! mv -- "$replacement" "$destination"; then
+        rm -f -- "$replacement"
+        return 1
+    fi
+}
+
 changed_files=()
 for relative_file in "${files[@]}"; do
     source_file="$repository_root/$relative_file"
@@ -183,7 +200,7 @@ done
 
 for relative_file in "${changed_files[@]}"; do
     source_file="$repository_root/$relative_file"
-    if [[ ! -w $source_file ]]; then
+    if [[ ! -w $source_file || ! -w $(dirname -- "$source_file") ]]; then
         printf 'Maintained release-pin file is not writable: %s\n' "$relative_file" >&2
         exit 1
     fi
@@ -193,10 +210,10 @@ written_files=()
 for relative_file in "${changed_files[@]}"; do
     source_file="$repository_root/$relative_file"
     staged_file="$temporary_directory/staged/$relative_file"
-    if ! cat "$staged_file" >"$source_file"; then
+    if ! replace_file_atomically "$staged_file" "$source_file"; then
         printf 'Could not update maintained release-pin file: %s\n' "$relative_file" >&2
         for written_file in "${written_files[@]}"; do
-            if ! cat "$temporary_directory/original/$written_file" >"$repository_root/$written_file"; then
+            if ! replace_file_atomically "$temporary_directory/original/$written_file" "$repository_root/$written_file"; then
                 printf 'Could not restore maintained release-pin file: %s\n' "$written_file" >&2
             fi
         done

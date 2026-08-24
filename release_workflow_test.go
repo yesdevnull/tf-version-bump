@@ -460,6 +460,34 @@ func TestUpdateActionsReleasePinRejectsUnwritableTargetWithoutPartialChanges(t *
 	}
 }
 
+func TestUpdateActionsReleasePinReplacesFilesAtomicallyAndPreservesMode(t *testing.T) {
+	repository := copyActionsReleasePinFixture(t)
+	workflow := filepath.Join(repository, "examples", "github-actions", ".github", "workflows", "tf-version-bump-production.yml")
+	if err := os.Chmod(workflow, 0o640); err != nil {
+		t.Fatalf("set target permissions: %v", err)
+	}
+	before, err := os.Stat(workflow)
+	if err != nil {
+		t.Fatalf("stat target before update: %v", err)
+	}
+
+	command := exec.Command("bash", "scripts/update-actions-release-pin.sh", "v1.0.0-rc.11", strings.Repeat("a", 64))
+	command.Dir = repository
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("update release pin: %v\n%s", err, output)
+	}
+	after, err := os.Stat(workflow)
+	if err != nil {
+		t.Fatalf("stat target after update: %v", err)
+	}
+	if os.SameFile(before, after) {
+		t.Fatal("release-pin target was rewritten in place instead of replaced atomically")
+	}
+	if got, want := after.Mode().Perm(), before.Mode().Perm(); got != want {
+		t.Fatalf("target permissions = %v, want %v", got, want)
+	}
+}
+
 func TestRequiredStatusWorkflowDocumentationMatchesTriggers(t *testing.T) {
 	contents := readTestFile(t, "CLAUDE.md")
 	for _, outdatedClaim := range []string{"skipping `**/*.md`", "only on Go/dependency file changes"} {
