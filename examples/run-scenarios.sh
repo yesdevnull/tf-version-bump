@@ -5,8 +5,8 @@ usage() {
     cat <<'USAGE'
 Usage: examples/run-scenarios.sh
 
-Build tf-version-bump and verify the maintained force-add and idempotency
-examples in an isolated temporary directory.
+Build tf-version-bump and verify the maintained force-add, idempotency, and
+provider-targeting examples in an isolated temporary directory.
 USAGE
 }
 
@@ -101,5 +101,33 @@ cmp -s "$idempotency_directory/main.tf" "$workspace/idempotency-first.tf" \
     || fail "second idempotency run changed the Terraform modification time"
 grep -F 'No updates were performed.' "$workspace/idempotency-second.stdout" >/dev/null \
     || fail "second idempotency run did not report an already-current configuration"
+
+provider_directory="$workspace/provider-targeting"
+mkdir -p -- "$provider_directory"
+cp -- "$repository_root/examples/scenarios/provider-targeting/main.tf" "$provider_directory/main.tf"
+cp -- "$repository_root/examples/scenarios/provider-targeting/config.yml" "$provider_directory/config.yml"
+
+"$binary" -pattern "$provider_directory/main.tf" -config "$provider_directory/config.yml" \
+    >"$workspace/provider-first.stdout" 2>"$workspace/provider-first.stderr"
+grep -F 'version = "~> 6.0"' "$provider_directory/main.tf" >/dev/null \
+    || fail "provider-targeting scenario did not update the existing AWS constraint"
+if grep -F 'version = "~> 4.0"' "$provider_directory/main.tf" >/dev/null; then
+    fail "provider-targeting scenario added a missing AzureRM constraint"
+fi
+grep -F 'version = "~> 3.0"' "$provider_directory/main.tf" >/dev/null \
+    || fail "provider-targeting scenario changed the unrelated random constraint"
+
+cp -- "$provider_directory/main.tf" "$workspace/provider-first.tf"
+touch -t 200001010000 "$provider_directory/main.tf"
+first_modification_time=$(file_modification_time "$provider_directory/main.tf")
+"$binary" -pattern "$provider_directory/main.tf" -config "$provider_directory/config.yml" \
+    >"$workspace/provider-second.stdout" 2>"$workspace/provider-second.stderr"
+second_modification_time=$(file_modification_time "$provider_directory/main.tf")
+cmp -s "$provider_directory/main.tf" "$workspace/provider-first.tf" \
+    || fail "second provider-targeting run changed Terraform bytes"
+[[ $second_modification_time == "$first_modification_time" ]] \
+    || fail "second provider-targeting run changed the Terraform modification time"
+grep -F 'No updates were performed.' "$workspace/provider-second.stdout" >/dev/null \
+    || fail "second provider-targeting run did not report an already-current configuration"
 
 printf 'Example scenarios passed\n'
