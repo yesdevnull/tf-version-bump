@@ -387,6 +387,32 @@ func TestUpdateActionsReleasePinRejectsUnexpectedLayoutWithoutPartialChanges(t *
 	}
 }
 
+func TestUpdateActionsReleasePinRejectsDivergentDuplicateFieldWithoutPartialChanges(t *testing.T) {
+	repository := copyActionsReleasePinFixture(t)
+	workflow := filepath.Join(repository, "examples", "github-actions", ".github", "workflows", "tf-version-bump-nonproduction.yml")
+	contents := readTestFile(t, workflow)
+	currentField := "      tf_version_bump_version: v1.0.0-rc.10"
+	contents = strings.Replace(contents, currentField, currentField+"\n      tf_version_bump_version: v0.9.0", 1)
+	if err := os.WriteFile(workflow, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write duplicate-field fixture: %v", err)
+	}
+	before := readActionsReleasePinFiles(t, repository)
+
+	command := exec.Command("bash", "scripts/update-actions-release-pin.sh", "v1.0.0-rc.11", strings.Repeat("a", 64))
+	command.Dir = repository
+	output, err := command.CombinedOutput()
+	var exitError *exec.ExitError
+	if !errors.As(err, &exitError) || exitError.ExitCode() != 1 {
+		t.Fatalf("exit error = %v, output = %q, want status 1", err, output)
+	}
+	if !strings.Contains(string(output), "tf-version-bump-nonproduction.yml") {
+		t.Fatalf("output = %q, want duplicate-field filename", output)
+	}
+	if after := readActionsReleasePinFiles(t, repository); !reflect.DeepEqual(after, before) {
+		t.Fatal("divergent duplicate field caused partial release-pin changes")
+	}
+}
+
 func actionsReleasePinFiles() []string {
 	return []string{
 		"examples/github-actions/.github/workflows/tf-version-bump-production.yml",
