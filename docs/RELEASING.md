@@ -120,6 +120,22 @@ After the workflow completes, verify that the release contains all six platform 
 Linux packages, the checksum manifest, and provenance file. Perform at least one checksum and
 provenance verification using the published assets.
 
+### Update the maintained GitHub Actions example
+
+After independently verifying the published Linux x86-64 archive, update the copyable Actions
+example, its test harness, and current user guides together:
+
+```bash
+scripts/update-actions-release-pin.sh v<version> <linux-x86-64-sha256>
+git diff -- examples/github-actions docs/ADVANCED-USAGE.md
+make docs-check
+make test-github-actions
+```
+
+The updater is deliberately offline: it accepts the already verified digest rather than trusting a
+network-fetched checksum. It validates both arguments and the expected maintained-file layout before
+writing anything. Historical design documents and version-specific test fixtures are not changed.
+
 ## Test a release locally
 
 Install the release workflow's exact GoReleaser version and create a snapshot without publishing:
