@@ -1020,6 +1020,10 @@ test_operator_documentation_describes_stage_two_contract() {
 
     grep -F 'both callers opt in with `terraform_fmt: true`' "$advanced_usage" >/dev/null \
         || fail "advanced usage omits caller formatting opt-in"
+    grep -F "$TF_VERSION_BUMP_VERSION" "$advanced_usage" >/dev/null \
+        || fail "advanced usage omits the rc.10 pin"
+    grep -F "$TF_VERSION_BUMP_ARCHIVE_SHA256" "$advanced_usage" >/dev/null \
+        || fail "advanced usage omits the pinned archive SHA-256"
     grep -F 'Validation and verification use one target checkout in `validate`' "$advanced_usage" >/dev/null \
         || fail "advanced usage claims a separate verification checkout"
     grep -F 'one dynamic dependency commit' "$advanced_usage" >/dev/null \
