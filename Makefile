@@ -60,7 +60,7 @@ install:
 
 # Check user documentation, its local links, the config schema, and maintained examples.
 docs-check:
-	go test -v -run 'Test(ConfigSchema|Documentation|ExampleConfigs)' ./...
+	go test -count=1 -v -run 'Test(ConfigSchema|Documentation|ExampleConfigs)' ./...
 
 # Alias kept for muscle memory: identical to test-github-actions, which also runs actionlint.
 branch-automation-test: test-github-actions

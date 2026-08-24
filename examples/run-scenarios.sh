@@ -107,20 +107,16 @@ mkdir -p -- "$provider_directory"
 cp -- "$repository_root/examples/scenarios/provider-targeting/main.tf" "$provider_directory/main.tf"
 cp -- "$repository_root/examples/scenarios/provider-targeting/config.yml" "$provider_directory/config.yml"
 
-"$binary" -pattern "$provider_directory/main.tf" -config "$provider_directory/config.yml" \
+"$binary" -pattern "$provider_directory/main.tf" -config "$provider_directory/config.yml" -force-add \
     >"$workspace/provider-first.stdout" 2>"$workspace/provider-first.stderr"
-grep -F 'version = "~> 6.0"' "$provider_directory/main.tf" >/dev/null \
-    || fail "provider-targeting scenario did not update the existing AWS constraint"
-if grep -F 'version = "~> 4.0"' "$provider_directory/main.tf" >/dev/null; then
-    fail "provider-targeting scenario added a missing AzureRM constraint"
-fi
-grep -F 'version = "~> 3.0"' "$provider_directory/main.tf" >/dev/null \
-    || fail "provider-targeting scenario changed the unrelated random constraint"
+cmp -s "$provider_directory/main.tf" \
+    "$repository_root/examples/scenarios/provider-targeting/expected.tf" \
+    || fail "provider-targeting scenario did not produce the exact expected provider configuration"
 
 cp -- "$provider_directory/main.tf" "$workspace/provider-first.tf"
 touch -t 200001010000 "$provider_directory/main.tf"
 first_modification_time=$(file_modification_time "$provider_directory/main.tf")
-"$binary" -pattern "$provider_directory/main.tf" -config "$provider_directory/config.yml" \
+"$binary" -pattern "$provider_directory/main.tf" -config "$provider_directory/config.yml" -force-add \
     >"$workspace/provider-second.stdout" 2>"$workspace/provider-second.stderr"
 second_modification_time=$(file_modification_time "$provider_directory/main.tf")
 cmp -s "$provider_directory/main.tf" "$workspace/provider-first.tf" \
