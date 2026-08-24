@@ -560,7 +560,7 @@ prepopulate_verified_processing_release_cache() {
     local actual_sha256
     actual_sha256=$(sha256_file "$verified_archive")
     [[ "$actual_sha256" == "$TF_VERSION_BUMP_ARCHIVE_SHA256" ]] \
-        || fail "independently downloaded rc.10 fixture archive failed checksum verification"
+        || fail "independently downloaded $TF_VERSION_BUMP_VERSION fixture archive failed checksum verification"
 
     local cache_directory="$PROCESS_RUNNER_TEMP/tf-version-bump-release-cache"
     local cached_archive="$cache_directory/$TF_VERSION_BUMP_ARCHIVE_SHA256.tar.gz"
@@ -988,7 +988,7 @@ test_operator_documentation_describes_stage_two_contract() {
     grep -F 'both supplied callers set `terraform_fmt: true`' "$readme" >/dev/null \
         || fail "example README omits caller formatting opt-in"
     grep -F "$TF_VERSION_BUMP_VERSION" "$readme" >/dev/null \
-        || fail "example README omits the rc.10 pin"
+        || fail "example README omits the $TF_VERSION_BUMP_VERSION pin"
     grep -F "$TF_VERSION_BUMP_ARCHIVE_SHA256" "$readme" >/dev/null \
         || fail "example README omits the pinned archive SHA-256"
     local normalised_readme
@@ -1021,7 +1021,7 @@ test_operator_documentation_describes_stage_two_contract() {
     grep -F 'both callers opt in with `terraform_fmt: true`' "$advanced_usage" >/dev/null \
         || fail "advanced usage omits caller formatting opt-in"
     grep -F "$TF_VERSION_BUMP_VERSION" "$advanced_usage" >/dev/null \
-        || fail "advanced usage omits the rc.10 pin"
+        || fail "advanced usage omits the $TF_VERSION_BUMP_VERSION pin"
     grep -F "$TF_VERSION_BUMP_ARCHIVE_SHA256" "$advanced_usage" >/dev/null \
         || fail "advanced usage omits the pinned archive SHA-256"
     grep -F 'Validation and verification use one target checkout in `validate`' "$advanced_usage" >/dev/null \
@@ -1030,6 +1030,65 @@ test_operator_documentation_describes_stage_two_contract() {
         || fail "advanced usage omits the dynamic dependency commit"
     grep -F 'no separate validation artefact' "$advanced_usage" >/dev/null \
         || fail "advanced usage does not remove the validation artefact"
+}
+
+test_fixture_version_diagnostics_follow_current_expected_version() {
+    # Production break caught: release fixture diagnostics retain a previous release pin after the
+    # expected version changes, misleading an operator investigating a checksum or documentation
+    # failure.
+    local expected_version="v9.9.9-rc.11"
+    local archive_url="https://example.invalid/tf-version-bump_9.9.9-rc.11_linux_x86_64.tar.gz"
+    local archive_path="$TEST_TMP_ROOT/${archive_url##*/}"
+    local checksum_stdout="$TEST_TMP_ROOT/version-diagnostic-checksum.stdout"
+    local checksum_stderr="$TEST_TMP_ROOT/version-diagnostic-checksum.stderr"
+
+    printf '%s\n' 'deliberately invalid release archive' >"$archive_path"
+    if (
+        TF_VERSION_BUMP_VERSION="$expected_version"
+        TF_VERSION_BUMP_ARCHIVE_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
+        TF_VERSION_BUMP_ARCHIVE_URL="$archive_url"
+        prepopulate_verified_processing_release_cache
+    ) >"$checksum_stdout" 2>"$checksum_stderr"; then
+        fail "checksum fixture mismatch unexpectedly succeeded"
+    fi
+    [[ ! -s "$checksum_stdout" ]] || fail "checksum fixture mismatch emitted stdout"
+    [[ "$(<"$checksum_stderr")" == "FAIL: independently downloaded $expected_version fixture archive failed checksum verification" ]] \
+        || fail "checksum fixture mismatch did not report the current expected version: $(<"$checksum_stderr")"
+
+    local documentation_fixture="$TEST_TMP_ROOT/version-diagnostic-docs"
+    local fixture_script_dir="$documentation_fixture/examples/github-actions"
+    mkdir -p "$fixture_script_dir" "$documentation_fixture/docs"
+    cp "$SCRIPT_DIR/README.md" "$fixture_script_dir/README.md"
+    cp "$REPOSITORY_ROOT/docs/ADVANCED-USAGE.md" "$documentation_fixture/docs/ADVANCED-USAGE.md"
+
+    local readme_stdout="$TEST_TMP_ROOT/version-diagnostic-readme.stdout"
+    local readme_stderr="$TEST_TMP_ROOT/version-diagnostic-readme.stderr"
+    if (
+        SCRIPT_DIR="$fixture_script_dir"
+        REPOSITORY_ROOT="$documentation_fixture"
+        TF_VERSION_BUMP_VERSION="$expected_version"
+        test_operator_documentation_describes_stage_two_contract
+    ) >"$readme_stdout" 2>"$readme_stderr"; then
+        fail "README pin mismatch unexpectedly succeeded"
+    fi
+    [[ ! -s "$readme_stdout" ]] || fail "README pin mismatch emitted stdout"
+    [[ "$(<"$readme_stderr")" == "FAIL: example README omits the $expected_version pin" ]] \
+        || fail "README pin mismatch did not report the current expected version: $(<"$readme_stderr")"
+
+    printf '%s\n' "$expected_version" >>"$fixture_script_dir/README.md"
+    local advanced_usage_stdout="$TEST_TMP_ROOT/version-diagnostic-advanced-usage.stdout"
+    local advanced_usage_stderr="$TEST_TMP_ROOT/version-diagnostic-advanced-usage.stderr"
+    if (
+        SCRIPT_DIR="$fixture_script_dir"
+        REPOSITORY_ROOT="$documentation_fixture"
+        TF_VERSION_BUMP_VERSION="$expected_version"
+        test_operator_documentation_describes_stage_two_contract
+    ) >"$advanced_usage_stdout" 2>"$advanced_usage_stderr"; then
+        fail "advanced usage pin mismatch unexpectedly succeeded"
+    fi
+    [[ ! -s "$advanced_usage_stdout" ]] || fail "advanced usage pin mismatch emitted stdout"
+    [[ "$(<"$advanced_usage_stderr")" == "FAIL: advanced usage omits the $expected_version pin" ]] \
+        || fail "advanced usage pin mismatch did not report the current expected version: $(<"$advanced_usage_stderr")"
 }
 
 test_reusable_workflow_declares_lean_interface() {
@@ -3713,6 +3772,7 @@ if [[ $# -eq 0 ]]; then
     test_modules_require_supported_go_version
     test_copyable_workflow_layout
     test_operator_documentation_describes_stage_two_contract
+    test_fixture_version_diagnostics_follow_current_expected_version
     test_reusable_workflow_declares_lean_interface
     test_reusable_workflow_wires_current_attempt_pipeline
     test_callers_define_weekly_policies_and_tool_pins
