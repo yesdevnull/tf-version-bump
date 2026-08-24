@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -13,6 +14,15 @@ import (
 
 type exitCall struct {
 	code int
+}
+
+func bashPath(t *testing.T) string {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is required to run shell-script tests")
+	}
+	return bash
 }
 
 func stubExit(t *testing.T) (restore func(), code *int) {

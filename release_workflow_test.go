@@ -240,7 +240,7 @@ func TestUpdateActionsReleasePinUpdatesMaintainedFiles(t *testing.T) {
 	const newVersion = "v1.0.0-rc.11"
 	const newDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-	command := exec.Command("bash", "scripts/update-actions-release-pin.sh", newVersion, newDigest)
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", newVersion, newDigest)
 	command.Dir = repository
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -266,7 +266,7 @@ func TestUpdateActionsReleasePinAcceptsStableRelease(t *testing.T) {
 	const newVersion = "v1.0.0"
 	const newDigest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-	command := exec.Command("bash", "scripts/update-actions-release-pin.sh", newVersion, newDigest)
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", newVersion, newDigest)
 	command.Dir = repository
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -282,7 +282,7 @@ func TestUpdateActionsReleasePinAcceptsStableRelease(t *testing.T) {
 		}
 	}
 	afterFirstUpdate := readActionsReleasePinFiles(t, repository)
-	command = exec.Command("bash", "scripts/update-actions-release-pin.sh", newVersion, newDigest)
+	command = exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", newVersion, newDigest)
 	command.Dir = repository
 	output, err = command.CombinedOutput()
 	if err != nil {
@@ -298,7 +298,7 @@ func TestUpdateActionsReleasePinAcceptsBuildMetadata(t *testing.T) {
 	const newVersion = "v1.0.0+build.7"
 	const newDigest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 
-	command := exec.Command("bash", "scripts/update-actions-release-pin.sh", newVersion, newDigest)
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", newVersion, newDigest)
 	command.Dir = repository
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -318,7 +318,7 @@ func TestUpdateActionsReleasePinIsIdempotent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	command := exec.CommandContext(ctx, "bash", "scripts/update-actions-release-pin.sh", "v1.0.0-rc.10", "532783cd3c6834a37616ed81ed76ef99ec343cc64d9664dd67c7eb325420c830")
+	command := exec.CommandContext(ctx, bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.10", "532783cd3c6834a37616ed81ed76ef99ec343cc64d9664dd67c7eb325420c830")
 	command.Dir = repository
 	command.WaitDelay = time.Second
 	output, err := command.CombinedOutput()
@@ -351,7 +351,7 @@ func TestUpdateActionsReleasePinRejectsInvalidInputWithoutChanges(t *testing.T) 
 		t.Run(testCase.name, func(t *testing.T) {
 			repository := copyActionsReleasePinFixture(t)
 			before := readActionsReleasePinFiles(t, repository)
-			command := exec.Command("bash", append([]string{"scripts/update-actions-release-pin.sh"}, testCase.args...)...)
+			command := exec.Command(bashPath(t), append([]string{"scripts/update-actions-release-pin.sh"}, testCase.args...)...)
 			command.Dir = repository
 			output, err := command.CombinedOutput()
 			var exitError *exec.ExitError
@@ -370,7 +370,7 @@ func TestUpdateActionsReleasePinRejectsInvalidInputWithoutChanges(t *testing.T) 
 
 func TestUpdateActionsReleasePinHelp(t *testing.T) {
 	repository := copyActionsReleasePinFixture(t)
-	command := exec.Command("bash", "scripts/update-actions-release-pin.sh", "--help")
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "--help")
 	command.Dir = repository
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -391,7 +391,7 @@ func TestUpdateActionsReleasePinRejectsUnexpectedLayoutWithoutPartialChanges(t *
 	}
 	before := readActionsReleasePinFiles(t, repository)
 
-	command := exec.Command("bash", "scripts/update-actions-release-pin.sh", "v1.0.0-rc.11", strings.Repeat("a", 64))
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.11", strings.Repeat("a", 64))
 	command.Dir = repository
 	output, err := command.CombinedOutput()
 	var exitError *exec.ExitError
@@ -417,7 +417,7 @@ func TestUpdateActionsReleasePinRejectsDivergentDuplicateFieldWithoutPartialChan
 	}
 	before := readActionsReleasePinFiles(t, repository)
 
-	command := exec.Command("bash", "scripts/update-actions-release-pin.sh", "v1.0.0-rc.11", strings.Repeat("a", 64))
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.11", strings.Repeat("a", 64))
 	command.Dir = repository
 	output, err := command.CombinedOutput()
 	var exitError *exec.ExitError
@@ -445,7 +445,7 @@ func TestUpdateActionsReleasePinRejectsUnwritableTargetWithoutPartialChanges(t *
 	})
 	before := readActionsReleasePinFiles(t, repository)
 
-	command := exec.Command("bash", "scripts/update-actions-release-pin.sh", "v1.0.0-rc.11", strings.Repeat("a", 64))
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.11", strings.Repeat("a", 64))
 	command.Dir = repository
 	output, err := command.CombinedOutput()
 	var exitError *exec.ExitError
@@ -471,7 +471,7 @@ func TestUpdateActionsReleasePinReplacesFilesAtomicallyAndPreservesMode(t *testi
 		t.Fatalf("stat target before update: %v", err)
 	}
 
-	command := exec.Command("bash", "scripts/update-actions-release-pin.sh", "v1.0.0-rc.11", strings.Repeat("a", 64))
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.11", strings.Repeat("a", 64))
 	command.Dir = repository
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("update release pin: %v\n%s", err, output)

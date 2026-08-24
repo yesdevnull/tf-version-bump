@@ -50,11 +50,7 @@ func TestDocumentationPreCommitHookRunsSuccessfully(t *testing.T) {
 
 func assertBashExampleSucceeds(t *testing.T, script, expectedOutput string) {
 	t.Helper()
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash is required to run the maintained examples")
-	}
-	command := exec.Command(bash, script)
+	command := exec.Command(bashPath(t), script)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run %s: %v\n%s", script, err, output)
