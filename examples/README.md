@@ -84,8 +84,11 @@ Dry-run reports contain zero counts because no updates were applied. Check mode 
 without `version`, followed by the same config with `-force-add`.
 [`scenarios/idempotency`](scenarios/idempotency) updates Terraform, provider, and module versions,
 then proves that applying the same config again leaves both bytes and modification time unchanged.
+[`scenarios/provider-targeting`](scenarios/provider-targeting) updates one existing provider
+constraint while preserving an unrelated provider and a targeted attribute-style provider without
+a `version`. The module-only `-force-add` flag does not add provider version attributes.
 
-Run both scenarios against a temporary copy of their fixtures:
+Run all scenarios against a temporary copy of their fixtures:
 
 ```bash
 examples/run-scenarios.sh

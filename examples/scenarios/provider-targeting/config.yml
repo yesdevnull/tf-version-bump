@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yesdevnull/tf-version-bump/main/schema/config-schema.json
+
+providers:
+  - name: aws
+    version: "~> 6.0"
+  - name: azurerm
+    version: "~> 4.0"
