@@ -281,6 +281,16 @@ func TestUpdateActionsReleasePinAcceptsStableRelease(t *testing.T) {
 			t.Errorf("%s does not contain the stable release pin", filename)
 		}
 	}
+	afterFirstUpdate := readActionsReleasePinFiles(t, repository)
+	command = exec.Command("bash", "scripts/update-actions-release-pin.sh", newVersion, newDigest)
+	command.Dir = repository
+	output, err = command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("repeat stable release-pin update: %v\n%s", err, output)
+	}
+	if afterSecondUpdate := readActionsReleasePinFiles(t, repository); !reflect.DeepEqual(afterSecondUpdate, afterFirstUpdate) {
+		t.Fatal("repeated stable release-pin update changed maintained files")
+	}
 }
 
 func TestUpdateActionsReleasePinIsIdempotent(t *testing.T) {
@@ -312,6 +322,8 @@ func TestUpdateActionsReleasePinRejectsInvalidInputWithoutChanges(t *testing.T) 
 		{name: "missing arguments"},
 		{name: "version without tag prefix", args: []string{"1.0.0-rc.11", strings.Repeat("a", 64)}},
 		{name: "malformed version", args: []string{"v1.0", strings.Repeat("a", 64)}},
+		{name: "leading zero in core version", args: []string{"v01.0.0", strings.Repeat("a", 64)}},
+		{name: "leading zero in numeric prerelease", args: []string{"v1.0.0-01", strings.Repeat("a", 64)}},
 		{name: "short digest", args: []string{"v1.0.0-rc.11", "abc123"}},
 		{name: "extra argument", args: []string{"v1.0.0-rc.11", strings.Repeat("a", 64), "unexpected"}},
 	}
