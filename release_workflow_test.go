@@ -24,10 +24,16 @@ type workflowStep struct {
 	Env  map[string]any `yaml:"env"`
 }
 
+type workflowStrategy struct {
+	FailFast *bool          `yaml:"fail-fast"`
+	Matrix   map[string]any `yaml:"matrix"`
+}
+
 type workflowJob struct {
 	Needs       any               `yaml:"needs"`
 	Permissions map[string]string `yaml:"permissions"`
 	Steps       []workflowStep    `yaml:"steps"`
+	Strategy    workflowStrategy  `yaml:"strategy"`
 	Uses        string            `yaml:"uses"`
 	With        map[string]any    `yaml:"with"`
 }
@@ -107,6 +113,84 @@ func TestCIRejectsUntidyModuleFiles(t *testing.T) {
 		}
 	}
 	t.Fatal("CI test job does not run go mod tidy -diff")
+}
+
+// declaredGoFloor reports the major.minor Go version from the go directive in
+// go.mod, which is the oldest toolchain the module claims to support.
+func declaredGoFloor(t *testing.T) string {
+	t.Helper()
+	source, err := os.ReadFile("go.mod")
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	match := regexp.MustCompile(`(?m)^go (\d+\.\d+)`).FindSubmatch(source)
+	if match == nil {
+		t.Fatal("go.mod declares no go directive")
+	}
+	return string(match[1])
+}
+
+// ciTestMatrixGoVersions returns the Go versions the CI test job fans out over.
+func ciTestMatrixGoVersions(t *testing.T) []string {
+	t.Helper()
+	workflow := loadWorkflow(t, ".github/workflows/ci.yml")
+	raw, ok := workflow.Jobs["test"].Strategy.Matrix["go-version"]
+	if !ok {
+		t.Fatal("CI test job declares no go-version matrix")
+	}
+	entries, ok := raw.([]any)
+	if !ok {
+		t.Fatalf("CI go-version matrix = %#v, want a list", raw)
+	}
+	versions := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		version, ok := entry.(string)
+		if !ok {
+			t.Fatalf("CI go-version entry = %#v, want a string", entry)
+		}
+		versions = append(versions, version)
+	}
+	return versions
+}
+
+// The floor advertised in go.mod is only credible if CI actually builds against
+// it, so the matrix must cover that version rather than assume it still works.
+func TestCITestMatrixCoversDeclaredGoFloor(t *testing.T) {
+	floor := declaredGoFloor(t)
+	versions := ciTestMatrixGoVersions(t)
+
+	for _, version := range versions {
+		if strings.HasPrefix(version, floor+".") || version == floor {
+			return
+		}
+	}
+	t.Errorf("CI test matrix = %q, want a Go %s release covering the go.mod floor", versions, floor)
+}
+
+// A matrix is decorative unless the toolchain step consumes it, so assert the
+// test job installs the matrix version instead of a hardcoded one.
+func TestCITestJobInstallsMatrixGoVersion(t *testing.T) {
+	workflow := loadWorkflow(t, ".github/workflows/ci.yml")
+	for _, step := range workflow.Jobs["test"].Steps {
+		if !strings.HasPrefix(step.Uses, "actions/setup-go@") {
+			continue
+		}
+		if got := step.With["go-version"]; got != "${{ matrix.go-version }}" {
+			t.Errorf("CI test go-version = %#v, want the matrix value", got)
+		}
+		return
+	}
+	t.Fatal("CI test job has no actions/setup-go step")
+}
+
+// Both legs must report, otherwise a floor failure is masked by fail-fast
+// cancelling it before it finishes.
+func TestCITestMatrixReportsEveryGoVersion(t *testing.T) {
+	workflow := loadWorkflow(t, ".github/workflows/ci.yml")
+	failFast := workflow.Jobs["test"].Strategy.FailFast
+	if failFast == nil || *failFast {
+		t.Errorf("CI test fail-fast = %v, want false so every Go version reports", failFast)
+	}
 }
 
 func TestRequiredStatusWorkflowsRunForEveryMainChange(t *testing.T) {
