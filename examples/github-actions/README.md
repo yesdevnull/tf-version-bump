@@ -80,7 +80,7 @@ Each configured root is processed independently. Keep the config path repository
 When a root has provider selections, its resulting `.terraform.lock.hcl` change is included in the
 update branch for reproducible runs. A provider-free root can legitimately have no lock file.
 
-The callers pin `tf-version-bump` to `v1.0.0-rc.10` and verify the archive SHA-256 `532783cd3c6834a37616ed81ed76ef99ec343cc64d9664dd67c7eb325420c830` before execution.
+The callers pin `tf-version-bump` to `v1.0.0-rc.11` and verify the archive SHA-256 `5560b45e220650e8b18d5836eff05d471f602a6ac970aeeb9628781797f54c85` before execution.
 
 ## Results, failures, and pull requests
 

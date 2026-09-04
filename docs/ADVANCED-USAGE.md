@@ -34,8 +34,8 @@ helpers; publication does not receive the registry token in its environment.
 `terraform_fmt` defaults to `false`; both callers opt in with `terraform_fmt: true`. For every
 configured root, preparation runs the updater and `terraform init -upgrade` before formatting is
 eligible, then an eligible changed candidate runs `terraform fmt -recursive` in every configured
-root. The callers pin `tf-version-bump` to `v1.0.0-rc.10` and archive SHA-256
-`532783cd3c6834a37616ed81ed76ef99ec343cc64d9664dd67c7eb325420c830`.
+root. The callers pin `tf-version-bump` to `v1.0.0-rc.11` and archive SHA-256
+`5560b45e220650e8b18d5836eff05d471f602a6ac970aeeb9628781797f54c85`.
 
 The reusable workflow installs the pinned Terraform CLI with `hashicorp/setup-terraform` in both
 Terraform jobs and invokes it directly. Docker is neither a production workflow requirement nor a
