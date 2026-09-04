@@ -65,16 +65,20 @@ fi
 
 production_file="examples/github-actions/.github/workflows/tf-version-bump-production.yml"
 nonproduction_file="examples/github-actions/.github/workflows/tf-version-bump-nonproduction.yml"
+config_validation_file="examples/github-actions/.github/workflows/tf-version-bump-config-validation.yml"
 test_file="examples/github-actions/test.sh"
 readme_file="examples/github-actions/README.md"
 guide_file="docs/ADVANCED-USAGE.md"
-files=("$production_file" "$nonproduction_file" "$test_file" "$readme_file" "$guide_file")
+files=("$production_file" "$nonproduction_file" "$config_validation_file" "$test_file" "$readme_file" "$guide_file")
 
 current_archive_url="https://github.com/yesdevnull/tf-version-bump/releases/download/$current_version/tf-version-bump_${current_version#v}_linux_x86_64.tar.gz"
 new_archive_url="https://github.com/yesdevnull/tf-version-bump/releases/download/$version/tf-version-bump_${version#v}_linux_x86_64.tar.gz"
+current_archive_name="tf-version-bump_${current_version#v}_linux_x86_64.tar.gz"
+new_archive_name="tf-version-bump_${version#v}_linux_x86_64.tar.gz"
 pin_files=(
     "$production_file" "$production_file"
     "$nonproduction_file" "$nonproduction_file"
+    "$config_validation_file" "$config_validation_file" "$config_validation_file" "$config_validation_file" "$config_validation_file"
     "$test_file" "$test_file" "$test_file"
     "$readme_file" "$readme_file"
     "$guide_file" "$guide_file"
@@ -82,6 +86,7 @@ pin_files=(
 pin_markers=(
     "      tf_version_bump_version:" "      tf_version_bump_archive_sha256:"
     "      tf_version_bump_version:" "      tf_version_bump_archive_sha256:"
+    "" "" "" "" ""
     "TF_VERSION_BUMP_VERSION=" "TF_VERSION_BUMP_ARCHIVE_SHA256=" "TF_VERSION_BUMP_ARCHIVE_URL="
     "" ""
     "" ""
@@ -89,6 +94,7 @@ pin_markers=(
 current_values=(
     "tf_version_bump_version: $current_version" "tf_version_bump_archive_sha256: $current_digest"
     "tf_version_bump_version: $current_version" "tf_version_bump_archive_sha256: $current_digest"
+    "archive_path=\"\$RUNNER_TEMP/$current_archive_name\"" "$current_archive_url" "$current_digest" "tf-version-bump ${current_version#v}" "rm -rf -- \"\$RUNNER_TEMP/$current_archive_name\""
     "TF_VERSION_BUMP_VERSION=\"$current_version\"" "TF_VERSION_BUMP_ARCHIVE_SHA256=\"$current_digest\"" "TF_VERSION_BUMP_ARCHIVE_URL=\"$current_archive_url\""
     "$current_version" "$current_digest"
     "$current_version" "$current_digest"
@@ -96,6 +102,7 @@ current_values=(
 new_values=(
     "tf_version_bump_version: $version" "tf_version_bump_archive_sha256: $digest"
     "tf_version_bump_version: $version" "tf_version_bump_archive_sha256: $digest"
+    "archive_path=\"\$RUNNER_TEMP/$new_archive_name\"" "$new_archive_url" "$digest" "tf-version-bump ${version#v}" "rm -rf -- \"\$RUNNER_TEMP/$new_archive_name\""
     "TF_VERSION_BUMP_VERSION=\"$version\"" "TF_VERSION_BUMP_ARCHIVE_SHA256=\"$digest\"" "TF_VERSION_BUMP_ARCHIVE_URL=\"$new_archive_url\""
     "$version" "$digest"
     "$version" "$digest"

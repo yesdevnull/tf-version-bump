@@ -18,19 +18,19 @@ jobs:
           persist-credentials: false
       - name: Download and verify tf-version-bump
         run: |
-          archive_path="$RUNNER_TEMP/tf-version-bump_1.0.0-rc.10_linux_x86_64.tar.gz"
+          archive_path="$RUNNER_TEMP/tf-version-bump_1.0.0-rc.11_linux_x86_64.tar.gz"
           tool_directory="$RUNNER_TEMP/tf-version-bump-config-validation"
           rm -rf -- "$archive_path" "$tool_directory"
           mkdir -p -- "$tool_directory"
           curl --fail --silent --show-error --location \
             --output "$archive_path" \
-            https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0-rc.10/tf-version-bump_1.0.0-rc.10_linux_x86_64.tar.gz
+            https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0-rc.11/tf-version-bump_1.0.0-rc.11_linux_x86_64.tar.gz
           printf '%s  %s\n' \
-            532783cd3c6834a37616ed81ed76ef99ec343cc64d9664dd67c7eb325420c830 \
+            5560b45e220650e8b18d5836eff05d471f602a6ac970aeeb9628781797f54c85 \
             "$archive_path" | sha256sum --check --status
           tar -xzf "$archive_path" -C "$tool_directory"
           version_output=$("$tool_directory/tf-version-bump" -version)
-          [[ "${version_output%%$'\n'*}" == "tf-version-bump 1.0.0-rc.10" ]]
+          [[ "${version_output%%$'\n'*}" == "tf-version-bump 1.0.0-rc.11" ]]
           printf 'TF_VERSION_BUMP_BINARY=%s\n' "$tool_directory/tf-version-bump" >> "$GITHUB_ENV"
       - name: Validate configuration
         run: |
@@ -41,4 +41,4 @@ jobs:
           done
       - name: Remove downloaded tf-version-bump
         if: ${{ always() }}
-        run: rm -rf -- "$RUNNER_TEMP/tf-version-bump_1.0.0-rc.10_linux_x86_64.tar.gz" "$RUNNER_TEMP/tf-version-bump-config-validation"
+        run: rm -rf -- "$RUNNER_TEMP/tf-version-bump_1.0.0-rc.11_linux_x86_64.tar.gz" "$RUNNER_TEMP/tf-version-bump-config-validation"
