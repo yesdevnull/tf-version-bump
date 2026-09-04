@@ -886,47 +886,60 @@ EOF
     done
 }
 
-test_ci_uses_supported_go_and_runs_github_actions_poc_checks() {
-    # Production break caught: repository CI drifts from the supported Go toolchain or stops
-    # exercising the copyable workflow checks with their required Linux test infrastructure.
-    yq -o=json '.jobs' "$REPOSITORY_ROOT/.github/workflows/ci.yml" | jq -e '
+test_ci_proves_go_floor_and_builds_on_the_release_toolchain() {
+    # Production break caught: repository CI stops proving that the floor advertised in go.mod
+    # still builds, drifts from the toolchain releases are built with, or stops exercising the
+    # copyable workflow checks with their required Linux test infrastructure.
+    local go_floor release_go
+    go_floor=$(GOWORK=off go -C "$REPOSITORY_ROOT" list -m -f '{{.GoVersion}}' | cut -d. -f1,2)
+    release_go=$(yq -r '
+        .jobs.release.steps[]
+        | select(.uses | test("^actions/setup-go@"))
+        | .with["go-version"]
+    ' "$REPOSITORY_ROOT/.github/workflows/release.yml")
+    yq -o=json '.jobs' "$REPOSITORY_ROOT/.github/workflows/ci.yml" \
+        | jq -e --arg floor "$go_floor" --arg release "$release_go" '
         .test["runs-on"] == "ubuntu-latest" and
-        .test.strategy == null and
+        .test.strategy["fail-fast"] == false and
+        any(.test.strategy.matrix["go-version"][]; startswith($floor + ".")) and
+        any(.test.strategy.matrix.include[];
+            .["go-version"] == $release and .primary == true) and
         any(.test.steps[];
             .name == "Set up Go" and
-            .with["go-version-file"] == "go.mod" and
-            .with["go-version"] == null and
+            .with["go-version"] == "${{ matrix.go-version }}" and
+            .with["go-version-file"] == null and
             .with.cache == false) and
-        all(.test.steps[];
-            ((.if // "") | contains("matrix.go-version") | not)) and
         any(.test.steps[];
             .name == "Install GitHub Actions POC test prerequisites" and
+            .if == "matrix.primary" and
             .run == "sudo apt-get update\nsudo apt-get install --yes bash curl git jq\n") and
         any(.test.steps[];
             .name == "Check Docker test infrastructure availability" and
+            .if == "matrix.primary" and
             .run == "docker version") and
         any(.test.steps[];
             .name == "Run GitHub Actions POC checks" and
+            .if == "matrix.primary" and
             .run == "make test-github-actions") and
         any(.build.steps[];
             .name == "Set up Go" and
-            .with["go-version-file"] == "go.mod" and
-            .with["go-version"] == null)
-    ' >/dev/null || fail "repository CI does not source its complete Go pipeline from go.mod"
+            .with["go-version"] == $release and
+            .with["go-version-file"] == null)
+    ' >/dev/null || fail "repository CI does not prove the go.mod floor and build on the release toolchain"
 }
 
-test_modules_require_supported_go_version() {
-    # Production break caught: the main or provider-fixture module still advertises support for an
-    # older Go toolchain than the one used to build and test the repository.
-    local module_root
-    for module_root in \
-        "$REPOSITORY_ROOT" \
-        "$SCRIPT_DIR/test-fixtures/test-provider"; do
-        local go_version
-        go_version=$(GOWORK=off go -C "$module_root" list -m -f '{{.GoVersion}}')
-        [[ "$go_version" == "1.26" ]] \
-            || fail "module does not require Go 1.26: $module_root ($go_version)"
-    done
+test_modules_declare_intended_go_versions() {
+    # Production break caught: the main module silently moves off the Go support floor it
+    # advertises to consumers, or the provider fixture drifts onto an unsupported toolchain.
+    # The floor is deliberately older than the build toolchain; CI proves it still builds.
+    local go_version
+    go_version=$(GOWORK=off go -C "$REPOSITORY_ROOT" list -m -f '{{.GoVersion}}')
+    [[ "$go_version" == "1.25.0" ]] \
+        || fail "main module does not advertise the Go 1.25.0 support floor: $go_version"
+
+    go_version=$(GOWORK=off go -C "$SCRIPT_DIR/test-fixtures/test-provider" list -m -f '{{.GoVersion}}')
+    [[ "$go_version" == "1.26" ]] \
+        || fail "provider fixture does not require Go 1.26: $go_version"
 }
 
 test_copyable_workflow_layout() {
@@ -3768,8 +3781,8 @@ trap cleanup_test_repositories EXIT
 if [[ $# -eq 0 ]]; then
     test_actionlint_launcher_reports_pinned_version
     test_example_configs_pass_cli_dry_run
-    test_ci_uses_supported_go_and_runs_github_actions_poc_checks
-    test_modules_require_supported_go_version
+    test_ci_proves_go_floor_and_builds_on_the_release_toolchain
+    test_modules_declare_intended_go_versions
     test_copyable_workflow_layout
     test_operator_documentation_describes_stage_two_contract
     test_fixture_version_diagnostics_follow_current_expected_version
