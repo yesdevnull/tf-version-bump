@@ -14,7 +14,7 @@ normalised when a changed file is formatted.
 This repository is an experiment for generative AI coding tools. It may contain bugs or incomplete
 features. Keep changes under version control and test them.
 
-**Stack**: Go 1.26+ (CI pins 1.26), `hashicorp/hcl/v2`,
+**Stack**: Go 1.25+ (CI pins 1.26.8), `hashicorp/hcl/v2`,
 `hashicorp/terraform-registry-address`, `zclconf/go-cty`, `yaml.v3`, and
 `bmatcuk/doublestar/v4`. Dependency versions live in `go.mod` — don't restate them here or in
 AGENTS.md; they drift.
@@ -243,7 +243,7 @@ Copy files from `examples/` to a temporary directory before manual write-mode te
 CI/Build and Lint run for every push and pull request targeting `main`, so their
 required status checks are always reported.
 
-- **Test** — Go 1.26, `-race` + coverage; uploads to Codecov
+- **Test** — Go 1.26.8, `-race` + coverage; uploads to Codecov
 - **Build** — needs Test; cross-compiles 6 targets (linux/darwin/windows × amd64/arm64)
 - **Lint** — golangci-lint
 - **Documentation** — a separate path-filtered workflow runs `make docs-check` for Markdown,
