@@ -211,8 +211,8 @@ func TestReleaseWorkflowPinsBuildToolchain(t *testing.T) {
 			goreleaserVersion = step.With["version"]
 		}
 	}
-	if goVersion != "1.26.6" {
-		t.Errorf("release Go version = %#v, want %q", goVersion, "1.26.6")
+	if goVersion != "1.26.8" {
+		t.Errorf("release Go version = %#v, want %q", goVersion, "1.26.8")
 	}
 	if goreleaserVersion != "v2.17.1" {
 		t.Errorf("release GoReleaser version = %#v, want %q", goreleaserVersion, "v2.17.1")

@@ -100,7 +100,7 @@ git push origin "v<version>"
 The tag push starts `.github/workflows/release.yml`, which:
 
 1. Checks out full history.
-2. Installs Go 1.26.6 and GoReleaser v2.17.1 exactly.
+2. Installs Go 1.26.8 and GoReleaser v2.17.1 exactly.
 3. Runs GoReleaser with `release --clean`, creating a draft release.
 4. Collects archive and package digests.
 5. Generates and uploads SLSA provenance to the draft.
