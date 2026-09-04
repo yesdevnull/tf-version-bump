@@ -180,7 +180,7 @@ make test-coverage                            # Coverage with report
 ## CI/CD
 
 GitHub Actions runs on every push/PR:
-- **Test**: Go 1.26.8, race detection, coverage upload
+- **Test**: matrix of Go 1.25.14 (go.mod floor) and 1.26.8, race detection, coverage upload
 - **Build**: 6 platforms (Linux/macOS/Windows × amd64/arm64)
 - **Lint**: golangci-lint with 11 enabled linters
 - **Documentation**: `make docs-check` for Markdown, schema, maintained example, and

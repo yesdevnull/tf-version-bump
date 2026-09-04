@@ -243,7 +243,9 @@ Copy files from `examples/` to a temporary directory before manual write-mode te
 CI/Build and Lint run for every push and pull request targeting `main`, so their
 required status checks are always reported.
 
-- **Test** — Go 1.26.8, `-race` + coverage; uploads to Codecov
+- **Test** — matrix of Go 1.25.14 (the go.mod floor) and 1.26.8, `-race` + coverage. The
+  version-independent steps (branch automation, GitHub Actions POC checks, Codecov upload) run
+  once, on the 1.26.8 leg flagged `primary` in the matrix.
 - **Build** — needs Test; cross-compiles 6 targets (linux/darwin/windows × amd64/arm64)
 - **Lint** — golangci-lint
 - **Documentation** — a separate path-filtered workflow runs `make docs-check` for Markdown,
