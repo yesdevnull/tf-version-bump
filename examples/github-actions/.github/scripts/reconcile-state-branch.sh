@@ -1,42 +1,244 @@
 #!/usr/bin/env bash
 
-# Requires bash >= 4.0 (associative arrays), matching the readarray/mapfile floor its sibling
-# scripts already require. This is the single file the standalone-install contract ships alone,
-# so this floor -- not an ambient macOS system bash 3.2 -- is what a copyable install must supply.
 set -euo pipefail
 set +x
 export LC_ALL=C
 
 usage() {
     cat <<'EOF'
-Usage: reconcile-state-branch.sh --help
-       reconcile-state-branch.sh verify
-       reconcile-state-branch.sh classify
+Usage: reconcile-state-branch.sh classify
        reconcile-state-branch.sh publish
+       reconcile-state-branch.sh --help
 
-Verify preparation and validation artefacts, classify a verified result, or publish it.
+classify checks result.json, its immutable identity and candidate digest, and prints
+the classification. Requires RECONCILE_RESULT_DIR and RECONCILE_RUN_ID,
+RECONCILE_RUN_ATTEMPT, RECONCILE_AUTOMATION_POLICY_ID, RECONCILE_CONTROL_OID,
+RECONCILE_STATE_BRANCH, RECONCILE_BASE_OID, RECONCILE_REF_HASH.
+
+publish additionally checks the clean exact-base RECONCILE_TARGET_CHECKOUT and
+RECONCILE_TERRAFORM_ROOTS, creates one owned update commit, and reconciles marked
+PRs and failure issues. Requires RECONCILE_DRY_RUN (true/false), RUNNER_TEMP,
+RECONCILE_RUN_URL, RECONCILE_GIT_REMOTE, RECONCILE_REPOSITORY, GH_TOKEN,
+RECONCILE_COMMIT_AUTHOR_NAME and RECONCILE_COMMIT_AUTHOR_EMAIL.
+It respects Git signing configuration. Dry runs never mutate remote refs or GitHub.
+Automation and invalid results never publish or clean up GitHub records.
 EOF
 }
 
-reconcile_error() {
-    echo "reconciliation error: $*" >&2
-    exit 1
-}
+RECONCILE_TEMPORARY_PATH=''
+CLASSIFICATION=''
+MANIFEST=''
+PATCH=''
 
-RECONCILE_TEMPORARY_PATH=""
+reconcile_error() { echo "reconciliation error: $*" >&2; exit 1; }
 
-# shellcheck disable=SC2329 # Invoked by the verify/publish EXIT trap.
+# shellcheck disable=SC2329 # Invoked by the EXIT trap.
 cleanup_reconcile_temporaries() {
-    if [[ -n "$RECONCILE_TEMPORARY_PATH" ]]; then
-        rm -rf -- "$RECONCILE_TEMPORARY_PATH"
-        RECONCILE_TEMPORARY_PATH=""
-    fi
+    [[ -z "$RECONCILE_TEMPORARY_PATH" ]] || rm -rf -- "$RECONCILE_TEMPORARY_PATH"
 }
+
+bounded() { timeout --signal=TERM --kill-after=5s 120s "$@"; }
 
 sha256_file() {
     local digest
     digest=$(sha256sum "$1")
     printf '%s\n' "${digest%% *}"
+}
+
+validate_result() {
+    require_common_identity
+    : "${RECONCILE_RESULT_DIR:?RECONCILE_RESULT_DIR must be set}"
+    MANIFEST="$RECONCILE_RESULT_DIR/result.json"
+    PATCH="$RECONCILE_RESULT_DIR/candidate.patch"
+    [[ -d "$RECONCILE_RESULT_DIR" && ! -L "$RECONCILE_RESULT_DIR" \
+        && -f "$MANIFEST" && ! -L "$MANIFEST" \
+        && -d "$RECONCILE_RESULT_DIR/logs" && ! -L "$RECONCILE_RESULT_DIR/logs" ]] \
+        || reconcile_error 'result directory is missing or invalid'
+    jq -e --arg run "$RECONCILE_RUN_ID" --arg attempt "$RECONCILE_RUN_ATTEMPT" \
+        --arg policy "$RECONCILE_AUTOMATION_POLICY_ID" --arg control "$RECONCILE_CONTROL_OID" \
+        --arg branch "$RECONCILE_STATE_BRANCH" --arg base "$RECONCILE_BASE_OID" \
+        --arg hash "$RECONCILE_REF_HASH" '
+        .schema_version == 3 and .run_id == $run and .run_attempt == $attempt and
+        .automation_policy_id == $policy and .control_oid == $control and
+        .state_branch == $branch and .base_oid == $base and .ref_hash == $hash and
+        (.roots | type == "array" and length > 0 and length == (unique | length) and
+          all(.[]; type == "string" and length > 0 and
+            (startswith("/") | not) and (test("[[:cntrl:]]") | not) and
+            (split("/") | all(.[]; . != ".." and . != ".git" and . != ".terraform")))) and
+        (.classification as $c | if $c == "success" then
+            (.patch_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and (has("failure") | not)
+          elif $c == "no-change" then (has("patch_sha256") | not) and (has("failure") | not)
+          elif $c == "automation" then (has("patch_sha256") | not)
+          elif ["branch-update", "branch-init", "branch-format", "branch-validation"] | index($c) then
+            (has("patch_sha256") | not) and
+            (.failure.status | type == "number" and . > 0 and . <= 255 and floor == .) and
+            (.failure.root as $r | .roots | index($r) != null) and
+            (.failure.stage == ({"branch-update":"tf-version-bump", "branch-init":"terraform init",
+                "branch-format":"terraform fmt", "branch-validation":"terraform validate"}[$c]))
+          else false end)' "$MANIFEST" >/dev/null \
+        || reconcile_error 'result manifest or immutable identity is invalid'
+    CLASSIFICATION=$(jq -r '.classification' "$MANIFEST")
+    if [[ "$CLASSIFICATION" == success ]]; then
+        [[ -f "$PATCH" && ! -L "$PATCH" && -s "$PATCH" ]] \
+            || reconcile_error 'candidate patch must be a nonempty regular file'
+        [[ "$(sha256_file "$PATCH")" == "$(jq -r '.patch_sha256' "$MANIFEST")" ]] \
+            || reconcile_error 'candidate patch digest is invalid'
+    else
+        [[ ! -e "$PATCH" && ! -L "$PATCH" ]] || reconcile_error 'non-success result contains a patch'
+    fi
+}
+
+verify_checkout_and_roots() {
+    : "${RECONCILE_TARGET_CHECKOUT:?RECONCILE_TARGET_CHECKOUT must be set}"
+    : "${RECONCILE_TERRAFORM_ROOTS:?RECONCILE_TERRAFORM_ROOTS must be set}"
+    local checkout root canonical relative
+    checkout=$(realpath "$RECONCILE_TARGET_CHECKOUT")
+    [[ "$(realpath "$(git -C "$checkout" rev-parse --show-toplevel)")" == "$checkout" ]] \
+        || reconcile_error 'publication checkout must be the Git worktree root'
+    [[ "$(git -C "$checkout" rev-parse HEAD)" == "$RECONCILE_BASE_OID" ]] \
+        || reconcile_error 'publication checkout HEAD does not match base OID'
+    [[ -z "$(git -C "$checkout" status --porcelain=v1 --untracked-files=all --ignored=matching)" ]] \
+        || reconcile_error 'publication checkout must be clean'
+    local -a roots=()
+    while IFS= read -r root; do
+        [[ -n "$root" && "$root" != /* && "/$root/" != *'/../'* ]] \
+            || reconcile_error 'configured Terraform root is invalid'
+        canonical=$(realpath "$checkout/$root")
+        [[ -d "$canonical" && ( "$canonical" == "$checkout" || "$canonical" == "$checkout/"* ) ]] \
+            || reconcile_error 'configured Terraform root escapes checkout or is missing'
+        relative=${canonical#"$checkout"/}
+        [[ "$canonical" != "$checkout" ]] || relative=.
+        roots+=("$relative")
+    done < <(printf '%s\n' "${RECONCILE_TERRAFORM_ROOTS%$'\n'}")
+    local roots_json
+    roots_json=$(jq -cn '$ARGS.positional' --args -- "${roots[@]}")
+    jq -e --argjson roots "$roots_json" '.roots == $roots' "$MANIFEST" >/dev/null \
+        || reconcile_error 'result roots do not match configured Terraform roots'
+}
+
+allowed_candidate_path() {
+    local path=$1 parent=${1%/*} root
+    [[ "$parent" != "$path" ]] || parent=.
+    [[ -n "$path" && "$path" != /* && "/$path/" != *'/../'* \
+        && "/$path/" != *'/.git/'* && "/$path/" != *'/.terraform/'* && "$path" != *$'\n'* ]] || return 1
+    while IFS= read -r root; do
+        if [[ "$path" == *.tf && ( "$root" == . || "$path" == "$root/"* ) ]]; then return 0; fi
+        if [[ "${path##*/}" == .terraform.lock.hcl && "$parent" == "$root" ]]; then return 0; fi
+    done < <(jq -r '.roots[]' "$MANIFEST")
+    return 1
+}
+
+preflight_candidate() {
+    local checkout=$RECONCILE_TARGET_CHECKOUT index="$RECONCILE_TEMPORARY_PATH/index"
+    GIT_INDEX_FILE="$index" git -C "$checkout" read-tree "$RECONCILE_BASE_OID"
+    GIT_INDEX_FILE="$index" git -C "$checkout" apply --cached --binary "$PATCH" \
+        || reconcile_error 'candidate patch does not apply to exact base'
+    GIT_INDEX_FILE="$index" git -C "$checkout" diff --cached --raw -z --no-renames >"$RECONCILE_TEMPORARY_PATH/changes"
+    [[ -s "$RECONCILE_TEMPORARY_PATH/changes" ]] || reconcile_error 'success candidate has no changes'
+    local raw path old_mode new_mode
+    while IFS= read -r -d '' raw && IFS= read -r -d '' path; do
+        read -r old_mode new_mode _ <<<"$raw"
+        [[ "$new_mode" == 100644 && ( "$old_mode" == :000000 || "$old_mode" == :100644 ) ]] \
+            || reconcile_error 'candidate deletion, symlink or file mode change is forbidden'
+        allowed_candidate_path "$path" || reconcile_error 'candidate contains an unexpected path'
+    done <"$RECONCILE_TEMPORARY_PATH/changes"
+}
+
+construct_update_commit() {
+    : "${RECONCILE_COMMIT_AUTHOR_NAME:?RECONCILE_COMMIT_AUTHOR_NAME must be set}"
+    : "${RECONCILE_COMMIT_AUTHOR_EMAIL:?RECONCILE_COMMIT_AUTHOR_EMAIL must be set}"
+    local checkout=$RECONCILE_TARGET_CHECKOUT message="$RECONCILE_TEMPORARY_PATH/commit-message"
+    git -C "$checkout" apply --index --binary "$PATCH" || reconcile_error 'could not apply candidate patch'
+    printf '%s\n\n%s\n%s\n' 'chore: update Terraform dependencies' \
+        "Tf-Version-Bump-Automation: $RECONCILE_AUTOMATION_POLICY_ID/$RECONCILE_REF_HASH" \
+        "Tf-Version-Bump-Base: $RECONCILE_BASE_OID" >"$message"
+    # Keep the caller's signing policy; a failed signer must stop publication.
+    git -C "$checkout" -c user.name="$RECONCILE_COMMIT_AUTHOR_NAME" \
+        -c user.email="$RECONCILE_COMMIT_AUTHOR_EMAIL" commit -F "$message" >/dev/null \
+        || reconcile_error 'could not construct Terraform update commit'
+}
+
+publish_update_ref() {
+    local checkout=$RECONCILE_TARGET_CHECKOUT state_ref="refs/heads/$RECONCILE_STATE_BRANCH"
+    local update_ref="refs/heads/update_$RECONCILE_STATE_BRANCH" refs observed='' fetched message
+    refs=$(bounded git -C "$checkout" ls-remote --refs "$RECONCILE_GIT_REMOTE" "$state_ref" "$update_ref") \
+        || reconcile_error 'could not inspect remote refs'
+    local oid ref state_oid=''
+    while read -r oid ref; do
+        [[ "$ref" != "$state_ref" ]] || state_oid=$oid
+        [[ "$ref" != "$update_ref" ]] || observed=$oid
+    done <<<"$refs"
+    [[ "$state_oid" == "$RECONCILE_BASE_OID" ]] || reconcile_error 'state ref moved after discovery'
+    if [[ -n "$observed" ]]; then
+        fetched="refs/remotes/tf-version-bump/$RECONCILE_REF_HASH/update"
+        bounded git -C "$checkout" fetch --quiet --no-tags --no-write-fetch-head \
+            "$RECONCILE_GIT_REMOTE" "+$update_ref:$fetched" || reconcile_error 'could not fetch existing update ref'
+        [[ "$(git -C "$checkout" rev-parse "$fetched")" == "$observed" ]] \
+            || reconcile_error 'update ref moved during ownership check'
+        message=$(git -C "$checkout" show -s --format=%B "$observed")
+        grep -Fx "Tf-Version-Bump-Automation: $RECONCILE_AUTOMATION_POLICY_ID/$RECONCILE_REF_HASH" <<<"$message" >/dev/null \
+            || reconcile_error 'existing update ref is not owned by this automation policy'
+    fi
+    bounded git -C "$checkout" push --quiet --force-with-lease="$update_ref:$observed" \
+        "$RECONCILE_GIT_REMOTE" "HEAD:$update_ref" || reconcile_error 'update ref push failed its exact lease'
+}
+
+write_github_body() {
+    local body="$RECONCILE_TEMPORARY_PATH/body"
+    printf '%s\n\nTerraform dependency update for %s.\n\nResult: %s\n\nBase: %s\n\nWorkflow run: <a href="%s">run %s, attempt %s</a>\n' \
+        "$(github_marker)" "$(html_code "$RECONCILE_STATE_BRANCH")" "$(html_code "$CLASSIFICATION")" \
+        "$(html_code "$RECONCILE_BASE_OID")" "$(html_escape "$RECONCILE_RUN_URL")" \
+        "$RECONCILE_RUN_ID" "$RECONCILE_RUN_ATTEMPT" >"$body"
+    if [[ "$CLASSIFICATION" == branch-* ]]; then
+        printf '\nStage: %s\n\nRoot: %s\n\nStatus: %s\n' \
+            "$(html_code "$(jq -r '.failure.stage' "$MANIFEST")")" \
+            "$(html_code "$(jq -r '.failure.root' "$MANIFEST")")" \
+            "$(jq -r '.failure.status' "$MANIFEST")" >>"$body"
+    fi
+}
+
+reconcile_lifecycle() {
+    local number record closed body="$RECONCILE_TEMPORARY_PATH/body"
+    if [[ "$CLASSIFICATION" == no-change ]]; then close_marked_pr; close_marked_issue; return; fi
+    write_github_body
+    if [[ "$CLASSIFICATION" == success ]]; then
+        number=$(marked_pr_number "$(github_marker)") || reconcile_error 'could not look up marked update pull request'
+        if [[ -n "$number" ]]; then
+            bounded gh pr edit "$number" --repo "$RECONCILE_REPOSITORY" --title 'Terraform dependency update' --body-file "$body" >/dev/null
+        else
+            bounded gh pr create --repo "$RECONCILE_REPOSITORY" --head "update_$RECONCILE_STATE_BRANCH" \
+                --base "$RECONCILE_STATE_BRANCH" --title 'Terraform dependency update' --body-file "$body" >/dev/null
+        fi
+        close_marked_issue
+    else
+        close_marked_pr
+        record=$(marked_issue_record "$(github_marker)") || reconcile_error 'could not look up marked failure issue'
+        read -r number closed <<<"$record"
+        if [[ -n "$number" ]]; then
+            [[ "$closed" != true ]] || bounded gh issue reopen "$number" --repo "$RECONCILE_REPOSITORY" >/dev/null
+            bounded gh issue edit "$number" --repo "$RECONCILE_REPOSITORY" --title 'Terraform dependency update failed' --body-file "$body" >/dev/null
+        else
+            bounded gh issue create --repo "$RECONCILE_REPOSITORY" --title 'Terraform dependency update failed' --body-file "$body" >/dev/null
+        fi
+    fi
+}
+
+publish_result() {
+    validate_result
+    [[ "$CLASSIFICATION" != automation ]] || return 0
+    : "${RECONCILE_DRY_RUN:?RECONCILE_DRY_RUN must be set}"
+    [[ "$RECONCILE_DRY_RUN" == true || "$RECONCILE_DRY_RUN" == false ]] || reconcile_error 'dry-run must be true or false'
+    verify_checkout_and_roots
+    : "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+    RECONCILE_TEMPORARY_PATH=$(mktemp -d "$RUNNER_TEMP/tf-version-bump-publish.XXXXXX")
+    [[ "$CLASSIFICATION" != success ]] || preflight_candidate
+    [[ "$RECONCILE_DRY_RUN" != true ]] || return 0
+    : "${RECONCILE_GIT_REMOTE:?RECONCILE_GIT_REMOTE must be set}"
+    : "${RECONCILE_REPOSITORY:?RECONCILE_REPOSITORY must be set}"
+    : "${RECONCILE_RUN_URL:?RECONCILE_RUN_URL must be set}"
+    : "${GH_TOKEN:?GH_TOKEN must be set}"
+    if [[ "$CLASSIFICATION" == success ]]; then construct_update_commit; publish_update_ref; fi
+    reconcile_lifecycle
 }
 
 require_common_identity_values() {
@@ -69,927 +271,33 @@ require_common_identity_values() {
         || reconcile_error "state ref hash does not match state branch"
 }
 
+
 require_common_identity() {
     require_common_identity_values
     git check-ref-format "refs/heads/$RECONCILE_STATE_BRANCH" >/dev/null 2>&1 \
         || reconcile_error "state branch is invalid"
 }
 
-directory_has_exact_entries() {
-    local directory=$1
-    shift
-    local -a actual=() expected=("$@")
-    local entry
-    while IFS= read -r -d '' entry; do
-        actual+=("${entry##*/}")
-    done < <(find "$directory" -mindepth 1 -maxdepth 1 -print0)
-    local actual_json expected_json
-    actual_json=$(jq -cn '$ARGS.positional | sort' --args -- "${actual[@]}")
-    expected_json=$(jq -cn '$ARGS.positional | sort' --args -- "${expected[@]}")
-    [[ "$actual_json" == "$expected_json" ]]
-}
-
-preparation_logs_are_valid() {
-    local directory=$1 manifest=$2
-    [[ -d "$directory" && ! -L "$directory" ]] || return 1
-    local classification root_count=0 formatting_ran=false
-    classification=$(jq -er '.classification' "$manifest") || return 1
-    if [[ "$classification" == "success" || "$classification" == "no-change" ]]; then
-        root_count=$(jq -er '.roots | length' "$manifest") || return 1
-        formatting_ran=$(jq -r '.formatting.ran' "$manifest") || return 1
-    fi
-
-    local entry name index
-    while IFS= read -r -d '' entry; do
-        [[ -f "$entry" && ! -L "$entry" ]] || return 1
-        name=${entry##*/}
-        case "$name" in
-            download.log|terraform-version.json|tf-version-bump-version.log) ;;
-            update-*.log|init-*.log)
-                [[ "$name" =~ ^(update|init)-([1-9][0-9]*)\.log$ ]] || return 1
-                if [[ "$classification" == "success" || "$classification" == "no-change" ]]; then
-                    index=${BASH_REMATCH[2]}
-                    ((index <= root_count)) || return 1
-                fi
-                ;;
-            format-*.log)
-                [[ "$name" =~ ^format-([1-9][0-9]*)\.log$ ]] || return 1
-                if [[ "$classification" == "success" || "$classification" == "no-change" ]]; then
-                    index=${BASH_REMATCH[1]}
-                    [[ "$formatting_ran" == "true" ]] || return 1
-                    ((index <= root_count)) || return 1
-                else
-                    [[ "$classification" == "branch-format" ]] || return 1
-                fi
-                ;;
-            *) return 1 ;;
-        esac
-    done < <(find "$directory" -mindepth 1 -maxdepth 1 -print0)
-}
-
-validation_logs_are_valid() {
-    local directory=$1 preparation_manifest=$2
-    [[ -d "$directory" && ! -L "$directory" ]] || return 1
-    local root_count
-    root_count=$(jq -er '.roots | length' "$preparation_manifest") || return 1
-
-    local entry name index
-    while IFS= read -r -d '' entry; do
-        [[ -f "$entry" && ! -L "$entry" ]] || return 1
-        name=${entry##*/}
-        case "$name" in
-            terraform-version.json) ;;
-            init-*.log|validate-*.log)
-                [[ "$name" =~ ^(init|validate)-([1-9][0-9]*)\.log$ ]] || return 1
-                index=${BASH_REMATCH[2]}
-                ((index <= root_count)) || return 1
-                ;;
-            *) return 1 ;;
-        esac
-    done < <(find "$directory" -mindepth 1 -maxdepth 1 -print0)
-}
-
-preparation_manifest_is_valid() {
-    jq -e '
-        def changed_files:
-            type == "array" and
-            all(.[]; keys == ["mode", "path", "sha256"] and
-                (.path | type == "string" and length > 0) and
-                .mode == "100644" and
-                (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))) and
-            ([.[].path] == ([.[].path] | sort)) and
-            (([.[].path] | unique | length) == length);
-        def identity:
-            .schema_version == 2 and
-            .run_id == env.RECONCILE_RUN_ID and
-            .run_attempt == env.RECONCILE_RUN_ATTEMPT and
-            .automation_policy_id == env.RECONCILE_AUTOMATION_POLICY_ID and
-            .control_oid == env.RECONCILE_CONTROL_OID and
-            .state_branch == env.RECONCILE_STATE_BRANCH and
-            .base_oid == env.RECONCILE_BASE_OID and
-            .ref_hash == env.RECONCILE_REF_HASH and
-            .artifact_name == ("preparation-" + env.RECONCILE_RUN_ID + "-" +
-                env.RECONCILE_RUN_ATTEMPT + "-" + env.RECONCILE_AUTOMATION_POLICY_ID +
-                "-" + env.RECONCILE_REF_HASH);
-        def failure_stage_matches_classification:
-            (.classification == "branch-update" and .failure.stage == "tf-version-bump") or
-            (.classification == "branch-init" and .failure.stage == "terraform init") or
-            (.classification == "branch-format" and .failure.stage == "terraform fmt") or
-            (.classification == "automation" and
-                (.failure.stage == "tf-version-bump report" or
-                 .failure.stage == "provider lock policy"));
-        identity and
-        if .classification == "success" or .classification == "no-change" then
-            keys == ["artifact_name", "automation_policy_id", "base_oid", "classification",
-                     "config_path", "control_oid", "final_changed_files", "formatting",
-                     "ref_hash", "roots", "run_attempt", "run_id", "schema_version",
-                     "state_branch", "terraform_fmt", "tools", "updates"] and
-            (.terraform_fmt | type == "boolean") and
-            (.tools | keys) == ["terraform", "tf_version_bump"] and
-            (.tools.terraform | keys) == ["version"] and
-            (.tools.tf_version_bump | keys) == ["archive_sha256", "version"] and
-            (.tools.terraform.version | type == "string" and length > 0) and
-            (.tools.tf_version_bump.version | type == "string" and length > 0) and
-            (.tools.tf_version_bump.archive_sha256 | type == "string" and
-                test("^[0-9a-f]{64}$")) and
-            (.config_path | type == "string" and length > 0) and
-            (.roots | type == "array" and length > 0 and
-                all(.[]; keys == ["path"] and (.path | type == "string" and length > 0))) and
-            (.updates.module_blocks_updated | type == "number" and . >= 0 and floor == .) and
-            (.updates.provider_blocks_updated | type == "number" and . >= 0 and floor == .) and
-            (.updates.changed_files | changed_files) and
-            (.formatting.ran | type == "boolean") and
-            (.formatting.changed_files | changed_files) and
-            (.final_changed_files | changed_files) and
-            (.formatting.ran == false or .terraform_fmt == true) and
-            if .classification == "success" then
-                (.updates | keys) == ["changed_files", "module_blocks_updated", "patch_sha256",
-                                     "provider_blocks_updated"] and
-                (.updates.changed_files | length > 0) and
-                (.updates.patch_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
-                (.final_changed_files | length > 0) and
-                (.formatting.ran == .terraform_fmt) and
-                if (.formatting | has("patch_sha256")) then
-                    (.formatting | keys) == ["changed_files", "patch_sha256", "ran"] and
-                    .formatting.ran == true and
-                    (.formatting.changed_files | length > 0) and
-                    (.formatting.patch_sha256 | type == "string" and
-                        test("^[0-9a-f]{64}$"))
-                else
-                    (.formatting | keys) == ["changed_files", "ran"] and
-                    .formatting.changed_files == []
-                end
-            else
-                (.updates | keys) == ["changed_files", "module_blocks_updated",
-                                     "provider_blocks_updated"] and
-                .updates.changed_files == [] and
-                (.formatting | keys) == ["changed_files", "ran"] and
-                .formatting.changed_files == [] and .final_changed_files == []
-            end
-        elif .classification == "branch-update" or .classification == "branch-init" or
-             .classification == "branch-format" or .classification == "automation" then
-            keys == ["artifact_name", "automation_policy_id", "base_oid", "classification",
-                     "control_oid", "failure", "ref_hash", "run_attempt", "run_id",
-                     "schema_version", "state_branch"] and
-            (.failure | keys) == ["command", "root", "stage", "status"] and
-            (.failure.stage | type == "string" and length > 0) and
-            (.failure.root | type == "string") and
-            (.failure.command | type == "string" and length > 0) and
-            (.failure.status | type == "number" and . > 0 and floor == .) and
-            failure_stage_matches_classification
-        else false end
-    ' "$1" >/dev/null
-}
-
-validation_outcome_is_valid() {
-    local manifest=$1 expected_classification=$2 preparation_digest=$3
-    jq -e --arg expected_classification "$expected_classification" \
-        --arg preparation_digest "$preparation_digest" '
-        .schema_version == 2 and
-        .run_id == env.RECONCILE_RUN_ID and
-        .run_attempt == env.RECONCILE_RUN_ATTEMPT and
-        .automation_policy_id == env.RECONCILE_AUTOMATION_POLICY_ID and
-        .control_oid == env.RECONCILE_CONTROL_OID and
-        .state_branch == env.RECONCILE_STATE_BRANCH and
-        .base_oid == env.RECONCILE_BASE_OID and
-        .ref_hash == env.RECONCILE_REF_HASH and
-        .candidate_manifest_sha256 == $preparation_digest and
-        (.classification == $expected_classification or
-         .classification == "branch-validation") and
-        if .classification == "branch-validation" then
-            keys == ["automation_policy_id", "base_oid", "candidate_manifest_sha256",
-                     "classification", "command_status", "control_oid", "failure", "ref_hash",
-                     "run_attempt", "run_id", "schema_version", "state_branch"] and
-            (.command_status | type == "number" and . > 0 and floor == .) and
-            (.failure | keys) == ["root", "stage", "status"] and
-            (.failure.stage == "terraform init" or
-             .failure.stage == "terraform validate") and
-            (.failure.root | type == "string") and
-            .failure.status == .command_status
-        else
-            keys == ["automation_policy_id", "base_oid", "candidate_manifest_sha256",
-                     "classification", "command_status", "control_oid", "ref_hash",
-                     "run_attempt", "run_id", "schema_version", "state_branch"] and
-            .command_status == 0
-        end
-    ' "$manifest" >/dev/null
-}
-
-# shellcheck disable=SC2329 # Invoked by name as a stage-specific path policy.
-path_is_declared_direct_file() {
-    local manifest=$1 relative_path=$2
-    [[ -n "$relative_path" && "$relative_path" != /* ]] || return 1
-    # A literal newline in relative_path can never reach here intact: it is read one line at a
-    # time by the newline-splitting `read` loop in verify_declared_stage_paths, which would already
-    # have split it into separate (non-matching) lines. The real defence against a smuggled
-    # newline-bearing path is the byte-exact sorted actual/declared path-set comparison in
-    # verify_declared_stage.
-    [[ "/$relative_path/" != *"/../"* ]] || return 1
-
-    local filename=${relative_path##*/}
-    local parent=${relative_path%/*}
-    [[ "$parent" != "$relative_path" ]] || parent="."
-    [[ "$filename" == *.tf || "$filename" == ".terraform.lock.hcl" ]] || return 1
-    jq -e --arg parent "$parent" '.roots | any(.path == $parent)' "$manifest" >/dev/null
-}
-
-# shellcheck disable=SC2329 # Invoked by name as a stage-specific path policy.
-path_is_declared_formatting_file() {
-    local manifest=$1 relative_path=$2 root
-    [[ -n "$relative_path" && "$relative_path" != /* && "$relative_path" == *.tf ]] \
-        || return 1
-    [[ "/$relative_path/" != *"/../"* && "/$relative_path/" != *"/.terraform/"* ]] \
-        || return 1
-    while IFS= read -r root; do
-        if [[ "$root" == "." || "$relative_path" == "$root/"* ]]; then
-            return 0
-        fi
-    done < <(jq -er '.roots[].path' "$manifest")
-    return 1
-}
-
-# shellcheck disable=SC2329 # Invoked by name as a stage-specific path policy.
-path_is_declared_final_file() {
-    local manifest=$1 relative_path=$2
-    if jq -e --arg path "$relative_path" \
-        '.updates.changed_files | any(.path == $path)' "$manifest" >/dev/null; then
-        path_is_declared_direct_file "$manifest" "$relative_path"
-        return
-    fi
-    jq -e --arg path "$relative_path" \
-        '.formatting.changed_files | any(.path == $path)' "$manifest" >/dev/null \
-        && path_is_declared_formatting_file "$manifest" "$relative_path"
-}
-
-verify_declared_stage_paths() {
-    local manifest=$1 stage=$2 path_policy=$3 relative_path
-    while IFS= read -r relative_path; do
-        "$path_policy" "$manifest" "$relative_path" \
-            || reconcile_error "candidate contains an undeclared or unsafe path"
-    done < <(jq -er --arg stage "$stage" \
-        'if $stage == "final" then .final_changed_files[].path
-         else .[$stage].changed_files[].path end' "$manifest")
-}
-
-VERIFIED_STAGE_TREE=""
-
-verify_declared_stage() {
-    local manifest=$1 checkout=$2 source_tree=$3 stage=$4 path_policy=$5
-    local target_tree relative_path canonical_checkout
-    canonical_checkout=$(realpath "$checkout") \
-        || reconcile_error "candidate checkout could not be resolved"
-    target_tree=$(git -C "$checkout" write-tree) \
-        || reconcile_error "candidate index could not be read"
-
-    local -a actual_paths=() actual_modes=()
-    local raw_entry mode
-    while IFS= read -r -d '' raw_entry && IFS= read -r -d '' relative_path; do
-        read -r _ mode _ _ _ <<<"$raw_entry"
-        "$path_policy" "$manifest" "$relative_path" \
-            || reconcile_error "candidate contains an undeclared or unsafe path"
-        local changed_path resolved_path
-        changed_path="$checkout/$relative_path"
-        [[ -e "$changed_path" || -L "$changed_path" ]] \
-            || reconcile_error "candidate file digest does not match the manifest"
-        [[ -f "$changed_path" && ! -L "$changed_path" ]] \
-            || reconcile_error "candidate changed path must be a regular file"
-        resolved_path=$(realpath "$changed_path" 2>/dev/null) \
-            || reconcile_error "candidate changed path could not be resolved"
-        [[ "$resolved_path" == "$canonical_checkout/"* ]] \
-            || reconcile_error "candidate changed path resolves outside the checkout"
-        actual_paths+=("$relative_path")
-        actual_modes+=("$mode")
-    done < <(git -C "$checkout" diff --raw -z --no-renames "$source_tree" "$target_tree")
-
-    local raw_paths_digest normalised_paths_digest
-    raw_paths_digest=$(printf '%s\0' "${actual_paths[@]}" | sha256sum)
-    normalised_paths_digest=$(printf '%s\0' "${actual_paths[@]}" | jq -Rjsc . | sha256sum)
-    [[ "${raw_paths_digest%% *}" == "${normalised_paths_digest%% *}" ]] \
-        || reconcile_error "candidate patch path is not valid UTF-8"
-
-    local actual_paths_json declared_paths_json
-    actual_paths_json=$(jq -cn '$ARGS.positional | sort' --args -- "${actual_paths[@]}")
-    declared_paths_json=$(jq -c --arg stage "$stage" '
-        if $stage == "final" then [.final_changed_files[].path] | sort
-        else [.[$stage].changed_files[].path] | sort end' "$manifest")
-    [[ "$actual_paths_json" == "$declared_paths_json" ]] \
-        || reconcile_error "candidate patch paths do not match the manifest"
-
-    local -a file_sha256s=()
-    if [[ ${#actual_paths[@]} -gt 0 ]]; then
-        local sha_line
-        while IFS= read -r sha_line; do
-            file_sha256s+=("${sha_line%% *}")
-        done < <(cd "$checkout" && sha256sum -- "${actual_paths[@]}" 2>/dev/null)
-        [[ ${#file_sha256s[@]} -eq ${#actual_paths[@]} ]] \
-            || reconcile_error "candidate file digest does not match the manifest"
-    fi
-
-    local -A expected_mode_by_path=() expected_sha256_by_path=()
-    local declared_path declared_mode declared_sha256
-    while IFS= read -r -d '' declared_path \
-        && IFS= read -r -d '' declared_mode \
-        && IFS= read -r -d '' declared_sha256; do
-        expected_mode_by_path["$declared_path"]=$declared_mode
-        expected_sha256_by_path["$declared_path"]=$declared_sha256
-    done < <(jq -j --arg stage "$stage" '
-        ([0] | implode) as $nul |
-        (if $stage == "final" then .final_changed_files else .[$stage].changed_files end)[] |
-        (.path, $nul, .mode, $nul, .sha256, $nul)' "$manifest")
-
-    local index expected_mode expected_digest
-    for index in "${!actual_paths[@]}"; do
-        relative_path=${actual_paths[$index]}
-        expected_digest=${expected_sha256_by_path[$relative_path]}
-        [[ "${file_sha256s[$index]}" == "$expected_digest" ]] \
-            || reconcile_error "candidate file digest does not match the manifest"
-        expected_mode=${expected_mode_by_path[$relative_path]}
-        [[ "${actual_modes[$index]}" == "$expected_mode" ]] \
-            || reconcile_error "candidate file mode does not match the manifest"
-    done
-    VERIFIED_STAGE_TREE=$target_tree
-}
-
-verify_applied_candidate() {
-    local manifest=$1 checkout=$2
-    local head base_tree update_patch format_patch
-    head=$(git -C "$checkout" rev-parse HEAD 2>/dev/null) \
-        || reconcile_error "target checkout is not a Git worktree"
-    [[ "$head" == "$RECONCILE_BASE_OID" ]] \
-        || reconcile_error "target checkout HEAD does not match base OID"
-    git -C "$checkout" diff --quiet --no-ext-diff \
-        || reconcile_error "target checkout changed after validation"
-    [[ -z "$(git -C "$checkout" ls-files --others --exclude-standard)" ]] \
-        || reconcile_error "target checkout changed after validation"
-    [[ -z "$(git -C "$checkout" ls-files --others --ignored --exclude-standard)" ]] \
-        || reconcile_error "target checkout changed after validation"
-    base_tree=$(git -C "$checkout" rev-parse 'HEAD^{tree}')
-    verify_declared_stage "$manifest" "$checkout" "$base_tree" final \
-        path_is_declared_final_file
-
-    git -C "$checkout" reset --hard "$RECONCILE_BASE_OID" >/dev/null \
-        || reconcile_error "target checkout could not be reset to exact base"
-    [[ -z "$(git -C "$checkout" status --porcelain=v1 --untracked-files=all \
-        --ignored=matching)" ]] \
-        || reconcile_error "target checkout did not reset to exact base"
-
-    update_patch="$RECONCILE_PREPARATION_BUNDLE_DIR/update.patch"
-    verify_declared_stage_paths "$manifest" updates path_is_declared_direct_file
-    git -C "$checkout" apply --check --index --binary "$update_patch" >/dev/null \
-        || reconcile_error "candidate patch does not apply to exact base"
-    git -C "$checkout" apply --index --binary "$update_patch" >/dev/null \
-        || reconcile_error "candidate patch could not be applied"
-    verify_declared_stage "$manifest" "$checkout" "$base_tree" updates \
-        path_is_declared_direct_file
-    local update_tree=$VERIFIED_STAGE_TREE
-
-    if jq -e '.formatting | has("patch_sha256")' "$manifest" >/dev/null; then
-        format_patch="$RECONCILE_PREPARATION_BUNDLE_DIR/format.patch"
-        verify_declared_stage_paths "$manifest" formatting path_is_declared_formatting_file
-        git -C "$checkout" update-index --refresh >/dev/null
-        git -C "$checkout" apply --check --index --binary "$format_patch" >/dev/null \
-            || reconcile_error "format patch does not apply to the verified update stage"
-        git -C "$checkout" apply --index --binary "$format_patch" >/dev/null \
-            || reconcile_error "format patch could not be applied"
-        verify_declared_stage "$manifest" "$checkout" "$update_tree" formatting \
-            path_is_declared_formatting_file
-    fi
-    verify_declared_stage "$manifest" "$checkout" "$base_tree" final \
-        path_is_declared_final_file
-}
-
-bounded_failure_json() {
-    jq -ce '.failure |
-        select((.stage | type) == "string" and (.root | type) == "string" and
-               (.status | type) == "number") |
-        {stage, root, status}' "$1" \
-        || reconcile_error "failure details are invalid"
-}
-
-write_verified_result() {
-    local classification=$1 preparation_digest=$2 outcome_digest=${3-}
-    local failure_json=${4-null} run_url=${5-}
-    [[ -n "$preparation_digest" ]] \
-        || reconcile_error "verified result requires a preparation manifest digest"
-    if [[ "$classification" == "success" || "$classification" == "no-change" \
-        || "$classification" == "branch-validation" ]]; then
-        [[ -n "$outcome_digest" ]] \
-            || reconcile_error "verified result requires a validation outcome digest"
-    else
-        [[ -z "$outcome_digest" ]] \
-            || reconcile_error "preparation failure must not bind a validation outcome"
-    fi
-    local destination=$RECONCILE_VERIFIED_RESULT_DIR
-    [[ ! -e "$destination" && ! -L "$destination" ]] \
-        || reconcile_error "verified result destination must be absent"
-    local parent=${destination%/*}
-    [[ "$parent" != "$destination" && -d "$parent" ]] \
-        || reconcile_error "verified result parent must exist"
-    local stage
-    stage=$(mktemp -d "$parent/.verified-result.XXXXXX")
-    RECONCILE_TEMPORARY_PATH=$stage
-    chmod 700 "$stage"
-
-    jq -n \
-        --arg run_id "$RECONCILE_RUN_ID" \
-        --arg run_attempt "$RECONCILE_RUN_ATTEMPT" \
-        --arg policy "$RECONCILE_AUTOMATION_POLICY_ID" \
-        --arg control_oid "$RECONCILE_CONTROL_OID" \
-        --arg branch "$RECONCILE_STATE_BRANCH" \
-        --arg base_oid "$RECONCILE_BASE_OID" \
-        --arg ref_hash "$RECONCILE_REF_HASH" \
-        --arg classification "$classification" \
-        --arg preparation_digest "$preparation_digest" \
-        --arg outcome_digest "$outcome_digest" \
-        --argjson failure "$failure_json" \
-        --arg run_url "$run_url" \
-        --slurpfile preparation "$RECONCILE_PREPARATION_BUNDLE_DIR/manifest.json" '
-        {schema_version: 2, run_id: $run_id, run_attempt: $run_attempt,
-         automation_policy_id: $policy, control_oid: $control_oid,
-         state_branch: $branch, base_oid: $base_oid, ref_hash: $ref_hash,
-         classification: $classification,
-         preparation_manifest_sha256: $preparation_digest}
-        + if $outcome_digest == "" then {} else
-            {validation_outcome_sha256: $outcome_digest} end
-        + if $classification == "success" or $classification == "no-change" then
-            {terraform_fmt: $preparation[0].terraform_fmt,
-             roots: $preparation[0].roots,
-             updates: $preparation[0].updates,
-             formatting: $preparation[0].formatting,
-             final_changed_files: $preparation[0].final_changed_files}
-          else {} end
-        + if $failure == null then {} else
-            {failure: $failure, run_url: $run_url} end
-        ' >"$stage/manifest.json"
-    if [[ "$classification" == "success" ]]; then
-        cp -- "$RECONCILE_PREPARATION_BUNDLE_DIR/update.patch" "$stage/update.patch"
-        if jq -e '.formatting | has("patch_sha256")' \
-            "$RECONCILE_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null; then
-            cp -- "$RECONCILE_PREPARATION_BUNDLE_DIR/format.patch" "$stage/format.patch"
-        fi
-    fi
-    chmod 444 "$stage"/*
-    mv -- "$stage" "$destination"
-    RECONCILE_TEMPORARY_PATH=""
-    chmod 555 "$destination"
-}
-
-verify_clean_checkout() {
-    local checkout=$1 expected_oid=$2 description=$3
-    [[ -d "$checkout" ]] || reconcile_error "$description must be a directory"
-    [[ "$(git -C "$checkout" rev-parse HEAD 2>/dev/null)" == "$expected_oid" ]] \
-        || reconcile_error "$description HEAD does not match its immutable OID"
-    [[ -z "$(git -C "$checkout" status --porcelain=v1 --untracked-files=all \
-        --ignored=matching)" ]] \
-        || reconcile_error "$description must be clean"
-}
-
-verify_preparation_entries() {
-    local classification=$1 manifest=$2
-    preparation_logs_are_valid "$RECONCILE_PREPARATION_BUNDLE_DIR/logs" "$manifest" \
-        || reconcile_error "preparation logs are invalid"
-    if [[ "$classification" == "success" ]]; then
-        if jq -e '.formatting | has("patch_sha256")' "$manifest" >/dev/null; then
-            directory_has_exact_entries "$RECONCILE_PREPARATION_BUNDLE_DIR" \
-                format.patch logs manifest.json update.patch \
-                || reconcile_error "preparation bundle contains unexpected entries"
-        else
-            directory_has_exact_entries "$RECONCILE_PREPARATION_BUNDLE_DIR" \
-                logs manifest.json update.patch \
-                || reconcile_error "preparation bundle contains unexpected entries"
-        fi
-    else
-        directory_has_exact_entries "$RECONCILE_PREPARATION_BUNDLE_DIR" logs manifest.json \
-            || reconcile_error "preparation bundle contains unexpected entries"
-    fi
-}
-
-verify_result() {
-    require_common_identity
-    : "${RECONCILE_CONTROL_CHECKOUT:?RECONCILE_CONTROL_CHECKOUT must be set}"
-    : "${RECONCILE_PREPARATION_BUNDLE_DIR:?RECONCILE_PREPARATION_BUNDLE_DIR must be set}"
-    : "${RECONCILE_TARGET_CHECKOUT:?RECONCILE_TARGET_CHECKOUT must be set}"
-    : "${RECONCILE_VERIFIED_RESULT_DIR:?RECONCILE_VERIFIED_RESULT_DIR must be set}"
-
-    verify_clean_checkout "$RECONCILE_CONTROL_CHECKOUT" "$RECONCILE_CONTROL_OID" \
-        "control checkout"
-
-    local preparation_manifest="$RECONCILE_PREPARATION_BUNDLE_DIR/manifest.json"
-    [[ -f "$preparation_manifest" && ! -L "$preparation_manifest" ]] \
-        || reconcile_error "preparation manifest must be a regular file"
-    preparation_manifest_is_valid "$preparation_manifest" \
-        || reconcile_error "preparation manifest identity or schema is invalid"
-    local preparation_classification preparation_digest
-    preparation_classification=$(jq -er '.classification' "$preparation_manifest")
-    preparation_digest=$(sha256_file "$preparation_manifest")
-    if [[ "$preparation_classification" == "branch-update" \
-        || "$preparation_classification" == "branch-init" \
-        || "$preparation_classification" == "branch-format" \
-        || "$preparation_classification" == "automation" ]]; then
-        verify_preparation_entries "$preparation_classification" "$preparation_manifest"
-        [[ -z "${RECONCILE_VALIDATION_OUTCOME_DIR:-}" \
-            || ! -e "$RECONCILE_VALIDATION_OUTCOME_DIR" ]] \
-            || reconcile_error "preparation failure must not have a validation outcome"
-        verify_clean_checkout "$RECONCILE_TARGET_CHECKOUT" "$RECONCILE_BASE_OID" \
-            "target checkout"
-        : "${RECONCILE_RUN_URL:?RECONCILE_RUN_URL must be set for failures}"
-        local preparation_failure
-        preparation_failure=$(bounded_failure_json "$preparation_manifest")
-        write_verified_result "$preparation_classification" "$preparation_digest" "" \
-            "$preparation_failure" "$RECONCILE_RUN_URL"
-        return
-    fi
-    [[ "$preparation_classification" == "success" \
-        || "$preparation_classification" == "no-change" ]] \
-        || reconcile_error "preparation classification is not supported"
-    verify_preparation_entries "$preparation_classification" "$preparation_manifest"
-
-    local patch="" patch_digest="" expected_patch_digest
-    local format_patch="" format_patch_digest="" expected_format_patch_digest
-    local outcome outcome_digest outcome_classification
-    if [[ "$preparation_classification" == "success" ]]; then
-        patch="$RECONCILE_PREPARATION_BUNDLE_DIR/update.patch"
-        [[ -f "$patch" && ! -L "$patch" ]] \
-            || reconcile_error "candidate patch must be a regular file"
-        patch_digest=$(sha256_file "$patch")
-        expected_patch_digest=$(jq -er '.updates.patch_sha256' "$preparation_manifest")
-        [[ "$patch_digest" == "$expected_patch_digest" ]] \
-            || reconcile_error "candidate patch digest does not match the manifest"
-        if jq -e '.formatting | has("patch_sha256")' "$preparation_manifest" >/dev/null; then
-            format_patch="$RECONCILE_PREPARATION_BUNDLE_DIR/format.patch"
-            [[ -f "$format_patch" && ! -L "$format_patch" ]] \
-                || reconcile_error "format patch must be a regular file"
-            format_patch_digest=$(sha256_file "$format_patch")
-            expected_format_patch_digest=$(jq -er '.formatting.patch_sha256' \
-                "$preparation_manifest")
-            [[ "$format_patch_digest" == "$expected_format_patch_digest" ]] \
-                || reconcile_error "format patch digest does not match the manifest"
-        fi
-    else
-        patch=""
-    fi
-
-    : "${RECONCILE_VALIDATION_OUTCOME_DIR:?RECONCILE_VALIDATION_OUTCOME_DIR must be set}"
-    outcome="$RECONCILE_VALIDATION_OUTCOME_DIR/manifest.json"
-    [[ -f "$outcome" && ! -L "$outcome" ]] \
-        || reconcile_error "validation outcome must be a regular file"
-    directory_has_exact_entries "$RECONCILE_VALIDATION_OUTCOME_DIR" logs manifest.json \
-        || reconcile_error "validation outcome contains unexpected entries"
-    validation_logs_are_valid "$RECONCILE_VALIDATION_OUTCOME_DIR/logs" \
-        "$preparation_manifest" \
-        || reconcile_error "validation logs are invalid"
-    validation_outcome_is_valid "$outcome" "$preparation_classification" \
-        "$preparation_digest" \
-        || reconcile_error "validation outcome does not match the candidate"
-    outcome_digest=$(sha256_file "$outcome")
-    outcome_classification=$(jq -er '.classification' "$outcome")
-
-    if [[ "$preparation_classification" == "success" ]]; then
-        verify_applied_candidate "$preparation_manifest" "$RECONCILE_TARGET_CHECKOUT"
-    else
-        verify_clean_checkout "$RECONCILE_TARGET_CHECKOUT" "$RECONCILE_BASE_OID" \
-            "target checkout"
-    fi
-
-    if [[ "$outcome_classification" == "branch-validation" ]]; then
-        : "${RECONCILE_RUN_URL:?RECONCILE_RUN_URL must be set for failures}"
-        local validation_failure
-        validation_failure=$(bounded_failure_json "$outcome")
-        write_verified_result "branch-validation" "$preparation_digest" "$outcome_digest" \
-            "$validation_failure" "$RECONCILE_RUN_URL"
-        return
-    fi
-
-    if [[ "$preparation_classification" == "success" ]]; then
-        write_verified_result "success" "$preparation_digest" "$outcome_digest"
-    else
-        write_verified_result "no-change" "$preparation_digest" "$outcome_digest"
-    fi
-}
-
-update_commit_subject() {
-    local manifest=$1 modules providers
-    modules=$(jq -er '.updates.module_blocks_updated' "$manifest")
-    providers=$(jq -er '.updates.provider_blocks_updated' "$manifest")
-    if [[ "$modules" -gt 0 && "$providers" -gt 0 ]]; then
-        printf '%s\n' 'chore: bump Terraform provider and module versions'
-    elif [[ "$providers" -gt 0 ]]; then
-        printf '%s\n' 'chore: bump Terraform provider versions'
-    elif [[ "$modules" -gt 0 ]]; then
-        printf '%s\n' 'chore: bump Terraform module versions'
-    else
-        printf '%s\n' 'chore: update Terraform configuration'
-    fi
-}
-
-commit_staged_change() {
-    local checkout=$1 subject=$2 commit_date=$3
-    local message_file="$checkout/.git/tf-version-bump-commit-message"
-    printf '%s\n\n%s\n%s\n' \
-        "$subject" \
-        "Tf-Version-Bump-Automation: $RECONCILE_AUTOMATION_POLICY_ID/$RECONCILE_REF_HASH" \
-        "Tf-Version-Bump-Base: $RECONCILE_BASE_OID" >"$message_file"
-    GIT_AUTHOR_DATE="$commit_date" GIT_COMMITTER_DATE="$commit_date" \
-        git -C "$checkout" -c commit.gpgsign=false commit -F "$message_file" >/dev/null \
-        || reconcile_error "could not construct Terraform update commit"
-    rm -f -- "$message_file"
-}
-
-verify_manifest_roots_match_configuration() {
-    local manifest=$1 checkout=$2
-    : "${RECONCILE_TERRAFORM_ROOTS:?RECONCILE_TERRAFORM_ROOTS must be set}"
-    local canonical_checkout
-    canonical_checkout=$(realpath "$checkout") \
-        || reconcile_error "publication checkout could not be resolved"
-
-    local -a configured_roots=() canonical_roots=() relative_roots=()
-    readarray -t configured_roots < <(printf '%s' "$RECONCILE_TERRAFORM_ROOTS")
-    local configured_root canonical_root existing_root
-    for configured_root in "${configured_roots[@]}"; do
-        [[ -n "$configured_root" ]] \
-            || reconcile_error "Terraform root entry must not be empty"
-        [[ "$configured_root" != /* && "/$configured_root/" != *"/../"* ]] \
-            || reconcile_error "Terraform root must be a safe repository-relative path"
-        canonical_root=$(realpath "$canonical_checkout/$configured_root" 2>/dev/null) \
-            || reconcile_error "Terraform root does not exist"
-        [[ -d "$canonical_root" ]] \
-            || reconcile_error "Terraform root is not a directory"
-        [[ "$canonical_root" == "$canonical_checkout" \
-            || "$canonical_root" == "$canonical_checkout/"* ]] \
-            || reconcile_error "Terraform root resolves outside publication checkout"
-        for existing_root in "${canonical_roots[@]}"; do
-            [[ "$canonical_root" != "$existing_root" ]] \
-                || reconcile_error "duplicate canonical Terraform root"
-        done
-        canonical_roots+=("$canonical_root")
-        if [[ "$canonical_root" == "$canonical_checkout" ]]; then
-            relative_roots+=(".")
-        else
-            relative_roots+=("${canonical_root#"$canonical_checkout"/}")
-        fi
-    done
-
-    local configured_roots_json manifest_roots_json
-    configured_roots_json=$(jq -cn '$ARGS.positional | map({path: .})' \
-        --args -- "${relative_roots[@]}")
-    manifest_roots_json=$(jq -c '.roots' "$manifest")
-    [[ "$manifest_roots_json" == "$configured_roots_json" ]] \
-        || reconcile_error "verified result roots do not match configured Terraform roots"
-}
-
-construct_update_commits() {
-    : "${RECONCILE_TARGET_CHECKOUT:?RECONCILE_TARGET_CHECKOUT must be set}"
-    : "${RECONCILE_COMMIT_AUTHOR_NAME:?RECONCILE_COMMIT_AUTHOR_NAME must be set}"
-    : "${RECONCILE_COMMIT_AUTHOR_EMAIL:?RECONCILE_COMMIT_AUTHOR_EMAIL must be set}"
-    local checkout=$RECONCILE_TARGET_CHECKOUT
-    [[ "$(git -C "$checkout" rev-parse HEAD 2>/dev/null)" == "$RECONCILE_BASE_OID" ]] \
-        || reconcile_error "publication checkout HEAD does not match base OID"
-    [[ -z "$(git -C "$checkout" status --porcelain=v1 --untracked-files=all \
-        --ignored=matching)" ]] \
-        || reconcile_error "publication checkout must be clean"
-
-    local update_patch="$RECONCILE_VERIFIED_RESULT_DIR/update.patch"
-    local format_patch="$RECONCILE_VERIFIED_RESULT_DIR/format.patch"
-    local verified_manifest="$RECONCILE_VERIFIED_RESULT_DIR/manifest.json"
-    verify_manifest_roots_match_configuration "$verified_manifest" "$checkout"
-    verify_declared_stage_paths "$verified_manifest" updates path_is_declared_direct_file
-    verify_declared_stage_paths "$verified_manifest" formatting path_is_declared_formatting_file
-    verify_declared_stage_paths "$verified_manifest" final path_is_declared_final_file
-    [[ -f "$update_patch" && ! -L "$update_patch" ]] \
-        || reconcile_error "verified candidate patch must be a regular file"
-    [[ "$(sha256_file "$update_patch")" \
-        == "$(jq -er '.updates.patch_sha256' "$verified_manifest")" ]] \
-        || reconcile_error "verified candidate patch digest is invalid"
-    local base_tree
-    base_tree=$(git -C "$checkout" rev-parse 'HEAD^{tree}')
-    git -C "$checkout" apply --check --index --binary "$update_patch" >/dev/null \
-        || reconcile_error "verified candidate patch does not apply to exact base"
-    git -C "$checkout" apply --index --binary "$update_patch" >/dev/null \
-        || reconcile_error "verified candidate patch could not be applied"
-    verify_declared_stage "$verified_manifest" "$checkout" "$base_tree" updates \
-        path_is_declared_direct_file
-
-    git -C "$checkout" config --local user.name "$RECONCILE_COMMIT_AUTHOR_NAME"
-    git -C "$checkout" config --local user.email "$RECONCILE_COMMIT_AUTHOR_EMAIL"
-    local commit_date subject
-    commit_date=$(git -C "$checkout" show -s --format=%cI "$RECONCILE_BASE_OID")
-    subject=$(update_commit_subject "$verified_manifest")
-    commit_staged_change "$checkout" "$subject" "$commit_date"
-
-    if [[ -e "$format_patch" || -L "$format_patch" ]]; then
-        [[ -f "$format_patch" && ! -L "$format_patch" ]] \
-            || reconcile_error "verified format patch must be a regular file"
-        [[ "$(sha256_file "$format_patch")" \
-            == "$(jq -er '.formatting.patch_sha256' "$verified_manifest")" ]] \
-            || reconcile_error "verified format patch digest is invalid"
-        local update_tree
-        update_tree=$(git -C "$checkout" rev-parse 'HEAD^{tree}')
-        git -C "$checkout" apply --check --index --binary "$format_patch" >/dev/null \
-            || reconcile_error "verified format patch does not apply to the update commit"
-        git -C "$checkout" apply --index --binary "$format_patch" >/dev/null \
-            || reconcile_error "verified format patch could not be applied"
-        verify_declared_stage "$verified_manifest" "$checkout" "$update_tree" formatting \
-            path_is_declared_formatting_file
-        commit_staged_change "$checkout" 'chore: run Terraform fmt' "$commit_date"
-    fi
-
-    verify_declared_stage "$verified_manifest" "$checkout" "$base_tree" final \
-        path_is_declared_final_file
-    [[ -z "$(git -C "$checkout" status --porcelain=v1 --untracked-files=all \
-        --ignored=matching)" ]] \
-        || reconcile_error "constructed Terraform commits left a dirty checkout"
-}
-
-publish_update_ref() {
-    : "${RECONCILE_GIT_REMOTE:?RECONCILE_GIT_REMOTE must be set}"
-    local checkout=$RECONCILE_TARGET_CHECKOUT
-    local state_ref="refs/heads/$RECONCILE_STATE_BRANCH"
-    local update_ref="refs/heads/update_$RECONCILE_STATE_BRANCH"
-    local temporary_prefix="refs/remotes/tf-version-bump/$RECONCILE_REF_HASH"
-    local state_tracking_ref="$temporary_prefix/state"
-    local update_tracking_ref="$temporary_prefix/update"
-    git -C "$checkout" update-ref -d "$state_tracking_ref"
-    git -C "$checkout" fetch --quiet --no-tags --no-write-fetch-head \
-        "$RECONCILE_GIT_REMOTE" "+$state_ref:$state_tracking_ref" \
-        || reconcile_error "could not fetch state ref before publication"
-    [[ "$(git -C "$checkout" rev-parse "$state_tracking_ref")" == "$RECONCILE_BASE_OID" ]] \
-        || reconcile_error "state ref moved after discovery"
-
-    git -C "$checkout" update-ref -d "$update_tracking_ref"
-    local observed_update_oid=0000000000000000000000000000000000000000
-    local fetch_diagnostic="$checkout/.git/tf-version-bump-update-fetch"
-    if git -C "$checkout" fetch --quiet --no-tags --no-write-fetch-head \
-        "$RECONCILE_GIT_REMOTE" "+$update_ref:$update_tracking_ref" \
-        2>"$fetch_diagnostic"; then
-        observed_update_oid=$(git -C "$checkout" rev-parse "$update_tracking_ref")
-        local ownership_trailer
-        ownership_trailer="Tf-Version-Bump-Automation: $RECONCILE_AUTOMATION_POLICY_ID/$RECONCILE_REF_HASH"
-        git -C "$checkout" show -s --format=%B "$observed_update_oid" \
-            | grep -Fx -- "$ownership_trailer" >/dev/null \
-            || reconcile_error "existing update ref is not owned by this automation policy"
-    elif ! grep -F "couldn't find remote ref" "$fetch_diagnostic" >/dev/null; then
-        rm -f -- "$fetch_diagnostic"
-        reconcile_error "could not inspect existing update ref"
-    fi
-    rm -f -- "$fetch_diagnostic"
-
-    git -C "$checkout" push --quiet \
-        --force-with-lease="$update_ref:$observed_update_oid" \
-        "$RECONCILE_GIT_REMOTE" "$(git -C "$checkout" rev-parse HEAD):$update_ref" \
-        || reconcile_error "update ref push failed its exact lease"
-}
 
 github_marker() {
     printf '<!-- tf-version-bump:%s:%s -->\n' \
         "$RECONCILE_AUTOMATION_POLICY_ID" "$RECONCILE_REF_HASH"
 }
 
+
 html_escape() {
     printf '%s' "$1" | jq -Rr '@html' | sed 's/@/\&#64;/g'
 }
+
 
 html_code() {
     printf '<code>%s</code>' "$(html_escape "$1")"
 }
 
-verified_manifest_is_valid() {
-    jq -e '
-        def digest: type == "string" and test("^[0-9a-f]{64}$");
-        def changed_files:
-            type == "array" and
-            all(.[]; keys == ["mode", "path", "sha256"] and
-                (.path | type == "string" and length > 0) and .mode == "100644" and
-                (.sha256 | digest)) and
-            ([.[].path] == ([.[].path] | sort)) and
-            (([.[].path] | unique | length) == length);
-        def failure_stage_matches_classification:
-            (.classification == "branch-update" and .failure.stage == "tf-version-bump") or
-            (.classification == "branch-init" and .failure.stage == "terraform init") or
-            (.classification == "branch-format" and .failure.stage == "terraform fmt") or
-            (.classification == "automation" and
-                (.failure.stage == "tf-version-bump report" or
-                 .failure.stage == "provider lock policy"));
-        .schema_version == 2 and
-        .run_id == env.RECONCILE_RUN_ID and
-        .run_attempt == env.RECONCILE_RUN_ATTEMPT and
-        .automation_policy_id == env.RECONCILE_AUTOMATION_POLICY_ID and
-        .control_oid == env.RECONCILE_CONTROL_OID and
-        .state_branch == env.RECONCILE_STATE_BRANCH and
-        .base_oid == env.RECONCILE_BASE_OID and
-        .ref_hash == env.RECONCILE_REF_HASH and
-        (.preparation_manifest_sha256 | digest) and
-        if .classification == "success" or .classification == "no-change" then
-            keys == ["automation_policy_id", "base_oid", "classification", "control_oid",
-                     "final_changed_files", "formatting", "preparation_manifest_sha256",
-                     "ref_hash", "roots", "run_attempt", "run_id", "schema_version",
-                     "state_branch", "terraform_fmt", "updates",
-                     "validation_outcome_sha256"] and
-            (.validation_outcome_sha256 | digest) and
-            (.terraform_fmt | type == "boolean") and
-            (.roots | type == "array" and length > 0 and
-                all(.[]; keys == ["path"] and (.path | type == "string" and length > 0))) and
-            (.updates.module_blocks_updated | type == "number" and . >= 0 and floor == .) and
-            (.updates.provider_blocks_updated | type == "number" and . >= 0 and floor == .) and
-            (.updates.changed_files | changed_files) and
-            (.formatting.ran | type == "boolean") and
-            (.formatting.changed_files | changed_files) and
-            (.final_changed_files | changed_files) and
-            (.formatting.ran == false or .terraform_fmt == true) and
-            if .classification == "success" then
-                (.updates | keys) == ["changed_files", "module_blocks_updated", "patch_sha256",
-                                     "provider_blocks_updated"] and
-                (.updates.changed_files | length > 0) and (.updates.patch_sha256 | digest) and
-                (.final_changed_files | length > 0) and
-                (.formatting.ran == .terraform_fmt) and
-                if (.formatting | has("patch_sha256")) then
-                    (.formatting | keys) == ["changed_files", "patch_sha256", "ran"] and
-                    .formatting.ran == true and
-                    (.formatting.changed_files | length > 0) and
-                    (.formatting.patch_sha256 | digest)
-                else
-                    (.formatting | keys) == ["changed_files", "ran"] and
-                    .formatting.changed_files == []
-                end
-            else
-                (.updates | keys) == ["changed_files", "module_blocks_updated",
-                                     "provider_blocks_updated"] and
-                .updates.changed_files == [] and
-                (.formatting | keys) == ["changed_files", "ran"] and
-                .formatting.changed_files == [] and .final_changed_files == []
-            end
-        elif .classification == "branch-validation" then
-            keys == ["automation_policy_id", "base_oid", "classification", "control_oid",
-                     "failure", "preparation_manifest_sha256", "ref_hash", "run_attempt",
-                     "run_id", "run_url", "schema_version", "state_branch",
-                     "validation_outcome_sha256"] and
-            (.validation_outcome_sha256 | digest) and
-            (.failure | keys) == ["root", "stage", "status"] and
-            (.failure.stage == "terraform init" or
-             .failure.stage == "terraform validate") and
-            (.failure.root | type == "string") and
-            (.failure.status | type == "number" and . > 0 and floor == .) and
-            (.run_url | type == "string" and test("^https://[^[:space:]]+$"))
-        elif .classification == "branch-update" or .classification == "branch-init" or
-             .classification == "branch-format" or .classification == "automation" then
-            keys == ["automation_policy_id", "base_oid", "classification", "control_oid",
-                     "failure", "preparation_manifest_sha256", "ref_hash", "run_attempt",
-                     "run_id", "run_url", "schema_version", "state_branch"] and
-            (.failure | keys) == ["root", "stage", "status"] and
-            (.failure.stage | type == "string" and length > 0) and
-            (.failure.root | type == "string") and
-            (.failure.status | type == "number" and . > 0 and floor == .) and
-            failure_stage_matches_classification and
-            (.run_url | type == "string" and test("^https://[^[:space:]]+$"))
-        else false end
-    ' "$1" >/dev/null
-}
-
-verify_verified_result() {
-    local manifest=$1 classification
-    verified_manifest_is_valid "$manifest" \
-        || reconcile_error "verified result manifest contract is invalid"
-    classification=$(jq -er '.classification' "$manifest")
-    if [[ "$classification" == "success" ]]; then
-        [[ -f "$RECONCILE_VERIFIED_RESULT_DIR/update.patch" \
-            && ! -L "$RECONCILE_VERIFIED_RESULT_DIR/update.patch" ]] \
-            || reconcile_error "verified update patch must be a regular file"
-        [[ "$(sha256_file "$RECONCILE_VERIFIED_RESULT_DIR/update.patch")" \
-            == "$(jq -er '.updates.patch_sha256' "$manifest")" ]] \
-            || reconcile_error "verified update patch digest is invalid"
-        if jq -e '.formatting | has("patch_sha256")' "$manifest" >/dev/null; then
-            directory_has_exact_entries "$RECONCILE_VERIFIED_RESULT_DIR" \
-                format.patch manifest.json update.patch \
-                || reconcile_error "verified result contains unexpected entries"
-            [[ -f "$RECONCILE_VERIFIED_RESULT_DIR/format.patch" \
-                && ! -L "$RECONCILE_VERIFIED_RESULT_DIR/format.patch" ]] \
-                || reconcile_error "verified format patch must be a regular file"
-            [[ "$(sha256_file "$RECONCILE_VERIFIED_RESULT_DIR/format.patch")" \
-                == "$(jq -er '.formatting.patch_sha256' "$manifest")" ]] \
-                || reconcile_error "verified format patch digest is invalid"
-        else
-            directory_has_exact_entries "$RECONCILE_VERIFIED_RESULT_DIR" \
-                manifest.json update.patch \
-                || reconcile_error "verified result contains unexpected entries"
-        fi
-    else
-        directory_has_exact_entries "$RECONCILE_VERIFIED_RESULT_DIR" manifest.json \
-            || reconcile_error "verified result contains unexpected entries"
-    fi
-    printf '%s\n' "$classification"
-}
-
-classify_verified_result() {
-    require_common_identity_values
-    : "${RECONCILE_VERIFIED_RESULT_DIR:?RECONCILE_VERIFIED_RESULT_DIR must be set}"
-    local verified_manifest="$RECONCILE_VERIFIED_RESULT_DIR/manifest.json"
-    [[ -f "$verified_manifest" && ! -L "$verified_manifest" ]] \
-        || reconcile_error "verified result manifest must be a regular file"
-    verify_verified_result "$verified_manifest"
-}
 
 marked_pr_number() {
     local marker=$1 response
-    response=$(gh pr list --repo "$RECONCILE_REPOSITORY" --state open \
+    response=$(bounded gh pr list --repo "$RECONCILE_REPOSITORY" --state open \
         --head "update_$RECONCILE_STATE_BRANCH" --base "$RECONCILE_STATE_BRANCH" \
         --json number,body) || return 1
     [[ -n "$response" ]] || response='[]'
@@ -998,19 +306,21 @@ marked_pr_number() {
         <<<"$response"
 }
 
+
 close_marked_pr() {
     local pr_number
     pr_number=$(marked_pr_number "$(github_marker)") \
         || reconcile_error "could not look up marked update pull request"
     if [[ -n "$pr_number" ]]; then
-        gh pr close "$pr_number" --repo "$RECONCILE_REPOSITORY" >/dev/null \
+        bounded gh pr close "$pr_number" --repo "$RECONCILE_REPOSITORY" >/dev/null \
             || reconcile_error "could not close marked update pull request"
     fi
 }
 
+
 marked_issue_record() {
     local marker=$1 response
-    response=$(gh issue list --repo "$RECONCILE_REPOSITORY" --state all \
+    response=$(bounded gh issue list --repo "$RECONCILE_REPOSITORY" --state all \
         --search "$RECONCILE_REF_HASH in:body" --limit 100 --json number,body,closed) || return 1
     [[ -n "$response" ]] || response='[]'
     jq -r --arg marker "$marker" \
@@ -1019,160 +329,24 @@ marked_issue_record() {
         <<<"$response"
 }
 
+
 close_marked_issue() {
     local record issue_number issue_closed
     record=$(marked_issue_record "$(github_marker)") \
         || reconcile_error "could not look up marked failure issue"
     read -r issue_number issue_closed <<<"$record"
     if [[ -n "$issue_number" && "$issue_closed" != "true" ]]; then
-        gh issue close "$issue_number" --repo "$RECONCILE_REPOSITORY" >/dev/null \
+        bounded gh issue close "$issue_number" --repo "$RECONCILE_REPOSITORY" >/dev/null \
             || reconcile_error "could not close marked failure issue"
     fi
 }
 
-reconcile_success_lifecycle() {
-    local verified_manifest=$1
-    local marker payload_dir body_file pr_number
-    local branch_html base_html policy_html modules_html providers_html
-    local update_count_html format_count_html relative_path
-    marker=$(github_marker)
-    branch_html=$(html_code "$RECONCILE_STATE_BRANCH")
-    base_html=$(html_code "$RECONCILE_BASE_OID")
-    policy_html=$(html_code "$RECONCILE_AUTOMATION_POLICY_ID")
-    modules_html=$(html_code "$(jq -er '.updates.module_blocks_updated' "$verified_manifest")")
-    providers_html=$(html_code "$(jq -er '.updates.provider_blocks_updated' "$verified_manifest")")
-    update_count_html=$(html_code "$(jq -er '.updates.changed_files | length' "$verified_manifest")")
-    format_count_html=$(html_code "$(jq -er '.formatting.changed_files | length' "$verified_manifest")")
-    : "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
-    payload_dir=$(mktemp -d "$RUNNER_TEMP/tf-version-bump-github.XXXXXX")
-    RECONCILE_TEMPORARY_PATH=$payload_dir
-    body_file="$payload_dir/body"
-    printf '%s\n\nAutomated Terraform dependency update for %s.\n\nBase: %s\nPolicy: %s\nModule blocks updated: %s\nProvider blocks updated: %s\n\nDependency and lock-file changes (%s):\n' \
-        "$marker" "$branch_html" "$base_html" "$policy_html" \
-        "$modules_html" "$providers_html" "$update_count_html" >"$body_file"
-    while IFS= read -r relative_path; do
-        printf -- '- %s\n' "$(html_code "$relative_path")" >>"$body_file"
-    done < <(jq -er '.updates.changed_files[].path' "$verified_manifest")
-    if jq -e '.formatting.changed_files | length > 0' "$verified_manifest" >/dev/null; then
-        printf '\nFormatting changes (%s):\n' "$format_count_html" >>"$body_file"
-        while IFS= read -r relative_path; do
-            printf -- '- %s\n' "$(html_code "$relative_path")" >>"$body_file"
-        done < <(jq -er '.formatting.changed_files[].path' "$verified_manifest")
-    else
-        printf '\nFormatting changes: None\n' >>"$body_file"
-    fi
-    pr_number=$(marked_pr_number "$marker")
-    if [[ -n "$pr_number" ]]; then
-        gh pr edit "$pr_number" --repo "$RECONCILE_REPOSITORY" \
-            --title "Terraform dependency update" --body-file "$body_file" >/dev/null
-    else
-        gh pr create --repo "$RECONCILE_REPOSITORY" \
-            --head "update_$RECONCILE_STATE_BRANCH" --base "$RECONCILE_STATE_BRANCH" \
-            --title "Terraform dependency update" --body-file "$body_file" >/dev/null
-    fi
-    close_marked_issue
-    rm -rf -- "$payload_dir"
-    RECONCILE_TEMPORARY_PATH=""
-}
 
-reconcile_failure_lifecycle() {
-    local classification=$1 verified_manifest=$2
-    local marker payload_dir body_file issue_number issue_closed
-    local branch_html classification_html base_html run_id_html run_attempt_html
-    local stage root status run_url stage_html root_html status_html run_url_html run_url_href
-    close_marked_pr
-    marker=$(github_marker)
-    branch_html=$(html_code "$RECONCILE_STATE_BRANCH")
-    classification_html=$(html_code "$classification")
-    base_html=$(html_code "$RECONCILE_BASE_OID")
-    run_id_html=$(html_code "$RECONCILE_RUN_ID")
-    run_attempt_html=$(html_code "$RECONCILE_RUN_ATTEMPT")
-    stage=$(jq -er '.failure.stage' "$verified_manifest")
-    root=$(jq -er '.failure.root' "$verified_manifest")
-    status=$(jq -er '.failure.status | select(type == "number")' "$verified_manifest")
-    run_url=$(jq -er '.run_url | select(type == "string" and length > 0)' "$verified_manifest")
-    stage_html=$(html_code "$stage")
-    root_html=$(html_code "$root")
-    status_html=$(html_code "$status")
-    run_url_html=$(html_code "$run_url")
-    run_url_href=$(html_escape "$run_url")
-    : "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
-    payload_dir=$(mktemp -d "$RUNNER_TEMP/tf-version-bump-github.XXXXXX")
-    RECONCILE_TEMPORARY_PATH=$payload_dir
-    body_file="$payload_dir/body"
-    printf '%s\n\nAutomated Terraform update failed for %s.\n\nClassification: %s\nStage: %s\nRoot: %s\nStatus: %s\nBase: %s\nRun: %s attempt %s\nWorkflow run: <a href="%s">%s</a>\n' \
-        "$marker" "$branch_html" "$classification_html" \
-        "$stage_html" "$root_html" "$status_html" "$base_html" \
-        "$run_id_html" "$run_attempt_html" "$run_url_href" "$run_url_html" >"$body_file"
-    read -r issue_number issue_closed < <(marked_issue_record "$marker")
-    if [[ -n "$issue_number" ]]; then
-        [[ "$issue_closed" != "true" ]] || gh issue reopen "$issue_number" --repo "$RECONCILE_REPOSITORY" >/dev/null
-        gh issue edit "$issue_number" --repo "$RECONCILE_REPOSITORY" \
-            --title "Terraform dependency update failed" --body-file "$body_file" >/dev/null
-    else
-        gh issue create --repo "$RECONCILE_REPOSITORY" \
-            --title "Terraform dependency update failed" --body-file "$body_file" >/dev/null
-    fi
-    rm -rf -- "$payload_dir"
-    RECONCILE_TEMPORARY_PATH=""
-}
-
-publish_result() {
-    local classification
-    classification=$(classify_verified_result)
-    local verified_manifest="$RECONCILE_VERIFIED_RESULT_DIR/manifest.json"
-    [[ "$classification" != "automation" ]] || return 0
-    git check-ref-format "refs/heads/$RECONCILE_STATE_BRANCH" >/dev/null 2>&1 \
-        || reconcile_error "state branch is invalid"
-    if [[ "$classification" == "success" ]]; then
-        : "${RECONCILE_DRY_RUN:?RECONCILE_DRY_RUN must be set}"
-        [[ "$RECONCILE_DRY_RUN" == "true" || "$RECONCILE_DRY_RUN" == "false" ]] \
-            || reconcile_error "dry-run must be true or false"
-        construct_update_commits
-        [[ "$RECONCILE_DRY_RUN" == "true" ]] && return
-        publish_update_ref
-        : "${RECONCILE_REPOSITORY:?RECONCILE_REPOSITORY must be set}"
-        : "${GH_TOKEN:?GH_TOKEN must be set}"
-        reconcile_success_lifecycle "$verified_manifest"
-        return
-    fi
-    [[ "$classification" == "no-change" \
-        || "$classification" == "branch-update" || "$classification" == "branch-init" \
-        || "$classification" == "branch-format" \
-        || "$classification" == "branch-validation" ]] \
-        || reconcile_error "verified result classification is not supported"
-    : "${RECONCILE_DRY_RUN:?RECONCILE_DRY_RUN must be set}"
-    [[ "$RECONCILE_DRY_RUN" == "true" || "$RECONCILE_DRY_RUN" == "false" ]] \
-        || reconcile_error "dry-run must be true or false"
-    [[ "$RECONCILE_DRY_RUN" == "true" ]] && return
-    : "${RECONCILE_REPOSITORY:?RECONCILE_REPOSITORY must be set}"
-    : "${GH_TOKEN:?GH_TOKEN must be set}"
-    if [[ "$classification" == "no-change" ]]; then
-        close_marked_pr
-        close_marked_issue
-        return
-    fi
-    reconcile_failure_lifecycle "$classification" "$verified_manifest"
-}
-
-if [[ "${1:-}" == "--help" ]]; then
-    usage
-    exit 0
-fi
-if [[ "${1:-}" == "verify" && $# -eq 1 ]]; then
-    trap cleanup_reconcile_temporaries EXIT
-    verify_result
-    exit 0
-fi
-if [[ "${1:-}" == "classify" && $# -eq 1 ]]; then
-    classify_verified_result
-    exit 0
-fi
-if [[ "${1:-}" == "publish" && $# -eq 1 ]]; then
-    trap cleanup_reconcile_temporaries EXIT
+if [[ "${1-}" == --help && $# -eq 1 ]]; then usage; exit 0; fi
+trap cleanup_reconcile_temporaries EXIT
+if [[ "${1-}" == classify && $# -eq 1 ]]; then
+    validate_result
+    printf '%s\n' "$CLASSIFICATION"
+elif [[ "${1-}" == publish && $# -eq 1 ]]; then
     publish_result
-    exit 0
-fi
-
-usage >&2
-exit 2
+else usage >&2; exit 2; fi
