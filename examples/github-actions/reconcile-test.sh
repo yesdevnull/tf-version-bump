@@ -236,6 +236,10 @@ setup_gh_capture() {
     cat >"$FIXTURE_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ $# -lt 2 ]]; then
+    echo 'gh capture requires a command and subcommand' >&2
+    exit 2
+fi
 printf '%s\n' "$*" >>"${GH_CAPTURE_DIR:?}/calls"
 if [[ "$1 $2" == "pr list" ]]; then
     if [[ -f "$GH_CAPTURE_DIR/fail-pr-list" ]]; then
