@@ -2881,9 +2881,9 @@ test_processing_success_manifest_records_correct_mode_for_glob_metacharacter_pat
         || fail "manifest recorded the wrong mode for a glob-metacharacter changed path"
 }
 
-test_processing_no_change_runs_validation_and_skips_publication_mutation() {
+test_processing_no_change_runs_validation_and_dry_run_skips_publication_mutation() {
     # Production break caught: an unchanged provider-free root emits an empty candidate patch,
-    # skips validation, or reaches commit/ref/GitHub publication instead of completing neutrally.
+    # skips validation, or reaches commit/ref/GitHub mutation during dry-run publication.
     setup_processing_workspace
     printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' \
         >"$PROCESS_TARGET_CHECKOUT/root/main.tf"
@@ -2951,15 +2951,15 @@ EOF
         RECONCILE_REPOSITORY="" \
         RECONCILE_COMMIT_AUTHOR_NAME="" \
         RECONCILE_COMMIT_AUTHOR_EMAIL="" \
-        RECONCILE_DRY_RUN=false \
+        RECONCILE_DRY_RUN=true \
         GH_TOKEN="" \
         "$RECONCILE_SCRIPT" publish
     [[ "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" rev-parse HEAD)" == "$before_head" \
         && "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" show-ref)" == "$before_refs" \
         && "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" status --porcelain=v1)" == "$before_status" ]] \
-        || fail "no-change publication mutated local Git state"
+        || fail "no-change dry-run publication mutated local Git state"
     [[ ! -e "$PROCESS_RUNNER_TEMP/gh-called" ]] \
-        || fail "no-change publication called GitHub"
+        || fail "no-change dry-run publication called GitHub"
 
     yq -o=json '.jobs' "$REUSABLE_WORKFLOW" | jq -e '
         any(.prepare.steps[]; .name == "Confirm preparation classification" and
@@ -3795,7 +3795,7 @@ if [[ $# -eq 0 ]]; then
     TEST_GIT="$TEST_GIT" "$RECONCILE_TEST"
     test_processing_path_and_workspace_safety
     test_processing_preparation
-    test_processing_no_change_runs_validation_and_skips_publication_mutation
+    test_processing_no_change_runs_validation_and_dry_run_skips_publication_mutation
     test_processing_validation
     test_discovery_resolves_origin_from_control_checkout
     test_discovery_uses_runner_git_not_a_workstation_shim
