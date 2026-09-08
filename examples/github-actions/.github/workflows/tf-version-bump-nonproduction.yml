@@ -14,6 +14,10 @@ on:
         description: Run all local stages without publishing Git or GitHub changes
         type: boolean
         default: false
+      terraform_init_upgrade:
+        description: Upgrade dependencies within their version constraints during preparation
+        type: boolean
+        default: false
   schedule:
     - cron: "17 4 * * 1"
       timezone: Australia/Melbourne
@@ -45,6 +49,7 @@ jobs:
       config_path: .github/tf-version-bump/nonproduction.yml
       terraform_directories: .
       terraform_fmt: true
+      terraform_init_upgrade: ${{ github.event_name == 'workflow_dispatch' && inputs.terraform_init_upgrade || false }}
       terraform_version: 1.15.5
       tf_version_bump_version: v1.0.0-rc.11
       tf_version_bump_archive_sha256: 5560b45e220650e8b18d5836eff05d471f602a6ac970aeeb9628781797f54c85
