@@ -26,14 +26,6 @@ sha256_file() {
     printf '%s\n' "${digest%% *}"
 }
 
-
-sha256_file() {
-    local digest
-    digest=$(sha256sum "$1")
-    printf '%s\n' "${digest%% *}"
-}
-
-
 fixture_commit() {
     local checkout=$1 message=$2
     shift 2
@@ -401,6 +393,8 @@ test_failure_issue_create_reopen_and_invalid_status() {
             [[ ! -f "$FIXTURE_GH_CAPTURE/calls" ]] || fail 'invalid failure cleaned up records'
         else
             RECONCILE_DRY_RUN=false assert_silent_success "failure $mode" "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" run_publish
+            grep -F 'Status: <code>1</code>' "$FIXTURE_GH_CAPTURE/issue-body" >/dev/null \
+                || fail 'failure status is not formatted as code'
             if [[ "$mode" == create ]]; then
                 grep -F 'issue create ' "$FIXTURE_GH_CAPTURE/calls" >/dev/null || fail 'failure issue not created'
             else
@@ -410,7 +404,6 @@ test_failure_issue_create_reopen_and_invalid_status() {
     done
 }
 
-trap cleanup EXIT
 if [[ $# -eq 0 ]]; then
     tests=(test_publishes_one_owned_commit_from_exact_base test_result_validation_prevents_mutation
         test_rejects_unsafe_candidate_paths_and_modes test_publication_refuses_moved_base_and_foreign_update

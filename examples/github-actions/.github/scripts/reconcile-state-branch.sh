@@ -193,7 +193,7 @@ write_github_body() {
         printf '\nStage: %s\n\nRoot: %s\n\nStatus: %s\n' \
             "$(html_code "$(jq -r '.failure.stage' "$MANIFEST")")" \
             "$(html_code "$(jq -r '.failure.root' "$MANIFEST")")" \
-            "$(jq -r '.failure.status' "$MANIFEST")" >>"$body"
+            "$(html_code "$(jq -r '.failure.status' "$MANIFEST")")" >>"$body"
     fi
 }
 
