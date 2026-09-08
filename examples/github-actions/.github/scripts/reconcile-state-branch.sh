@@ -991,17 +991,27 @@ marked_pr_number() {
     local marker=$1 response
     response=$(gh pr list --repo "$RECONCILE_REPOSITORY" --state open \
         --head "update_$RECONCILE_STATE_BRANCH" --base "$RECONCILE_STATE_BRANCH" \
-        --json number,body)
+        --json number,body) || return 1
     [[ -n "$response" ]] || response='[]'
     jq -r --arg marker "$marker" \
         '[.[] | select((.body // "") | contains($marker)) | .number] | first // empty' \
         <<<"$response"
 }
 
+close_marked_pr() {
+    local pr_number
+    pr_number=$(marked_pr_number "$(github_marker)") \
+        || reconcile_error "could not look up marked update pull request"
+    if [[ -n "$pr_number" ]]; then
+        gh pr close "$pr_number" --repo "$RECONCILE_REPOSITORY" >/dev/null \
+            || reconcile_error "could not close marked update pull request"
+    fi
+}
+
 marked_issue_record() {
     local marker=$1 response
     response=$(gh issue list --repo "$RECONCILE_REPOSITORY" --state all \
-        --search "$RECONCILE_REF_HASH in:body" --limit 100 --json number,body,closed)
+        --search "$RECONCILE_REF_HASH in:body" --limit 100 --json number,body,closed) || return 1
     [[ -n "$response" ]] || response='[]'
     jq -r --arg marker "$marker" \
         '[.[] | select((.body // "") | contains($marker))] | first // {} |
@@ -1009,9 +1019,20 @@ marked_issue_record() {
         <<<"$response"
 }
 
+close_marked_issue() {
+    local record issue_number issue_closed
+    record=$(marked_issue_record "$(github_marker)") \
+        || reconcile_error "could not look up marked failure issue"
+    read -r issue_number issue_closed <<<"$record"
+    if [[ -n "$issue_number" && "$issue_closed" != "true" ]]; then
+        gh issue close "$issue_number" --repo "$RECONCILE_REPOSITORY" >/dev/null \
+            || reconcile_error "could not close marked failure issue"
+    fi
+}
+
 reconcile_success_lifecycle() {
     local verified_manifest=$1
-    local marker payload_dir body_file pr_number issue_number issue_closed
+    local marker payload_dir body_file pr_number
     local branch_html base_html policy_html modules_html providers_html
     local update_count_html format_count_html relative_path
     marker=$(github_marker)
@@ -1049,9 +1070,7 @@ reconcile_success_lifecycle() {
             --head "update_$RECONCILE_STATE_BRANCH" --base "$RECONCILE_STATE_BRANCH" \
             --title "Terraform dependency update" --body-file "$body_file" >/dev/null
     fi
-    read -r issue_number issue_closed < <(marked_issue_record "$marker")
-    [[ -z "$issue_number" || "$issue_closed" == "true" ]] \
-        || gh issue close "$issue_number" --repo "$RECONCILE_REPOSITORY" >/dev/null
+    close_marked_issue
     rm -rf -- "$payload_dir"
     RECONCILE_TEMPORARY_PATH=""
 }
@@ -1061,6 +1080,7 @@ reconcile_failure_lifecycle() {
     local marker payload_dir body_file issue_number issue_closed
     local branch_html classification_html base_html run_id_html run_attempt_html
     local stage root status run_url stage_html root_html status_html run_url_html run_url_href
+    close_marked_pr
     marker=$(github_marker)
     branch_html=$(html_code "$RECONCILE_STATE_BRANCH")
     classification_html=$(html_code "$classification")
@@ -1101,7 +1121,7 @@ publish_result() {
     local classification
     classification=$(classify_verified_result)
     local verified_manifest="$RECONCILE_VERIFIED_RESULT_DIR/manifest.json"
-    [[ "$classification" != "no-change" && "$classification" != "automation" ]] || return 0
+    [[ "$classification" != "automation" ]] || return 0
     git check-ref-format "refs/heads/$RECONCILE_STATE_BRANCH" >/dev/null 2>&1 \
         || reconcile_error "state branch is invalid"
     if [[ "$classification" == "success" ]]; then
@@ -1116,7 +1136,8 @@ publish_result() {
         reconcile_success_lifecycle "$verified_manifest"
         return
     fi
-    [[ "$classification" == "branch-update" || "$classification" == "branch-init" \
+    [[ "$classification" == "no-change" \
+        || "$classification" == "branch-update" || "$classification" == "branch-init" \
         || "$classification" == "branch-format" \
         || "$classification" == "branch-validation" ]] \
         || reconcile_error "verified result classification is not supported"
@@ -1126,6 +1147,11 @@ publish_result() {
     [[ "$RECONCILE_DRY_RUN" == "true" ]] && return
     : "${RECONCILE_REPOSITORY:?RECONCILE_REPOSITORY must be set}"
     : "${GH_TOKEN:?GH_TOKEN must be set}"
+    if [[ "$classification" == "no-change" ]]; then
+        close_marked_pr
+        close_marked_issue
+        return
+    fi
     reconcile_failure_lifecycle "$classification" "$verified_manifest"
 }
 

@@ -1,14 +1,14 @@
 # GitHub Actions state-branch automation POC
 
-This copyable proof of concept discovers selected Terraform state branches, prepares and validates one candidate per branch, verifies the result, then opens or refreshes a pull request when files change. The reusable workflow has four jobs: `discover`, `prepare`, `validate`, and `publish`. An unchanged branch still validates every configured root and finishes without a commit, Git ref mutation, or GitHub mutation. Update, initialisation, formatting, and validation failures create or refresh a marked issue instead.
+This copyable proof of concept discovers selected Terraform state branches, prepares and validates one candidate per branch, verifies the result, then opens or refreshes a pull request when files change. The reusable workflow has four jobs: `discover`, `prepare`, `validate`, and `publish`. An unchanged branch still validates every configured root and finishes without a commit or Git ref mutation; live publication closes any marked update pull request and resolves any marked failure issue. Update, initialisation, formatting, and validation failures close the marked update pull request before creating or refreshing a marked issue.
 
 ## Operating assumptions and limits
 
 Use this POC only where Terraform modules are written by your organisation, providers are official HashiCorp providers or organisation-developed providers, and provider/module egress is controlled by an NVA. The scripts do not sandbox malicious Terraform, providers, or modules; private and first-party providers are trusted code that can execute in the runner, and private and first-party module sources are trusted code. Post-Terraform checks run on the same runner and detect only accidental or non-adversarial mutation. Untrusted provider or module code requires independent verification or isolation. A successful validation is only the observed result of Terraform in that run.
 
-It intentionally omits comprehensive hostile-content defence, recovery after interrupted publication, automatic clean-up, and exhaustive publication-race handling. A lease or ownership failure is reported for the next run to handle. Review the workflow and helper scripts before using them with a different trust model.
+It intentionally omits comprehensive hostile-content defence, recovery after interrupted publication, automatic update-ref deletion, and exhaustive publication-race handling. A lease or ownership failure is reported for the next run to handle. Review the workflow and helper scripts before using them with a different trust model.
 
-The no-change result does not remove an update branch or close an existing pull request left by an earlier run. That reconciliation remains deferred with the other automatic clean-up work.
+Pull-request cleanup matches the policy/branch marker and the expected head and base branches. Update refs are retained. Dry runs do not change GitHub records, and automation failures or invalid/unverified artefacts do not trigger cleanup. A pull-request lookup or closure failure stops publication before issue reconciliation.
 
 Both Terraform jobs install the pinned Terraform CLI with `hashicorp/setup-terraform` and run it directly. Docker is not a workflow prerequisite or production validation boundary. The repository harness uses a Docker container only as reproducible local Linux/Terraform test infrastructure, where the helper is deliberately run without a Docker executable.
 
