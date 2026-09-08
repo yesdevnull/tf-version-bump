@@ -3,18 +3,10 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REPOSITORY_ROOT=$(realpath "$SCRIPT_DIR/../..")
-ACTIONLINT="$SCRIPT_DIR/../../scripts/run-actionlint.sh"
 DISCOVER_SCRIPT="$SCRIPT_DIR/.github/scripts/discover-state-branches.sh"
 PROCESS_SCRIPT="$SCRIPT_DIR/.github/scripts/process-state-branch.sh"
-RECONCILE_SCRIPT="$SCRIPT_DIR/.github/scripts/reconcile-state-branch.sh"
 RECONCILE_TEST="$SCRIPT_DIR/reconcile-test.sh"
 REUSABLE_WORKFLOW="$SCRIPT_DIR/.github/workflows/tf-version-bump-reusable.yml"
-NONPRODUCTION_WORKFLOW="$SCRIPT_DIR/.github/workflows/tf-version-bump-nonproduction.yml"
-PRODUCTION_WORKFLOW="$SCRIPT_DIR/.github/workflows/tf-version-bump-production.yml"
-CONFIG_VALIDATION_WORKFLOW="$SCRIPT_DIR/.github/workflows/tf-version-bump-config-validation.yml"
-NONPRODUCTION_CONFIG="$SCRIPT_DIR/.github/tf-version-bump/nonproduction.yml"
-PRODUCTION_CONFIG="$SCRIPT_DIR/.github/tf-version-bump/production.yml"
 TEST_GIT=${TEST_GIT-git}
 
 DISCOVERY_TMP_ROOT=""
@@ -26,22 +18,20 @@ PROCESS_TMP_ROOT=""
 PROCESS_CONTROL_CHECKOUT=""
 PROCESS_TARGET_CHECKOUT=""
 PROCESS_RUNNER_TEMP=""
-PROCESS_PREPARATION_BUNDLE_DIR=""
-PROCESS_VALIDATION_OUTCOME_DIR=""
+PROCESS_RESULT_DIR=""
 PROCESS_VALIDATION_FIXTURE_ROOT=""
 PROCESS_CONTAINER_ID=""
 PROCESS_PATH_PREFIX=""
 PROCESS_TEST_CALL_LOG=""
-SUCCESSFUL_PREPARATION_READY=false
 
 TEST_TMP_ROOT=$(mktemp -d)
 TEST_TMP_ROOT=$(realpath "$TEST_TMP_ROOT")
 
 TF_VERSION_BUMP_VERSION="v1.0.0-rc.11"
 TF_VERSION_BUMP_ARCHIVE_SHA256="5560b45e220650e8b18d5836eff05d471f602a6ac970aeeb9628781797f54c85"
+# Release-pin tooling maintains this explicit URL alongside the runtime digest.
+# shellcheck disable=SC2034
 TF_VERSION_BUMP_ARCHIVE_URL="https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0-rc.11/tf-version-bump_1.0.0-rc.11_linux_x86_64.tar.gz"
-TF_VERSION_BUMP_PREFETCH_CONNECT_TIMEOUT_SECONDS=10
-TF_VERSION_BUMP_PREFETCH_MAX_TIME_SECONDS=120
 TERRAFORM_VERSION="1.15.5"
 TERRAFORM_IMAGE="hashicorp/terraform:1.15.5@sha256:15bf5a08b1fb9c9747c8ff01098aeeefb4aec9a6c24eb13e7661bdf9447e4aee"
 
@@ -50,11 +40,13 @@ fail() {
     exit 1
 }
 
+
 sha256_file() {
     local digest
     digest=$(sha256sum "$1")
     printf '%s\n' "${digest%% *}"
 }
+
 
 fixture_commit() {
     local checkout=$1 author_name=$2 author_email=$3 message=$4
@@ -65,38 +57,13 @@ fixture_commit() {
         commit "$@" -m "$message" >/dev/null
 }
 
-# Writes an executable fake `terraform` at $1 that answers `version -json` with the pinned
-# 1.15.5 fixture version (delayed by $3 seconds if given) and runs $2 -- a literal script body,
-# captured by the caller from a quoted heredoc so its own `$`-references stay unevaluated until
-# the stub itself runs -- for every other invocation.
-write_terraform_stub() {
-    local path=$1 body=$2 version_delay_seconds=${3-0}
-    local sleep_line=""
-    [[ "$version_delay_seconds" -eq 0 ]] || sleep_line="    sleep $version_delay_seconds"$'\n'
-    local preamble
-    preamble=$(cat <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-if [[ "${1:-}" == "version" && "${2:-}" == "-json" ]]; then
-__SLEEP_LINE__    printf '%s\n' '{"terraform_version":"1.15.5"}'
-    exit 0
-fi
-EOF
-    )
-    {
-        printf '%s\n' "${preamble/__SLEEP_LINE__/$sleep_line}"
-        printf '\n%s\n' "$body"
-    } >"$path"
-    chmod 755 "$path"
-}
-
 
 cleanup_discovery_repository() {
     if [[ -n "$DISCOVERY_TMP_ROOT" ]]; then
         rm -rf -- "$DISCOVERY_TMP_ROOT"
     fi
 }
+
 
 cleanup_processing_workspace() {
     if [[ -n "$PROCESS_TMP_ROOT" ]]; then
@@ -106,12 +73,14 @@ cleanup_processing_workspace() {
     fi
 }
 
+
 cleanup_processing_container() {
     if [[ -n "$PROCESS_CONTAINER_ID" ]]; then
         docker rm --force "$PROCESS_CONTAINER_ID" >/dev/null 2>&1 || true
         PROCESS_CONTAINER_ID=""
     fi
 }
+
 
 ensure_processing_container() {
     if [[ -n "$PROCESS_CONTAINER_ID" ]]; then
@@ -146,6 +115,7 @@ ensure_processing_container() {
         'command -v curl >/dev/null && command -v jq >/dev/null && command -v timeout >/dev/null'
 }
 
+
 setup_processing_workspace() {
     cleanup_processing_workspace
     unset PROCESS_CONFIG_PATH PROCESS_TERRAFORM_ROOTS RUNNER_TEMP
@@ -159,7 +129,6 @@ setup_processing_workspace() {
     unset TF_CLI_CONFIG_FILE
     PROCESS_PATH_PREFIX=""
     PROCESS_TEST_CALL_LOG=""
-    SUCCESSFUL_PREPARATION_READY=false
     PROCESS_TMP_ROOT=$(mktemp -d "$TEST_TMP_ROOT/processing.XXXXXX")
     PROCESS_TMP_ROOT=$(realpath "$PROCESS_TMP_ROOT")
     PROCESS_CONTROL_CHECKOUT="$PROCESS_TMP_ROOT/control"
@@ -185,9 +154,9 @@ setup_processing_workspace() {
     fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: create processing fixture"
 
     PROCESS_STATE_BRANCH="state/nonproduction/example-thing"
-    PROCESS_PREPARATION_BUNDLE_DIR="$PROCESS_RUNNER_TEMP/preparation-bundle"
-    PROCESS_VALIDATION_OUTCOME_DIR="$PROCESS_RUNNER_TEMP/validation-outcome"
+    PROCESS_RESULT_DIR="$PROCESS_RUNNER_TEMP/result"
 }
+
 
 build_validation_provider_fixture() {
     local fixture_source="$SCRIPT_DIR/test-fixtures/test-provider"
@@ -213,6 +182,7 @@ EOF
     TF_CLI_CONFIG_FILE="$PROCESS_VALIDATION_FIXTURE_ROOT/terraform.rc"
 }
 
+
 write_validation_provider_configuration() {
     cat >"$PROCESS_TARGET_CHECKOUT/root/main.tf" <<'EOF'
 terraform {
@@ -227,6 +197,7 @@ terraform {
 }
 EOF
 }
+
 
 configure_validation_provider_base() {
     build_validation_provider_fixture
@@ -252,6 +223,7 @@ configure_validation_provider_base() {
     fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add validation provider"
 }
 
+
 configure_validation_provider_base_without_lock() {
     build_validation_provider_fixture
     write_validation_provider_configuration
@@ -260,215 +232,7 @@ configure_validation_provider_base_without_lock() {
         "processing-test@example.invalid" "test: add lock-free validation provider"
 }
 
-create_validation_candidate_bundle() {
-    local add_provider_lock=${1-false}
-    local candidate_checkout="$PROCESS_TMP_ROOT/candidate"
-    "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$candidate_checkout"
-    sed -i.bak 's/>= 1\.0/>= 1.15.0/' "$candidate_checkout/root/main.tf"
-    rm "$candidate_checkout/root/main.tf.bak"
-    if [[ "$add_provider_lock" == "true" ]]; then
-        local lock_data="$PROCESS_RUNNER_TEMP/candidate-lock-data"
-        mkdir -m 700 "$lock_data"
-        docker run --rm \
-            --platform linux/amd64 \
-            --user "$(id -u):$(id -g)" \
-            --volume "$candidate_checkout:/workspace" \
-            --volume "$lock_data:/terraform-data" \
-            --volume "$PROCESS_VALIDATION_FIXTURE_ROOT:$PROCESS_VALIDATION_FIXTURE_ROOT:ro" \
-            --env TF_DATA_DIR=/terraform-data \
-            --env "TF_CLI_CONFIG_FILE=$PROCESS_VALIDATION_FIXTURE_ROOT/terraform.rc" \
-            --entrypoint terraform \
-            "$TERRAFORM_IMAGE" \
-            -chdir=/workspace/root init -backend=false -input=false -no-color \
-            >"$PROCESS_TMP_ROOT/candidate-lock-init.stdout" \
-            2>"$PROCESS_TMP_ROOT/candidate-lock-init.stderr"
-        rm -rf "$lock_data"
-        "$TEST_GIT" -C "$candidate_checkout" add -N -- "root/.terraform.lock.hcl"
-    fi
 
-    mkdir -m 700 "$PROCESS_PREPARATION_BUNDLE_DIR"
-    mkdir -m 700 "$PROCESS_PREPARATION_BUNDLE_DIR/logs"
-    "$TEST_GIT" -C "$candidate_checkout" diff --binary --full-index --no-color \
-        >"$PROCESS_PREPARATION_BUNDLE_DIR/update.patch"
-    local patch_sha256
-    patch_sha256=$(sha256_file "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch")
-    local main_sha256
-    main_sha256=$(sha256_file "$candidate_checkout/root/main.tf")
-    local lock_sha256=""
-    if [[ "$add_provider_lock" == "true" ]]; then
-        lock_sha256=$(sha256_file "$candidate_checkout/root/.terraform.lock.hcl")
-    fi
-    local ref_hash
-    ref_hash=$(processing_ref_hash)
-    jq -n \
-        --arg run_id "123456" \
-        --arg run_attempt "2" \
-        --arg policy "nonproduction" \
-        --arg control_oid "$(processing_control_oid)" \
-        --arg state_branch "$PROCESS_STATE_BRANCH" \
-        --arg base_oid "$(processing_base_oid)" \
-        --arg ref_hash "$ref_hash" \
-        --arg patch_sha256 "$patch_sha256" \
-        --arg main_sha256 "$main_sha256" \
-        --arg lock_sha256 "$lock_sha256" \
-        --arg tf_version_bump_version "$TF_VERSION_BUMP_VERSION" \
-        --arg tf_version_bump_archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" \
-        '{schema_version: 2,
-          run_id: $run_id,
-          run_attempt: $run_attempt,
-          automation_policy_id: $policy,
-          control_oid: $control_oid,
-          state_branch: $state_branch,
-          base_oid: $base_oid,
-          ref_hash: $ref_hash,
-          config_path: ".github/tf-version-bump/test.yml",
-          tools: {
-            tf_version_bump: {
-              version: $tf_version_bump_version,
-              archive_sha256: $tf_version_bump_archive_sha256
-            },
-            terraform: {version: "1.15.5"}
-          },
-          roots: [{path: "root"}],
-          artifact_name: ("preparation-123456-2-nonproduction-" + $ref_hash),
-          classification: "success",
-          terraform_fmt: false,
-          updates: {
-            module_blocks_updated: 0,
-            provider_blocks_updated: 0,
-            changed_files: (
-              (if $lock_sha256 == "" then [] else
-                 [{path: "root/.terraform.lock.hcl", mode: "100644", sha256: $lock_sha256}]
-               end) +
-              [{path: "root/main.tf", mode: "100644", sha256: $main_sha256}]
-            ),
-            patch_sha256: $patch_sha256
-          },
-          formatting: {ran: false, changed_files: []},
-          final_changed_files: (
-            (if $lock_sha256 == "" then [] else
-               [{path: "root/.terraform.lock.hcl", mode: "100644", sha256: $lock_sha256}]
-             end) +
-            [{path: "root/main.tf", mode: "100644", sha256: $main_sha256}]
-          )}' \
-        >"$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-    chmod 444 \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-
-    local validation_checkout="$PROCESS_TMP_ROOT/validation"
-    "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$validation_checkout"
-    PROCESS_TARGET_CHECKOUT="$validation_checkout"
-}
-
-create_two_stage_validation_candidate_bundle() {
-    mkdir -p "$PROCESS_TARGET_CHECKOUT/root/nested"
-    printf '%s\n' 'locals { nested={value="base"} }' \
-        >"$PROCESS_TARGET_CHECKOUT/root/nested/child.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/nested/child.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
-        "processing-test@example.invalid" "test: add two-stage validation fixture"
-
-    local candidate_checkout="$PROCESS_TMP_ROOT/two-stage-candidate"
-    "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$candidate_checkout"
-    printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' \
-        >"$candidate_checkout/root/main.tf"
-    "$TEST_GIT" -C "$candidate_checkout" add -- "root/main.tf"
-    local base_tree update_tree
-    base_tree=$("$TEST_GIT" -C "$candidate_checkout" rev-parse 'HEAD^{tree}')
-    update_tree=$("$TEST_GIT" -C "$candidate_checkout" write-tree)
-    local update_main_sha256
-    update_main_sha256=$(sha256_file "$candidate_checkout/root/main.tf")
-
-    mkdir -m 700 "$PROCESS_PREPARATION_BUNDLE_DIR"
-    mkdir -m 700 "$PROCESS_PREPARATION_BUNDLE_DIR/logs"
-    "$TEST_GIT" -C "$candidate_checkout" diff --binary --full-index --no-color \
-        "$base_tree" "$update_tree" >"$PROCESS_PREPARATION_BUNDLE_DIR/update.patch"
-
-    cat >"$candidate_checkout/root/main.tf" <<'EOF'
-terraform {
-  required_version = ">= 1.15.0"
-}
-EOF
-    cat >"$candidate_checkout/root/nested/child.tf" <<'EOF'
-locals {
-  nested = { value = "base" }
-}
-EOF
-    "$TEST_GIT" -C "$candidate_checkout" add -- \
-        "root/main.tf" "root/nested/child.tf"
-    local final_tree
-    final_tree=$("$TEST_GIT" -C "$candidate_checkout" write-tree)
-    "$TEST_GIT" -C "$candidate_checkout" diff --binary --full-index --no-color \
-        "$update_tree" "$final_tree" >"$PROCESS_PREPARATION_BUNDLE_DIR/format.patch"
-
-    local update_patch_sha256 format_patch_sha256 final_main_sha256 final_nested_sha256
-    update_patch_sha256=$(sha256_file "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch")
-    format_patch_sha256=$(sha256_file "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch")
-    final_main_sha256=$(sha256_file "$candidate_checkout/root/main.tf")
-    final_nested_sha256=$(sha256_file "$candidate_checkout/root/nested/child.tf")
-    local ref_hash
-    ref_hash=$(processing_ref_hash)
-    jq -n \
-        --arg control_oid "$(processing_control_oid)" \
-        --arg state_branch "$PROCESS_STATE_BRANCH" \
-        --arg base_oid "$(processing_base_oid)" \
-        --arg ref_hash "$ref_hash" \
-        --arg update_patch_sha256 "$update_patch_sha256" \
-        --arg format_patch_sha256 "$format_patch_sha256" \
-        --arg update_main_sha256 "$update_main_sha256" \
-        --arg final_main_sha256 "$final_main_sha256" \
-        --arg final_nested_sha256 "$final_nested_sha256" \
-        --arg tf_version_bump_version "$TF_VERSION_BUMP_VERSION" \
-        --arg tf_version_bump_archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" \
-        '{schema_version: 2, run_id: "123456", run_attempt: "2",
-          automation_policy_id: "nonproduction", control_oid: $control_oid,
-          state_branch: $state_branch, base_oid: $base_oid, ref_hash: $ref_hash,
-          config_path: ".github/tf-version-bump/test.yml",
-          tools: {
-            tf_version_bump: {
-              version: $tf_version_bump_version,
-              archive_sha256: $tf_version_bump_archive_sha256
-            },
-            terraform: {version: "1.15.5"}
-          },
-          roots: [{path: "root"}],
-          artifact_name: ("preparation-123456-2-nonproduction-" + $ref_hash),
-          classification: "success",
-          terraform_fmt: true,
-          updates: {
-            module_blocks_updated: 0,
-            provider_blocks_updated: 0,
-            changed_files: [
-              {path: "root/main.tf", mode: "100644", sha256: $update_main_sha256}
-            ],
-            patch_sha256: $update_patch_sha256
-          },
-          formatting: {
-            ran: true,
-            changed_files: [
-              {path: "root/main.tf", mode: "100644", sha256: $final_main_sha256},
-              {path: "root/nested/child.tf", mode: "100644", sha256: $final_nested_sha256}
-            ],
-            patch_sha256: $format_patch_sha256
-          },
-          final_changed_files: [
-            {path: "root/main.tf", mode: "100644", sha256: $final_main_sha256},
-            {path: "root/nested/child.tf", mode: "100644", sha256: $final_nested_sha256}
-          ]}' >"$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-    chmod 444 \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch" \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-
-    local validation_checkout="$PROCESS_TMP_ROOT/two-stage-validation"
-    "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$validation_checkout"
-    PROCESS_TARGET_CHECKOUT="$validation_checkout"
-}
-
-# Populates the PROCESSING_SHARED_DOCKER_ENV array with the `docker exec --env ...` pairs common
-# to both run_processing_prepare and run_processing_validate (run identity, immutable state-branch
-# lineage, the pinned Terraform version, RUNNER_TEMP, and PATH).
 processing_shared_docker_env() {
     PROCESSING_SHARED_DOCKER_ENV=(
         --env "PROCESS_RUN_ID=${PROCESS_RUN_ID-123456}"
@@ -484,34 +248,16 @@ processing_shared_docker_env() {
     )
 }
 
-run_processing_validate() {
-    ensure_processing_container
-    processing_shared_docker_env
-    docker exec \
-        --user "$(id -u):$(id -g)" \
-        --env GIT_CONFIG_COUNT=1 \
-        --env GIT_CONFIG_KEY_0=safe.directory \
-        --env "GIT_CONFIG_VALUE_0=$PROCESS_TARGET_CHECKOUT" \
-        --env "PROCESS_TARGET_CHECKOUT=$PROCESS_TARGET_CHECKOUT" \
-        --env "PROCESS_PREPARATION_BUNDLE_DIR=$PROCESS_PREPARATION_BUNDLE_DIR" \
-        --env "PROCESS_VALIDATION_OUTCOME_DIR=$PROCESS_VALIDATION_OUTCOME_DIR" \
-        --env "PROCESS_CONFIG_PATH=${PROCESS_CONFIG_PATH-.github/tf-version-bump/test.yml}" \
-        --env "PROCESS_TF_VERSION_BUMP_VERSION=${PROCESS_TF_VERSION_BUMP_VERSION-$TF_VERSION_BUMP_VERSION}" \
-        --env "PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256=${PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256-$TF_VERSION_BUMP_ARCHIVE_SHA256}" \
-        --env "PROCESS_VALIDATION_DEADLINE_EPOCH=${PROCESS_VALIDATION_DEADLINE_EPOCH-$(($(date +%s) + 1200))}" \
-        "${PROCESSING_SHARED_DOCKER_ENV[@]}" \
-        --env "TF_CLI_CONFIG_FILE=${TF_CLI_CONFIG_FILE-}" \
-        "$PROCESS_CONTAINER_ID" \
-        /bin/bash "$PROCESS_SCRIPT" validate
-}
 
 processing_control_oid() {
     "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" rev-parse HEAD
 }
 
+
 processing_base_oid() {
     "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" rev-parse HEAD
 }
+
 
 processing_ref_hash() {
     local ref_hash
@@ -519,7 +265,8 @@ processing_ref_hash() {
     printf '%s\n' "${ref_hash%% *}"
 }
 
-run_processing_prepare() {
+
+run_processing() {
     ensure_processing_container
     processing_shared_docker_env
     local -a upgrade_environment=()
@@ -544,113 +291,27 @@ run_processing_prepare() {
         "${upgrade_environment[@]}" \
         --env "TF_CLI_CONFIG_FILE=${TF_CLI_CONFIG_FILE-}" \
         --env "PROCESS_PREPARATION_DEADLINE_EPOCH=${PROCESS_PREPARATION_DEADLINE_EPOCH-$(($(date +%s) + 1200))}" \
-        --env "PROCESS_PREPARATION_BUNDLE_DIR=${PROCESS_PREPARATION_BUNDLE_DIR-$PROCESS_RUNNER_TEMP/preparation-bundle}" \
+        --env "PROCESS_RESULT_DIR=${PROCESS_RESULT_DIR-$PROCESS_RUNNER_TEMP/result}" \
         --env "PROCESS_TEST_CALL_LOG=${PROCESS_TEST_CALL_LOG-}" \
         "$PROCESS_CONTAINER_ID" \
-        /bin/bash "$PROCESS_SCRIPT" prepare
+        /bin/bash "$PROCESS_SCRIPT" process
 }
 
-processing_container_file_mode() {
-    local path=$1
-    ensure_processing_container
-    docker exec "$PROCESS_CONTAINER_ID" stat -c '%a' "$path"
-}
 
-prepopulate_verified_processing_release_cache() {
-    local verified_archive="$TEST_TMP_ROOT/${TF_VERSION_BUMP_ARCHIVE_URL##*/}"
-    if [[ ! -f "$verified_archive" ]]; then
-        curl --fail --silent --show-error --location \
-            --connect-timeout "$TF_VERSION_BUMP_PREFETCH_CONNECT_TIMEOUT_SECONDS" \
-            --max-time "$TF_VERSION_BUMP_PREFETCH_MAX_TIME_SECONDS" \
-            --output "$verified_archive" "$TF_VERSION_BUMP_ARCHIVE_URL"
-    fi
-    local actual_sha256
-    actual_sha256=$(sha256_file "$verified_archive")
-    [[ "$actual_sha256" == "$TF_VERSION_BUMP_ARCHIVE_SHA256" ]] \
-        || fail "independently downloaded $TF_VERSION_BUMP_VERSION fixture archive failed checksum verification"
-
-    local cache_directory="$PROCESS_RUNNER_TEMP/tf-version-bump-release-cache"
-    local cached_archive="$cache_directory/$TF_VERSION_BUMP_ARCHIVE_SHA256.tar.gz"
-    mkdir -p "$cache_directory"
-    cp "$verified_archive" "$cached_archive"
-    actual_sha256=$(sha256_file "$cached_archive")
-    [[ "$actual_sha256" == "$TF_VERSION_BUMP_ARCHIVE_SHA256" ]] \
-        || fail "trusted processing fixture cache failed checksum verification"
-}
-
-configure_call_log_terraform_stub() {
-    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
-    mkdir "$fixture_bin"
-    local stub_body
-    stub_body=$(cat <<'EOF'
-printf '%s' 'terraform' >>"${PROCESS_TEST_CALL_LOG:?}"
-for argument in "$@"; do
-    if [[ "$argument" == -chdir="${PROCESS_TARGET_CHECKOUT:?}"/* ]]; then
-        printf ' -chdir=%s' "${argument#-chdir="$PROCESS_TARGET_CHECKOUT"/}" \
-            >>"$PROCESS_TEST_CALL_LOG"
-    else
-        printf ' %s' "$argument" >>"$PROCESS_TEST_CALL_LOG"
-    fi
-done
-printf '\n' >>"$PROCESS_TEST_CALL_LOG"
-exec /bin/terraform "$@"
-EOF
-    )
-    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
-    PROCESS_PATH_PREFIX=$fixture_bin
-    PROCESS_TEST_CALL_LOG="$PROCESS_TMP_ROOT/terraform-calls.log"
-    prepopulate_verified_processing_release_cache
-}
-
-write_controlled_update_report_archive() {
-    local report_payload=$1
-    local fixture_root="$PROCESS_RUNNER_TEMP/controlled-updater"
-    local tool_directory="$fixture_root/tool"
-    local archive="$fixture_root/tf-version-bump.tar.gz"
-    mkdir -p "$tool_directory"
-    cat >"$tool_directory/tf-version-bump" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-if [[ "${1:-}" == "-version" ]]; then
-    printf '%s\n' 'tf-version-bump 1.0.0-test-report'
-    exit 0
-fi
-
-report_file=""
-while [[ $# -gt 0 ]]; do
-    if [[ "$1" == "-report-file" ]]; then
-        report_file=$2
-        break
-    fi
-    shift
-done
-[[ -n "$report_file" ]] || exit 64
-[[ "$(<"${PROCESS_TEST_CALL_LOG:?}")" == "__MISSING__" ]] \
-    || cp -- "$PROCESS_TEST_CALL_LOG" "$report_file"
-EOF
-    chmod 755 "$tool_directory/tf-version-bump"
-    printf '%s' "$report_payload" >"$PROCESS_TMP_ROOT/update-report-payload"
-    PROCESS_TEST_CALL_LOG="$PROCESS_TMP_ROOT/update-report-payload"
-    tar -czf "$archive" -C "$tool_directory" tf-version-bump
-    PROCESS_TF_VERSION_BUMP_VERSION="v1.0.0-test-report"
-    PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256=$(sha256_file "$archive")
-    local cache_directory="$PROCESS_RUNNER_TEMP/tf-version-bump-release-cache"
-    mkdir -p "$cache_directory"
-    cp -- "$archive" "$cache_directory/$PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256.tar.gz"
-}
-
-# Runs $4.. (redirected to $2/$3), asserts it succeeded, and asserts it emitted nothing on
-# either stream.
 assert_silent_success() {
     local description=$1 stdout_file=$2 stderr_file=$3
     shift 3
     if ! "$@" >"$stdout_file" 2>"$stderr_file"; then
+        if [[ -f "$PROCESS_RESULT_DIR/result.json" ]]; then
+            cat "$PROCESS_RESULT_DIR/result.json" >&2
+            find "$PROCESS_RESULT_DIR/logs" -type f -name '*.log' -exec tail -n 12 {} \; >&2
+        fi
         fail "$description failed: $(<"$stderr_file")"
     fi
     [[ ! -s "$stdout_file" && ! -s "$stderr_file" ]] \
         || fail "$description emitted unexpected output: stdout=$(<"$stdout_file") stderr=$(<"$stderr_file")"
 }
+
 
 assert_command_failure() {
     local run_command=$1 tmp_root=$2 stdout_failure_description=$3
@@ -669,10 +330,12 @@ assert_command_failure() {
         || fail "$description did not report '$expected_diagnostic': $diagnostic"
 }
 
+
 assert_processing_failure() {
-    assert_command_failure run_processing_prepare "$PROCESS_TMP_ROOT" \
+    assert_command_failure run_processing "$PROCESS_TMP_ROOT" \
         "emitted unexpected output" "$1" "$2"
 }
+
 
 setup_discovery_repository() {
     cleanup_discovery_repository
@@ -698,16 +361,19 @@ setup_discovery_repository() {
     "$TEST_GIT" -C "$DISCOVERY_REPO" push --quiet --set-upstream origin main
 }
 
+
 add_discovery_branch() {
     local branch=$1
     "$TEST_GIT" -C "$DISCOVERY_REPO" push --quiet origin "HEAD:refs/heads/$branch"
 }
+
 
 create_discovery_commit() {
     local message=$1
     fixture_commit "$DISCOVERY_REPO" "Discovery Test" "discovery-test@example.invalid" "$message" --allow-empty
     "$TEST_GIT" -C "$DISCOVERY_REPO" rev-parse HEAD
 }
+
 
 add_numbered_discovery_branches() {
     local first=$1
@@ -721,6 +387,7 @@ add_numbered_discovery_branches() {
     done
     "$TEST_GIT" --git-dir "$DISCOVERY_REMOTE" update-ref --stdin <"$commands_file"
 }
+
 
 run_discovery() {
     (
@@ -739,6 +406,13 @@ run_discovery() {
             "$DISCOVER_SCRIPT"
     )
 }
+
+
+assert_discovery_failure() {
+    assert_command_failure run_discovery "$DISCOVERY_TMP_ROOT" \
+        "emitted JSON" "$1" "$2"
+}
+
 
 test_discovery_resolves_origin_from_control_checkout() {
     # Production break caught: discovery runs from the workflow workspace but resolves origin from
@@ -771,6 +445,7 @@ test_discovery_resolves_origin_from_control_checkout() {
         "$stdout_file" >/dev/null \
         || fail "control-checkout discovery did not produce the expected branch matrix"
 }
+
 
 test_discovery_uses_runner_git_not_a_workstation_shim() {
     # Production break caught: a workstation-style PATH entry (e.g. an asdf/direnv shim directory
@@ -826,2739 +501,6 @@ EOF
         || fail "ordinary runner Git did not discover the fixture branch: $output"
 }
 
-test_processing_exposes_only_prepare_and_validate() {
-    # Production break caught: the credential-free processing stage still accepts Git transport
-    # modes, instead of rejecting them before any transport input can be consumed.
-    local mode status output
-    output=$("$PROCESS_SCRIPT" --help)
-    [[ "$output" == *"prepare"* && "$output" == *"validate"* \
-        && "$output" != *"authenticated-"* ]] \
-        || fail "processing help did not advertise only preparation and validation"
-
-    for mode in authenticated-fetch authenticated-push-update authenticated-push-delete; do
-        status=0
-        "$PROCESS_SCRIPT" "$mode" >"$TEST_TMP_ROOT/$mode.stdout" \
-            2>"$TEST_TMP_ROOT/$mode.stderr" || status=$?
-        [[ "$status" == 2 ]] || fail "processing accepted removed mode: $mode"
-        [[ "$(<"$TEST_TMP_ROOT/$mode.stderr")" == *"Usage:"* ]] \
-            || fail "processing did not report usage for removed mode: $mode"
-    done
-}
-
-assert_discovery_failure() {
-    assert_command_failure run_discovery "$DISCOVERY_TMP_ROOT" \
-        "emitted JSON" "$1" "$2"
-}
-
-test_actionlint_launcher_reports_pinned_version() {
-    [[ -x "$ACTIONLINT" ]] || fail "actionlint launcher is not executable: $ACTIONLINT"
-
-    local output
-    output=$("$ACTIONLINT" -version)
-    local reported_version
-    reported_version=${output%%$'\n'*}
-    [[ "$reported_version" == "v1.7.12" ]] || fail "actionlint launcher did not report version 1.7.12: $reported_version"
-}
-
-test_example_configs_pass_cli_dry_run() {
-    # Production break caught: a copyable control config stops parsing or no longer drives the
-    # published CLI against a direct Terraform root.
-    local fixture_directory="$TEST_TMP_ROOT/config-cli"
-    local fixture="$fixture_directory/main.tf"
-    mkdir -p "$fixture_directory"
-    cat >"$fixture" <<'EOF'
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "4.0.0"
-}
-EOF
-
-    local config
-    for config in "$NONPRODUCTION_CONFIG" "$PRODUCTION_CONFIG"; do
-        local output
-        output=$(cd "$REPOSITORY_ROOT" && go run . -pattern "$fixture" -config "$config" -dry-run)
-        [[ "$output" == *"Would update provider 'aws' to version '~> 6.0'"* ]] \
-            || fail "control config did not update the fixture provider: $config"
-        [[ "$output" == *"Would update module source 'terraform-aws-modules/vpc/aws' to version '5.0.0'"* ]] \
-            || fail "control config did not update the fixture module: $config"
-    done
-}
-
-test_ci_proves_go_floor_and_builds_on_the_release_toolchain() {
-    # Production break caught: repository CI stops proving that the floor advertised in go.mod
-    # still builds, drifts from the toolchain releases are built with, or stops exercising the
-    # copyable workflow checks with their required Linux test infrastructure.
-    local go_floor release_go
-    go_floor=$(GOWORK=off go -C "$REPOSITORY_ROOT" list -m -f '{{.GoVersion}}' | cut -d. -f1,2)
-    release_go=$(yq -r '
-        .jobs.release.steps[]
-        | select(.uses | test("^actions/setup-go@"))
-        | .with["go-version"]
-    ' "$REPOSITORY_ROOT/.github/workflows/release.yml")
-    yq -o=json '.jobs' "$REPOSITORY_ROOT/.github/workflows/ci.yml" \
-        | jq -e --arg floor "$go_floor" --arg release "$release_go" '
-        .test["runs-on"] == "ubuntu-latest" and
-        .test.strategy["fail-fast"] == false and
-        any(.test.strategy.matrix["go-version"][]; startswith($floor + ".")) and
-        any(.test.strategy.matrix.include[];
-            .["go-version"] == $release and .primary == true) and
-        any(.test.steps[];
-            .name == "Set up Go" and
-            .with["go-version"] == "${{ matrix.go-version }}" and
-            .with["go-version-file"] == null and
-            .with.cache == false) and
-        any(.test.steps[];
-            .name == "Install GitHub Actions POC test prerequisites" and
-            .if == "matrix.primary" and
-            .run == "sudo apt-get update\nsudo apt-get install --yes bash curl git jq\n") and
-        any(.test.steps[];
-            .name == "Check Docker test infrastructure availability" and
-            .if == "matrix.primary" and
-            .run == "docker version") and
-        any(.test.steps[];
-            .name == "Run GitHub Actions POC checks" and
-            .if == "matrix.primary" and
-            .run == "make test-github-actions") and
-        any(.build.steps[];
-            .name == "Set up Go" and
-            .with["go-version"] == $release and
-            .with["go-version-file"] == null)
-    ' >/dev/null || fail "repository CI does not prove the go.mod floor and build on the release toolchain"
-}
-
-test_modules_declare_intended_go_versions() {
-    # Production break caught: the main module silently moves off the Go support floor it
-    # advertises to consumers, or the provider fixture drifts onto an unsupported toolchain.
-    # The floor is deliberately older than the build toolchain; CI proves it still builds.
-    local go_version
-    go_version=$(GOWORK=off go -C "$REPOSITORY_ROOT" list -m -f '{{.GoVersion}}')
-    [[ "$go_version" == "1.25.0" ]] \
-        || fail "main module does not advertise the Go 1.25.0 support floor: $go_version"
-
-    go_version=$(GOWORK=off go -C "$SCRIPT_DIR/test-fixtures/test-provider" list -m -f '{{.GoVersion}}')
-    [[ "$go_version" == "1.26" ]] \
-        || fail "provider fixture does not require Go 1.26: $go_version"
-}
-
-test_copyable_workflow_layout() {
-    # Production break caught: the copyable example no longer installs the workflow, helpers, and
-    # control configuration at the consumer's .github root.
-    local consumer="$TEST_TMP_ROOT/operator-guide-consumer"
-    mkdir -p "$consumer/.github"
-    cp -R "$SCRIPT_DIR/.github/." "$consumer/.github/"
-    [[ -f "$consumer/.github/workflows/tf-version-bump-reusable.yml" ]] \
-        || fail "operator copy command did not install the reusable workflow"
-    [[ -f "$consumer/.github/scripts/process-state-branch.sh" ]] \
-        || fail "operator copy command did not install the processing helper"
-    [[ -f "$consumer/.github/tf-version-bump/nonproduction.yml" ]] \
-        || fail "operator copy command did not install the control config"
-    [[ ! -e "$consumer/.github/.github" ]] \
-        || fail "operator copy command nested the .github directory"
-}
-
-test_operator_documentation_describes_stage_two_contract() {
-    # Production break caught: operators copy a stage-one guide that omits the formatting,
-    # verification, publication, and trusted-code contracts enforced by this workflow.
-    local readme="$SCRIPT_DIR/README.md"
-    local advanced_usage="$REPOSITORY_ROOT/docs/ADVANCED-USAGE.md"
-
-    for document in "$readme" "$advanced_usage"; do
-        [[ -f "$document" ]] || fail "operator documentation is missing: $document"
-        local normalised_document
-        normalised_document=$(tr '\n' ' ' < "$document")
-        grep -F '`terraform_fmt` defaults to `false`' "$document" >/dev/null \
-            || fail "operator documentation omits the terraform_fmt default: $document"
-        grep -F '`discover`, `prepare`, `validate`, and `publish`' "$document" >/dev/null \
-            || fail "operator documentation omits the four-job topology: $document"
-        [[ "$normalised_document" == *"private and first-party providers are trusted code"* ]] \
-            || fail "operator documentation omits the trusted-provider limitation: $document"
-        [[ "$normalised_document" == *"private and first-party module sources are trusted code"* ]] \
-            || fail "operator documentation omits the trusted-module limitation: $document"
-        [[ "$normalised_document" == *"Post-Terraform checks run on the same runner"* ]] \
-            || fail "operator documentation omits same-runner post-Terraform checks: $document"
-        [[ "$normalised_document" == *"detect only accidental or non-adversarial mutation"* ]] \
-            || fail "operator documentation overstates post-Terraform mutation detection: $document"
-        [[ "$normalised_document" == *"Untrusted provider or module code requires independent verification or isolation"* ]] \
-            || fail "operator documentation omits the untrusted-code isolation warning: $document"
-        grep -F '`TF_API_TOKEN`' "$document" >/dev/null \
-            || fail "operator documentation omits the required HCP Terraform secret: $document"
-        grep -F '`TF_TOKEN_app_terraform_io`' "$document" >/dev/null \
-            || fail "operator documentation omits the Terraform token mapping: $document"
-        grep -F 'chore: run Terraform fmt' "$document" >/dev/null \
-            || fail "operator documentation omits the formatting commit subject: $document"
-        grep -F 'Module blocks updated' "$document" >/dev/null \
-            || fail "operator documentation omits module block PR counts: $document"
-        grep -F 'Provider blocks updated' "$document" >/dev/null \
-            || fail "operator documentation omits provider block PR counts: $document"
-        grep -F 'Dependency and lock-file changes' "$document" >/dev/null \
-            || fail "operator documentation omits dependency file lists: $document"
-        grep -F 'Formatting changes' "$document" >/dev/null \
-            || fail "operator documentation omits formatting file lists: $document"
-    done
-
-    grep -F 'both supplied callers set `terraform_fmt: true`' "$readme" >/dev/null \
-        || fail "example README omits caller formatting opt-in"
-    grep -F "$TF_VERSION_BUMP_VERSION" "$readme" >/dev/null \
-        || fail "example README omits the $TF_VERSION_BUMP_VERSION pin"
-    grep -F "$TF_VERSION_BUMP_ARCHIVE_SHA256" "$readme" >/dev/null \
-        || fail "example README omits the pinned archive SHA-256"
-    local normalised_readme
-    normalised_readme=$(tr '\n' ' ' < "$readme")
-    [[ "$normalised_readme" == *"validate only the YAML runtime contract without selecting Terraform files"* ]] \
-        || fail "example README does not describe standalone configuration validation"
-    grep -F 'updater and `terraform init` before formatting is eligible' "$readme" >/dev/null \
-        || fail "example README omits per-root update and initialisation ordering"
-    grep -F '`terraform fmt -recursive` in every configured root' "$readme" >/dev/null \
-        || fail "example README omits recursive configured-root formatting semantics"
-    grep -F 'Validation and verification use one target checkout in `validate`' "$readme" >/dev/null \
-        || fail "example README claims a separate verification checkout"
-    grep -F '`preparation-*` and `verified-*` artefacts' "$readme" >/dev/null \
-        || fail "example README omits retained stage-two artefacts"
-    grep -F 'no separate validation artefact or verification job' "$readme" >/dev/null \
-        || fail "example README does not remove the validation artefact/verification job"
-    grep -F 'one dynamic dependency commit' "$readme" >/dev/null \
-        || fail "example README omits the dynamic dependency commit"
-    grep -F 'chore: bump Terraform provider and module versions' "$readme" >/dev/null \
-        || fail "example README omits the dependency commit subject"
-    grep -F 'A `branch-format` result means' "$readme" >/dev/null \
-        || fail "example README omits the branch-format result"
-    grep -F 'no format patch and no `chore: run Terraform fmt` commit' "$readme" >/dev/null \
-        || fail "example README omits net-zero formatting behaviour"
-    grep -F 'does not push a branch or create or update a pull request or issue' "$readme" >/dev/null \
-        || fail "example README omits dry-run publication behaviour"
-    grep -F 'inspect the `preparation-*` and `verified-*` artefacts' "$readme" >/dev/null \
-        || fail "example README omits operator artefact inspection"
-
-    grep -F 'both callers opt in with `terraform_fmt: true`' "$advanced_usage" >/dev/null \
-        || fail "advanced usage omits caller formatting opt-in"
-    grep -F "$TF_VERSION_BUMP_VERSION" "$advanced_usage" >/dev/null \
-        || fail "advanced usage omits the $TF_VERSION_BUMP_VERSION pin"
-    grep -F "$TF_VERSION_BUMP_ARCHIVE_SHA256" "$advanced_usage" >/dev/null \
-        || fail "advanced usage omits the pinned archive SHA-256"
-    grep -F 'Validation and verification use one target checkout in `validate`' "$advanced_usage" >/dev/null \
-        || fail "advanced usage claims a separate verification checkout"
-    grep -F 'one dynamic dependency commit' "$advanced_usage" >/dev/null \
-        || fail "advanced usage omits the dynamic dependency commit"
-    grep -F 'no separate validation artefact' "$advanced_usage" >/dev/null \
-        || fail "advanced usage does not remove the validation artefact"
-}
-
-test_fixture_version_diagnostics_follow_current_expected_version() {
-    # Production break caught: release fixture diagnostics retain a previous release pin after the
-    # expected version changes, misleading an operator investigating a checksum or documentation
-    # failure.
-    local expected_version="v9.9.9-rc.11"
-    local archive_url="https://example.invalid/tf-version-bump_9.9.9-rc.11_linux_x86_64.tar.gz"
-    local archive_path="$TEST_TMP_ROOT/${archive_url##*/}"
-    local checksum_stdout="$TEST_TMP_ROOT/version-diagnostic-checksum.stdout"
-    local checksum_stderr="$TEST_TMP_ROOT/version-diagnostic-checksum.stderr"
-
-    printf '%s\n' 'deliberately invalid release archive' >"$archive_path"
-    if (
-        TF_VERSION_BUMP_VERSION="$expected_version"
-        TF_VERSION_BUMP_ARCHIVE_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
-        TF_VERSION_BUMP_ARCHIVE_URL="$archive_url"
-        prepopulate_verified_processing_release_cache
-    ) >"$checksum_stdout" 2>"$checksum_stderr"; then
-        fail "checksum fixture mismatch unexpectedly succeeded"
-    fi
-    [[ ! -s "$checksum_stdout" ]] || fail "checksum fixture mismatch emitted stdout"
-    [[ "$(<"$checksum_stderr")" == "FAIL: independently downloaded $expected_version fixture archive failed checksum verification" ]] \
-        || fail "checksum fixture mismatch did not report the current expected version: $(<"$checksum_stderr")"
-
-    local documentation_fixture="$TEST_TMP_ROOT/version-diagnostic-docs"
-    local fixture_script_dir="$documentation_fixture/examples/github-actions"
-    mkdir -p "$fixture_script_dir" "$documentation_fixture/docs"
-    cp "$SCRIPT_DIR/README.md" "$fixture_script_dir/README.md"
-    cp "$REPOSITORY_ROOT/docs/ADVANCED-USAGE.md" "$documentation_fixture/docs/ADVANCED-USAGE.md"
-
-    local readme_stdout="$TEST_TMP_ROOT/version-diagnostic-readme.stdout"
-    local readme_stderr="$TEST_TMP_ROOT/version-diagnostic-readme.stderr"
-    if (
-        SCRIPT_DIR="$fixture_script_dir"
-        REPOSITORY_ROOT="$documentation_fixture"
-        TF_VERSION_BUMP_VERSION="$expected_version"
-        test_operator_documentation_describes_stage_two_contract
-    ) >"$readme_stdout" 2>"$readme_stderr"; then
-        fail "README pin mismatch unexpectedly succeeded"
-    fi
-    [[ ! -s "$readme_stdout" ]] || fail "README pin mismatch emitted stdout"
-    [[ "$(<"$readme_stderr")" == "FAIL: example README omits the $expected_version pin" ]] \
-        || fail "README pin mismatch did not report the current expected version: $(<"$readme_stderr")"
-
-    printf '%s\n' "$expected_version" >>"$fixture_script_dir/README.md"
-    local advanced_usage_stdout="$TEST_TMP_ROOT/version-diagnostic-advanced-usage.stdout"
-    local advanced_usage_stderr="$TEST_TMP_ROOT/version-diagnostic-advanced-usage.stderr"
-    if (
-        SCRIPT_DIR="$fixture_script_dir"
-        REPOSITORY_ROOT="$documentation_fixture"
-        TF_VERSION_BUMP_VERSION="$expected_version"
-        test_operator_documentation_describes_stage_two_contract
-    ) >"$advanced_usage_stdout" 2>"$advanced_usage_stderr"; then
-        fail "advanced usage pin mismatch unexpectedly succeeded"
-    fi
-    [[ ! -s "$advanced_usage_stdout" ]] || fail "advanced usage pin mismatch emitted stdout"
-    [[ "$(<"$advanced_usage_stderr")" == "FAIL: advanced usage omits the $expected_version pin" ]] \
-        || fail "advanced usage pin mismatch did not report the current expected version: $(<"$advanced_usage_stderr")"
-}
-
-test_reusable_workflow_declares_lean_interface() {
-    # Production break caught: a caller input, credential boundary, timeout, or action safety
-    # setting drifts from the copyable reusable-workflow contract.
-    [[ -f "$REUSABLE_WORKFLOW" ]] || fail "reusable workflow is missing: $REUSABLE_WORKFLOW"
-
-    yq -o=json '.on.workflow_call.inputs' "$REUSABLE_WORKFLOW" | jq -e '
-        keys == [
-            "allowed_branch_prefixes", "automation_policy_id", "branch_prefix", "commit_author_email",
-            "commit_author_name", "config_path", "dry_run", "max_parallel", "terraform_directories",
-            "terraform_fmt", "terraform_init_upgrade", "terraform_version", "tf_version_bump_archive_sha256",
-            "tf_version_bump_version"
-        ] and
-        .automation_policy_id == {type: "string", required: true} and
-        .allowed_branch_prefixes == {type: "string", required: true} and
-        .branch_prefix == {type: "string", default: ""} and
-        .config_path == {type: "string", required: true} and
-        .terraform_directories == {type: "string", default: "."} and
-        .terraform_fmt == {type: "boolean", default: false} and
-        .terraform_init_upgrade == {type: "boolean", default: false} and
-        .terraform_version == {type: "string", required: true} and
-        .tf_version_bump_version == {type: "string", required: true} and
-        .tf_version_bump_archive_sha256 == {type: "string", required: true} and
-        .dry_run == {type: "boolean", default: false} and
-        .max_parallel == {type: "number", default: 4} and
-        .commit_author_name == {type: "string", default: ""} and
-        .commit_author_email == {type: "string", default: ""}
-    ' >/dev/null || fail "reusable workflow inputs do not match the typed contract"
-
-    yq -o=json '.on.workflow_call.secrets' "$REUSABLE_WORKFLOW" | jq -e '
-        . == {TF_API_TOKEN: {required: true}}
-    ' >/dev/null || fail "reusable workflow does not require the HCP Terraform token"
-
-    yq -o=json '.jobs' "$REUSABLE_WORKFLOW" | jq -e '
-        keys == ["discover", "prepare", "publish", "validate"] and
-        .discover["timeout-minutes"] == 10 and .discover.permissions == {contents: "read"} and
-        .prepare["timeout-minutes"] == 30 and .prepare.permissions == {contents: "read"} and
-        .validate["timeout-minutes"] == 30 and .validate.permissions == {contents: "read"} and
-        .publish["timeout-minutes"] == 15 and
-        .publish.permissions == {contents: "write", issues: "write", "pull-requests": "write"} and
-        (.publish | has("environment") | not) and
-        ((.publish | tostring | contains("github_app")) | not) and
-        ((.publish | tostring | contains("signing")) | not) and
-        any(.publish.steps[]; .name == "Publish verified result" and
-            .env.GH_TOKEN == "${{ github.token }}") and
-        any(.prepare.steps[]; .name == "Prepare candidate" and
-            .env.TF_TOKEN_app_terraform_io == "${{ secrets.TF_API_TOKEN }}") and
-        any(.validate.steps[]; .name == "Validate candidate" and
-            .env.TF_TOKEN_app_terraform_io == "${{ secrets.TF_API_TOKEN }}") and
-        ((.discover | tostring | contains("TF_API_TOKEN")) | not) and
-        ((.publish | tostring | contains("TF_API_TOKEN")) | not) and
-        (. | tostring | contains("GIT_AUTH_TOKEN") | not) and
-        ([.publish.steps[] | select((.uses // "") |
-            startswith("hashicorp/setup-terraform@"))] | length == 0) and
-        ([.[] | .steps[]? | select((.uses // "") | startswith("hashicorp/setup-terraform@")) |
-            .with.terraform_wrapper] | length > 0 and all(.[]; . == false))
-    ' >/dev/null || fail "reusable workflow jobs do not preserve the lean safety contract"
-
-    yq -o=json '.jobs' "$REUSABLE_WORKFLOW" | jq -e '
-        [to_entries[] | .key as $job | .value.steps[]? |
-         select((.uses // "") | startswith("actions/checkout@")) |
-         {job: $job, path: .with.path, persist: .with["persist-credentials"]}] == [
-            {job: "discover", path: "control", persist: true},
-            {job: "prepare", path: "control", persist: false},
-            {job: "prepare", path: "target", persist: false},
-            {job: "validate", path: "control", persist: false},
-            {job: "validate", path: "target", persist: false},
-            {job: "publish", path: "control", persist: false},
-            {job: "publish", path: "target", persist: true}
-        ]
-    ' >/dev/null || fail "reusable workflow checkout credential boundary is not exact"
-}
-
-test_reusable_workflow_wires_current_attempt_pipeline() {
-    # Production break caught: a branch stage consumes another attempt's artefact, loses matrix
-    # identity, or bypasses the helper mode that owns that stage.
-    yq -o=json '.jobs' "$REUSABLE_WORKFLOW" | jq -e '
-        .discover.outputs.matrix == "${{ steps.discover.outputs.matrix }}" and
-        .prepare.needs == "discover" and
-        .validate.needs == ["discover", "prepare"] and
-        .validate.if == "${{ always() && needs.discover.result == '"'"'success'"'"' }}" and
-        .publish.needs == ["discover", "validate"] and
-        .publish.if == "${{ always() && needs.discover.result == '"'"'success'"'"' }}" and
-        all(.prepare, .validate, .publish;
-            .strategy["fail-fast"] == false and
-            .strategy["max-parallel"] == "${{ inputs.max_parallel }}" and
-            .strategy.matrix == "${{ fromJSON(needs.discover.outputs.matrix) }}") and
-        all(.prepare, .validate, .publish;
-            any(.steps[]; .name == "Check current run attempt" and
-                .env.EXPECTED_RUN_ATTEMPT == "${{ matrix.run_attempt }}" and
-                .env.CURRENT_RUN_ATTEMPT == "${{ github.run_attempt }}")) and
-        any(.prepare.steps[]; (.run // "") | contains("process-state-branch.sh\" prepare")) and
-        any(.prepare.steps[]; .name == "Prepare candidate" and
-            (.env.PROCESS_TERRAFORM_FMT | contains("inputs.terraform_fmt")) and
-            .env.PROCESS_TERRAFORM_INIT_UPGRADE == "${{ inputs.terraform_init_upgrade }}") and
-        any(.prepare.steps[]; .name == "Confirm preparation classification" and
-            (.run | contains("branch-format"))) and
-        ((.validate.steps | map(.name // "")) as $validation_steps |
-            ($validation_steps | index("Reconcile candidate result")) as $reconcile_step |
-            ($reconcile_step != null and
-                $validation_steps[$reconcile_step + 1] == "Upload verified result" and
-                $validation_steps[$reconcile_step + 2] == "Confirm verified classification")) and
-        any(.validate.steps[]; .name == "Validate candidate" and
-            .["continue-on-error"] == true and
-            .env.PROCESS_CONFIG_PATH == "${{ inputs.config_path }}" and
-            .env.PROCESS_TF_VERSION_BUMP_VERSION == "${{ inputs.tf_version_bump_version }}" and
-            .env.PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256 ==
-                "${{ inputs.tf_version_bump_archive_sha256 }}" and
-            .env.PROCESS_TERRAFORM_VERSION == "${{ inputs.terraform_version }}" and
-            ((.run // "") | contains("process-state-branch.sh\" validate"))) and
-        any(.validate.steps[]; .name == "Reconcile candidate result" and
-            .if == "${{ always() }}" and
-            ((.run // "") | contains("reconcile-state-branch.sh\" verify"))) and
-        any(.validate.steps[]; .name == "Upload verified result" and
-            .if == "${{ always() }}" and
-            ((.uses // "") | startswith("actions/upload-artifact@")) and
-            .with.name == "verified-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}") and
-        any(.validate.steps[]; .name == "Confirm verified classification" and
-            .if == "${{ always() }}" and
-            (.env.RECONCILE_RUN_ID == "${{ matrix.run_id }}") and
-            (.env.RECONCILE_RUN_ATTEMPT == "${{ matrix.run_attempt }}") and
-            (.env.RECONCILE_AUTOMATION_POLICY_ID == "${{ matrix.automation_policy_id }}") and
-            (.env.RECONCILE_CONTROL_OID == "${{ matrix.control_oid }}") and
-            (.env.RECONCILE_STATE_BRANCH == "${{ matrix.branch }}") and
-            (.env.RECONCILE_BASE_OID == "${{ matrix.base_oid }}") and
-            (.env.RECONCILE_REF_HASH == "${{ matrix.ref_hash }}") and
-            (.env.RECONCILE_VERIFIED_RESULT_DIR == "${{ runner.temp }}/verified-result") and
-            (.run | contains("reconcile-state-branch.sh\" classify")) and
-            (.run | contains("branch-format")) and
-            (.run | contains("branch-validation")) and
-            (.run | contains("automation"))) and
-        any(.publish.steps[]; (.run // "") | contains("reconcile-state-branch.sh\" publish")) and
-        any(.publish.steps[]; .name == "Publish verified result" and
-            .env.RECONCILE_TERRAFORM_ROOTS == "${{ inputs.terraform_directories }}") and
-        any(.prepare.steps[]; ((.uses // "") | startswith("actions/upload-artifact@")) and
-            .with.name == "preparation-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}") and
-        any(.publish.steps[]; ((.uses // "") | startswith("actions/download-artifact@")) and
-            .with.name == "verified-${{ matrix.run_id }}-${{ matrix.run_attempt }}-${{ matrix.automation_policy_id }}-${{ matrix.ref_hash }}") and
-        ([.[] | .steps[]? | .with.name? // empty |
-            select(startswith("validation-"))] | length == 0)
-    ' >/dev/null || fail "reusable workflow does not wire the current-attempt four-job pipeline"
-}
-
-test_callers_define_weekly_policies_and_tool_pins() {
-    # Production break caught: a copyable caller widens its branch policy, runs from a non-default
-    # ref, loses manual dry-run propagation, or drifts from the tested toolchain.
-    local workflow
-    for workflow in "$NONPRODUCTION_WORKFLOW" "$PRODUCTION_WORKFLOW"; do
-        [[ -f "$workflow" ]] || fail "caller workflow is missing: $workflow"
-    done
-
-    yq -o=json '.' "$NONPRODUCTION_WORKFLOW" | jq -e '
-        .on.push.paths == [".github/tf-version-bump/nonproduction.yml"] and
-        .on.schedule == [{cron: "17 4 * * 1", timezone: "Australia/Melbourne"}] and
-        .jobs.automation.if == "${{ github.ref == format('"'"'refs/heads/{0}'"'"', github.event.repository.default_branch) }}" and
-        .jobs.automation.uses == "./.github/workflows/tf-version-bump-reusable.yml" and
-        .jobs.automation.with.allowed_branch_prefixes == "state/nonproduction/\nstate/staging/\naws-state/nonproduction/\naws-state/staging/\n" and
-        .jobs.automation.with.branch_prefix == "${{ github.event_name == '"'"'workflow_dispatch'"'"' && inputs.branch_prefix || '"'"''"'"' }}" and
-        .jobs.automation.with.dry_run == "${{ github.event_name == '"'"'workflow_dispatch'"'"' && inputs.dry_run || false }}" and
-        .jobs.automation.with.config_path == ".github/tf-version-bump/nonproduction.yml" and
-        .jobs.automation.secrets.TF_API_TOKEN == "${{ secrets.TF_API_TOKEN }}"
-    ' >/dev/null || fail "non-production caller policy is not the approved weekly policy"
-
-    yq -o=json '.' "$PRODUCTION_WORKFLOW" | jq -e '
-        .on.push.paths == [".github/tf-version-bump/production.yml"] and
-        .on.schedule == [{cron: "43 4 * * 0", timezone: "Australia/Melbourne"}] and
-        .jobs.automation.if == "${{ github.ref == format('"'"'refs/heads/{0}'"'"', github.event.repository.default_branch) }}" and
-        .jobs.automation.with.allowed_branch_prefixes == "state/production/\naws-state/production/\n" and
-        .jobs.automation.with.config_path == ".github/tf-version-bump/production.yml" and
-        .jobs.automation.secrets.TF_API_TOKEN == "${{ secrets.TF_API_TOKEN }}"
-    ' >/dev/null || fail "production caller policy is not the approved weekly policy"
-
-    for workflow in "$NONPRODUCTION_WORKFLOW" "$PRODUCTION_WORKFLOW"; do
-        yq -o=json '.' "$workflow" | jq -e '
-            .on.workflow_dispatch.inputs.terraform_init_upgrade.type == "boolean" and
-            .on.workflow_dispatch.inputs.terraform_init_upgrade.default == false and
-            .jobs.automation.with.terraform_init_upgrade == "${{ github.event_name == '\''workflow_dispatch'\'' && inputs.terraform_init_upgrade || false }}"
-        ' >/dev/null || fail "caller does not make init upgrades opt-in: $workflow"
-        yq -o=json '.jobs.automation.with' "$workflow" | jq -e \
-            --arg tf_version_bump_version "$TF_VERSION_BUMP_VERSION" \
-            --arg tf_version_bump_archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" '
-            .terraform_directories == "." and
-            .terraform_fmt == true and
-            .terraform_version == "1.15.5" and
-            .tf_version_bump_version == $tf_version_bump_version and
-            .tf_version_bump_archive_sha256 == $tf_version_bump_archive_sha256 and
-            (has("github_app_client_id") | not) and
-            (has("unattended_checks_safe") | not) and
-            (has("publication_environment") | not)
-        ' >/dev/null || fail "caller does not pin the approved POC toolchain: $workflow"
-    done
-
-    for workflow in "$NONPRODUCTION_CONFIG" "$PRODUCTION_CONFIG"; do
-        [[ -f "$workflow" ]] || fail "control config is missing: $workflow"
-        yq -o=json '.' "$workflow" | jq -e '
-            (has("pattern") | not) and
-            (.providers | length) == 1 and (.modules | length) == 1
-        ' >/dev/null || fail "control config does not contain one provider/module update: $workflow"
-    done
-}
-
-test_config_validation_workflow_is_read_only() {
-    # Production break caught: config pull requests gain credentials or state-branch execution,
-    # stop validating both control files, or run an unverified updater release.
-    [[ -f "$CONFIG_VALIDATION_WORKFLOW" ]] || fail "config validation workflow is missing: $CONFIG_VALIDATION_WORKFLOW"
-
-    yq -o=json '.' "$CONFIG_VALIDATION_WORKFLOW" | jq -e '
-        .on.pull_request.paths == [
-            ".github/tf-version-bump/nonproduction.yml",
-            ".github/tf-version-bump/production.yml"
-        ] and
-        .permissions == {contents: "read"} and
-        (.jobs | keys) == ["validate-configs"] and
-        .jobs["validate-configs"]["runs-on"] == "ubuntu-latest" and
-        (.jobs["validate-configs"] | has("environment") | not) and
-        ([.jobs["validate-configs"].steps[] | select((.uses // "") | startswith("actions/checkout@"))] == [{
-            uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-            with: {"persist-credentials": false}
-        }]) and
-        (. | tostring | contains("secrets.") | not) and
-        (. | tostring | contains("discover-state-branches.sh") | not) and
-        (. | tostring | contains("process-state-branch.sh") | not) and
-        (. | tostring | contains("reconcile-state-branch.sh") | not) and
-        (. | tostring | contains("terraform init") | not)
-    ' >/dev/null || fail "config validation workflow does not preserve its read-only boundary"
-
-    yq -o=json '.jobs["validate-configs"].steps' "$CONFIG_VALIDATION_WORKFLOW" | jq -e \
-        --arg archive_url "$TF_VERSION_BUMP_ARCHIVE_URL" \
-        --arg archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" \
-        --arg release_version "${TF_VERSION_BUMP_VERSION#v}" '
-        any(.[]; .name == "Download and verify tf-version-bump" and
-            (.run | contains($archive_url)) and
-            (.run | contains($archive_sha256)) and
-            (.run | contains("sha256sum --check --status")) and
-            (.run | contains("tar -xzf")) and
-            ((.run | index("sha256sum --check --status")) < (.run | index("tar -xzf"))) and
-            (.run | contains("tf-version-bump " + $release_version))) and
-        any(.[]; .name == "Validate configuration" and
-            (.run | contains(".github/tf-version-bump/nonproduction.yml")) and
-            (.run | contains(".github/tf-version-bump/production.yml")) and
-            (.run | contains("\"$TF_VERSION_BUMP_BINARY\" -validate-config \"$config\"")) and
-            (.run | contains("mktemp -d") | not) and
-            (.run | contains("fixture") | not) and
-            (.run | contains("-pattern") | not) and
-            (.run | test("(^|[[:space:]])-config([[:space:]]|$)") | not) and
-            (.run | contains("-dry-run") | not))
-    ' >/dev/null || fail "config validation workflow does not directly validate both example configs"
-}
-
-test_workflows_keep_representative_execution_boundaries() {
-    # Production break caught: registry credentials escape the Terraform stages, an action floats
-    # from its reviewed commit, or setup consumes the branch deadline without a fixed timeout.
-    yq -o=json '.jobs' "$REUSABLE_WORKFLOW" | jq -e '
-        ([.[] | .steps[]? | .uses // empty] | unique) == [
-            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-            "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
-            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-            "hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e"
-        ] and
-        .prepare.steps[0].name == "Record preparation deadline" and
-        .validate.steps[0].name == "Record validation deadline" and
-        all(.prepare.steps[], .validate.steps[];
-            if .uses then .["timeout-minutes"] == 10 else true end) and
-        ((.discover | tostring | contains("secrets.")) | not) and
-        ((.publish | tostring | contains("secrets.")) | not) and
-        ((.publish | tostring | contains("github_app")) | not) and
-        ((.publish | tostring | contains("signing")) | not) and
-        any(.publish.steps[]; .name == "Publish verified result" and
-            .env.RECONCILE_DRY_RUN == "${{ inputs.dry_run }}" and
-            .env.RECONCILE_COMMIT_AUTHOR_NAME == "${{ inputs.commit_author_name || '"'"'github-actions[bot]'"'"' }}" and
-            .env.RECONCILE_COMMIT_AUTHOR_EMAIL == "${{ inputs.commit_author_email || '"'"'41898282+github-actions[bot]@users.noreply.github.com'"'"' }}")
-    ' >/dev/null || fail "workflow execution boundaries or exact action pins drifted"
-
-    local workflow
-    for workflow in "$NONPRODUCTION_WORKFLOW" "$PRODUCTION_WORKFLOW"; do
-        yq -o=json '.concurrency' "$workflow" | jq -e '
-            .["cancel-in-progress"] == false and .queue == "max"
-        ' >/dev/null || fail "caller does not queue overlapping policy runs: $workflow"
-    done
-}
-
-test_runtime_helpers_provide_help() {
-    local helper
-    for helper in "$DISCOVER_SCRIPT" "$PROCESS_SCRIPT" "$RECONCILE_SCRIPT"; do
-        [[ -x "$helper" ]] || fail "runtime helper is not executable: $helper"
-
-        local output
-        output=$("$helper" --help)
-        [[ -n "$output" ]] || fail "runtime helper did not provide help: $helper"
-    done
-}
-
-test_processing_help_documents_prepare_safety_contract() {
-    # Production break caught: workflow authors cannot determine which checkout owns each
-    # repository-relative input, how roots are delimited, where trusted data is allocated, or
-    # whether successful safety-only preparation emits output.
-    local output
-    output=$("$PROCESS_SCRIPT" --help)
-
-    [[ "$output" == *"prepare"* ]] \
-        || fail "processing help did not document the prepare phase"
-    [[ "$output" == *"PROCESS_CONTROL_CHECKOUT"* ]] \
-        || fail "processing help did not document the control checkout"
-    [[ "$output" == *"PROCESS_TARGET_CHECKOUT"* ]] \
-        || fail "processing help did not document the target checkout"
-    [[ "$output" == *"PROCESS_CONFIG_PATH"* && "$output" == *"repository-relative"* ]] \
-        || fail "processing help did not document the relative config path"
-    [[ "$output" == *"PROCESS_TERRAFORM_ROOTS"* && "$output" == *"newline-separated"* ]] \
-        || fail "processing help did not document the Terraform roots format"
-    [[ "$output" == *"RUNNER_TEMP"* && "$output" == *"TF_DATA_DIR"* ]] \
-        || fail "processing help did not document trusted data allocation"
-    [[ "$output" == *"no output"* ]] \
-        || fail "processing help did not document the success output contract"
-    [[ "$output" == *"update.patch"* && "$output" == *"format.patch"* ]] \
-        || fail "processing help did not document both staged preparation patches"
-    [[ "$output" == *"formatting failure"* ]] \
-        || fail "processing help did not document bounded formatting failures"
-}
-
-test_processing_rejects_absolute_config_path() {
-    # Production break caught: an untrusted config path bypasses the immutable control-checkout
-    # boundary and selects an arbitrary host file.
-    setup_processing_workspace
-    PROCESS_CONFIG_PATH="$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
-
-    assert_processing_failure \
-        "processing path error: config path must be repository-relative" \
-        "absolute config path"
-}
-
-test_processing_rejects_config_symlink_into_target_checkout() {
-    # Production break caught: a relative config symlink resolves into the untrusted sibling
-    # target checkout and is accepted because only its lexical path is checked.
-    setup_processing_workspace
-    ln -s "$PROCESS_TARGET_CHECKOUT/root/main.tf" \
-        "$PROCESS_CONTROL_CHECKOUT/escaped-config.yml"
-    PROCESS_CONFIG_PATH="escaped-config.yml"
-
-    assert_processing_failure \
-        "processing path error: config path resolves outside control checkout" \
-        "config symlink into target checkout"
-}
-
-test_processing_rejects_missing_config_path() {
-    # Production break caught: failed config canonicalisation falls back to the lexical path and
-    # allows preparation to continue without the reviewed control-checkout configuration.
-    setup_processing_workspace
-    PROCESS_CONFIG_PATH=".github/tf-version-bump/missing.yml"
-
-    assert_processing_failure \
-        "processing path error: config path does not exist" \
-        "missing config path"
-}
-
-test_processing_rejects_overlapping_control_and_target_checkouts() {
-    # Production break caught: overlapping checkout roots let target-controlled content satisfy
-    # the reviewed control-config boundary.
-    setup_processing_workspace
-    PROCESS_CONTROL_CHECKOUT="$PROCESS_TARGET_CHECKOUT"
-    PROCESS_CONFIG_PATH="root/main.tf"
-
-    assert_processing_failure \
-        "processing path error: control and target checkouts must be distinct and non-overlapping" \
-        "overlapping control and target checkouts"
-}
-
-test_processing_rejects_terraform_root_parent_traversal_into_control() {
-    # Production break caught: a relative Terraform root traverses into the sibling immutable
-    # control checkout and turns reviewed workflow files into an update target.
-    setup_processing_workspace
-    PROCESS_TERRAFORM_ROOTS="../control"
-
-    assert_processing_failure \
-        "processing path error: Terraform root must not contain '..'" \
-        "Terraform root traversal into control checkout"
-}
-
-test_processing_rejects_missing_terraform_root() {
-    # Production break caught: a missing configured root is silently omitted instead of failing
-    # the branch before any update work begins.
-    setup_processing_workspace
-    PROCESS_TERRAFORM_ROOTS="missing"
-
-    assert_processing_failure \
-        "processing path error: Terraform root does not exist" \
-        "missing Terraform root"
-}
-
-test_processing_rejects_terraform_root_symlink_outside_checkouts() {
-    # Production break caught: a lexically relative root symlink resolves to a directory outside
-    # both checkouts and redirects later update and Terraform writes there.
-    setup_processing_workspace
-    mkdir "$PROCESS_TMP_ROOT/outside-root"
-    ln -s "$PROCESS_TMP_ROOT/outside-root" "$PROCESS_TARGET_CHECKOUT/escaped-root"
-    PROCESS_TERRAFORM_ROOTS="escaped-root"
-
-    assert_processing_failure \
-        "processing path error: Terraform root resolves outside target checkout" \
-        "Terraform root symlink outside checkouts"
-}
-
-test_processing_rejects_duplicate_canonical_terraform_roots() {
-    # Production break caught: a symlink alias makes one canonical root run twice and gives its
-    # changed files duplicate configured ownership.
-    setup_processing_workspace
-    ln -s "root" "$PROCESS_TARGET_CHECKOUT/root-alias"
-    PROCESS_TERRAFORM_ROOTS=$'root\nroot-alias'
-
-    assert_processing_failure \
-        "processing path error: duplicate canonical Terraform root" \
-        "duplicate canonical Terraform roots"
-}
-
-test_processing_rejects_terraform_file_symlink_into_control() {
-    # Production break caught: a direct `.tf` symlink redirects the later updater from the target
-    # root into a reviewed file in the sibling control checkout.
-    setup_processing_workspace
-    ln -s "$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml" \
-        "$PROCESS_TARGET_CHECKOUT/root/escaped.tf"
-
-    assert_processing_failure \
-        "processing path error: Terraform file must be a regular non-symlink" \
-        "Terraform file symlink into control checkout"
-}
-
-test_processing_rejects_lock_file_symlink_outside_checkouts() {
-    # Production break caught: a lock-file symlink redirects Terraform's later lock write to a
-    # file outside both checkout boundaries.
-    setup_processing_workspace
-    printf '%s\n' '# outside lock' >"$PROCESS_TMP_ROOT/outside.lock.hcl"
-    ln -s "$PROCESS_TMP_ROOT/outside.lock.hcl" \
-        "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl"
-
-    assert_processing_failure \
-        "processing path error: Terraform lock file must be a regular non-symlink" \
-        "lock-file symlink outside checkouts"
-}
-
-test_processing_rejects_repository_terraform_directory() {
-    # Production break caught: repository `.terraform` working data survives preflight and can
-    # influence or redirect later Terraform initialisation.
-    setup_processing_workspace
-    mkdir "$PROCESS_TARGET_CHECKOUT/root/.terraform"
-
-    assert_processing_failure \
-        "processing path error: repository .terraform entry is forbidden" \
-        "repository .terraform directory"
-}
-
-test_processing_rejects_runner_temp_inside_either_checkout() {
-    # Production break caught: trusted Terraform data is allocated inside a checkout and becomes
-    # writable or capturable through repository-controlled paths.
-    setup_processing_workspace
-
-    local checkout
-    for checkout in "$PROCESS_CONTROL_CHECKOUT" "$PROCESS_TARGET_CHECKOUT"; do
-        RUNNER_TEMP="$checkout"
-        assert_processing_failure \
-            "processing path error: RUNNER_TEMP must resolve outside both checkouts" \
-            "RUNNER_TEMP inside checkout"
-    done
-}
-
-test_processing_allocates_fresh_trusted_data_directory_per_nested_root() {
-    # Production break caught: nested roots are rejected, share Terraform data, reuse a prior
-    # invocation's directory, allocate inside a checkout, or emit unstable success output.
-    setup_processing_workspace
-    mkdir "$PROCESS_TARGET_CHECKOUT/root/child"
-    printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
-        >"$PROCESS_TARGET_CHECKOUT/root/child/main.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/child/main.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add nested processing root"
-    PROCESS_TERRAFORM_ROOTS=$'root\nroot/child\n'
-
-    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
-    mkdir "$fixture_bin"
-    local stub_body
-    stub_body=$(cat <<'EOF'
-printf '%s\t%s\n' "$TF_DATA_DIR" "$(stat -c '%a' "$TF_DATA_DIR")" \
-    >>"${PROCESS_TEST_CALL_LOG:?}"
-printf '%s\n' 'Terraform has been successfully initialized!'
-EOF
-    )
-    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
-    PROCESS_PATH_PREFIX=$fixture_bin
-    PROCESS_TEST_CALL_LOG="$PROCESS_TMP_ROOT/data-directories.log"
-
-    local invocation
-    for invocation in 1 2; do
-        PROCESS_PREPARATION_BUNDLE_DIR="$PROCESS_RUNNER_TEMP/preparation-bundle-$invocation"
-        if ! run_processing_prepare \
-            >"$PROCESS_TMP_ROOT/prepare-$invocation.stdout" \
-            2>"$PROCESS_TMP_ROOT/prepare-$invocation.stderr"; then
-            local init_diagnostic=""
-            if [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/logs/init-2.log" ]]; then
-                init_diagnostic=$(<"$PROCESS_PREPARATION_BUNDLE_DIR/logs/init-2.log")
-            fi
-            fail "valid nested-root preparation failed: $(<"$PROCESS_TMP_ROOT/prepare-$invocation.stderr") $init_diagnostic"
-        fi
-        [[ ! -s "$PROCESS_TMP_ROOT/prepare-$invocation.stdout" \
-            && ! -s "$PROCESS_TMP_ROOT/prepare-$invocation.stderr" ]] \
-            || fail "valid nested-root preparation emitted unexpected output"
-    done
-
-    local -a data_directories=()
-    local data_directory
-    local permissions
-    while IFS=$'\t' read -r data_directory permissions; do
-        data_directories+=("$data_directory")
-        [[ "$data_directory" == /* ]] \
-            || fail "prepare did not allocate an absolute TF_DATA_DIR per root"
-        [[ "$data_directory" != "$PROCESS_CONTROL_CHECKOUT"/* \
-            && "$data_directory" != "$PROCESS_TARGET_CHECKOUT"/* ]] \
-            || fail "prepare allocated TF_DATA_DIR inside a checkout"
-        [[ "$permissions" == "700" ]] \
-            || fail "prepare did not protect TF_DATA_DIR: $permissions"
-        [[ ! -e "$data_directory" ]] \
-            || fail "prepare did not clean a trusted TF_DATA_DIR after bundling"
-    done <"$PROCESS_TEST_CALL_LOG"
-    [[ "${#data_directories[@]}" -eq 4 ]] \
-        || fail "prepare did not allocate one TF_DATA_DIR per root and invocation"
-    local unique_count
-    unique_count=$(printf '%s\n' "${data_directories[@]}" | LC_ALL=C sort -u | wc -l)
-    unique_count=${unique_count//[[:space:]]/}
-    [[ "$unique_count" -eq 4 ]] \
-        || fail "prepare reused a trusted TF_DATA_DIR across roots or invocations"
-}
-
-test_processing_removes_incomplete_bundle_when_final_mode_change_fails() {
-    # Production break caught: final publication moves the staged bundle before its root mode is
-    # made read-only, then a chmod failure leaves that incomplete destination available to upload.
-    setup_processing_workspace
-
-    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
-    mkdir "$fixture_bin"
-    cat >"$fixture_bin/chmod" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-if [[ "$#" -eq 2 && "$1" == "555" \
-    && "$2" == "${PROCESS_PREPARATION_BUNDLE_DIR:?}" ]]; then
-    echo "simulated final bundle chmod failure" >&2
-    exit 1
-fi
-exec /bin/chmod "$@"
-EOF
-    chmod 755 "$fixture_bin/chmod"
-    PROCESS_PATH_PREFIX=$fixture_bin
-
-    local stdout_file="$PROCESS_TMP_ROOT/final-mode.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/final-mode.stderr"
-    if run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
-        fail "final bundle chmod failure unexpectedly succeeded"
-    fi
-    [[ ! -s "$stdout_file" ]] \
-        || fail "final bundle chmod failure emitted unexpected stdout"
-    grep -F "simulated final bundle chmod failure" "$stderr_file" >/dev/null \
-        || fail "final bundle chmod failure did not reach finalisation"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR" ]] \
-        || fail "final bundle chmod failure left an incomplete published bundle"
-}
-
-test_processing_rejects_unexpected_changed_path() {
-    # Production break caught: an untracked file outside the direct Terraform/lock allow-list is
-    # accepted into the future candidate patch and commit.
-    setup_processing_workspace
-    printf '%s\n' 'unexpected' >"$PROCESS_TARGET_CHECKOUT/notes.txt"
-
-    assert_processing_failure \
-        "processing status error: unexpected changed or untracked path" \
-        "unexpected untracked path"
-}
-
-test_processing_rejects_newline_in_changed_path() {
-    # Production break caught: a changed/untracked path containing an embedded newline was accepted
-    # as a valid direct Terraform file. Left unrejected here, it would sail through prepare as a
-    # "success" bundle and only fail much later in verify as an unexplained, unfiled red job,
-    # instead of a bounded status error (and marked failure issue) at prepare.
-    setup_processing_workspace
-    local newline_named_file="$PROCESS_TARGET_CHECKOUT/root/bad"$'\n'"name.tf"
-    printf '%s\n' 'terraform {}' >"$newline_named_file"
-
-    assert_processing_failure \
-        "processing status error: changed path must not contain a newline" \
-        "newline-bearing changed path"
-}
-
-test_processing_rejects_non_utf8_changed_path() {
-    # Candidate paths are stored in JSON, so preparation must reject bytes that cannot round-trip
-    # through UTF-8 before publishing an ambiguous manifest.
-    setup_processing_workspace
-    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
-    mkdir "$fixture_bin"
-    local stub_body
-    stub_body=$(cat <<'EOF'
-invalid_path="${PROCESS_TARGET_CHECKOUT:?}/root/module"
-invalid_path+=$'\377'
-invalid_path+='.tf'
-printf '%s\n' 'terraform {}' >"$invalid_path"
-printf '%s\n' 'Terraform has been successfully initialized!'
-EOF
-    )
-    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
-    PROCESS_PATH_PREFIX=$fixture_bin
-    prepopulate_verified_processing_release_cache
-    ensure_processing_container
-
-    local host_target=$PROCESS_TARGET_CHECKOUT
-    local container_target="/tmp/tf-version-bump-non-utf8-preparation-$RANDOM"
-    local base_oid control_oid
-    base_oid=$(processing_base_oid)
-    control_oid=$(processing_control_oid)
-    docker exec "$PROCESS_CONTAINER_ID" cp -a "$host_target" "$container_target"
-    docker exec "$PROCESS_CONTAINER_ID" chown -R \
-        "$(id -u):$(id -g)" "$container_target"
-
-    PROCESS_TARGET_CHECKOUT="$container_target" \
-        PROCESS_BASE_OID="$base_oid" \
-        PROCESS_CONTROL_OID="$control_oid" \
-        assert_processing_failure \
-        "processing status error: changed path is not valid UTF-8" \
-        "non-UTF-8 changed path"
-}
-
-test_reconciliation_rejects_non_utf8_candidate_path_collision() {
-    # JSON replaces invalid UTF-8 bytes, so a raw patch path must not alias a distinct manifest
-    # path containing the literal replacement character.
-    setup_processing_workspace
-    local declared_path=$'root/module\357\277\275.tf'
-    printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' \
-        >"$PROCESS_TARGET_CHECKOUT/$declared_path"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "$declared_path"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add manifest path collision fixture"
-
-    ensure_processing_container
-    local fixture_root="$PROCESS_TMP_ROOT/non-utf8-reconciliation"
-    local bundle="$fixture_root/preparation"
-    local outcome="$fixture_root/validation"
-    local verified="$fixture_root/verified"
-    local container_checkout="/tmp/tf-version-bump-non-utf8-checkout-$RANDOM"
-    local container_candidate="/tmp/tf-version-bump-non-utf8-candidate-$RANDOM"
-    mkdir -p "$bundle/logs" "$outcome/logs"
-    docker exec "$PROCESS_CONTAINER_ID" cp -a "$PROCESS_TARGET_CHECKOUT" "$container_checkout"
-    docker exec "$PROCESS_CONTAINER_ID" cp -a "$PROCESS_TARGET_CHECKOUT" "$container_candidate"
-    docker exec "$PROCESS_CONTAINER_ID" chown -R \
-        "$(id -u):$(id -g)" "$container_checkout" "$container_candidate"
-
-    local fixture_script="$fixture_root/create-invalid-candidate.sh"
-    cat >"$fixture_script" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-invalid_path="$CANDIDATE/root/module"
-invalid_path+=$'\377'
-invalid_path+='.tf'
-printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' >"$invalid_path"
-git -C "$CANDIDATE" add -N -- "${invalid_path#"$CANDIDATE/"}"
-git -C "$CANDIDATE" diff --binary --full-index --no-color >"$BUNDLE/update.patch"
-git -C "$CHECKOUT" apply --index --binary "$BUNDLE/update.patch"
-EOF
-    chmod 755 "$fixture_script"
-    docker exec \
-        --user "$(id -u):$(id -g)" \
-        --env "CANDIDATE=$container_candidate" \
-        --env "CHECKOUT=$container_checkout" \
-        --env "BUNDLE=$bundle" \
-        "$PROCESS_CONTAINER_ID" /bin/bash "$fixture_script"
-
-    local base_oid control_oid branch_hash patch_digest file_digest manifest_digest
-    base_oid=$(processing_base_oid)
-    control_oid=$(processing_control_oid)
-    branch_hash=$(processing_ref_hash)
-    patch_digest=$(sha256_file "$bundle/update.patch")
-    file_digest=$(sha256_file "$PROCESS_TARGET_CHECKOUT/$declared_path")
-    jq -n \
-        --arg control_oid "$control_oid" \
-        --arg base_oid "$base_oid" \
-        --arg ref_hash "$branch_hash" \
-        --arg state_branch "$PROCESS_STATE_BRANCH" \
-        --arg changed_path "$declared_path" \
-        --arg patch_digest "$patch_digest" \
-        --arg file_digest "$file_digest" \
-        '{schema_version: 2, run_id: "123456", run_attempt: "2",
-          automation_policy_id: "nonproduction", control_oid: $control_oid,
-          state_branch: $state_branch, base_oid: $base_oid, ref_hash: $ref_hash,
-          artifact_name: ("preparation-123456-2-nonproduction-" + $ref_hash),
-          classification: "success", terraform_fmt: false,
-          tools: {terraform: {version: "1.15.5"},
-                  tf_version_bump: {version: "v1.0.0-rc.9",
-                                    archive_sha256: "38428a229a77671fd192fd6a18f5d1f9c404b5557124883f04e6a8bec154b1d2"}},
-          config_path: ".github/tf-version-bump/test.yml", roots: [{path: "root"}],
-          updates: {module_blocks_updated: 0, provider_blocks_updated: 0,
-                    changed_files: [{path: $changed_path, mode: "100644", sha256: $file_digest}],
-                    patch_sha256: $patch_digest},
-          formatting: {ran: false, changed_files: []},
-          final_changed_files: [{path: $changed_path, mode: "100644", sha256: $file_digest}]}' \
-        >"$bundle/manifest.json"
-    manifest_digest=$(sha256_file "$bundle/manifest.json")
-    jq -n \
-        --arg control_oid "$control_oid" \
-        --arg base_oid "$base_oid" \
-        --arg ref_hash "$branch_hash" \
-        --arg state_branch "$PROCESS_STATE_BRANCH" \
-        --arg manifest_digest "$manifest_digest" \
-        '{schema_version: 2, run_id: "123456", run_attempt: "2",
-          automation_policy_id: "nonproduction", control_oid: $control_oid,
-          state_branch: $state_branch, base_oid: $base_oid, ref_hash: $ref_hash,
-          classification: "success", command_status: 0,
-          candidate_manifest_sha256: $manifest_digest}' \
-        >"$outcome/manifest.json"
-
-    local stdout_file="$fixture_root/verify.stdout"
-    local stderr_file="$fixture_root/verify.stderr"
-    if docker exec \
-        --user "$(id -u):$(id -g)" \
-        --env GIT_CONFIG_COUNT=2 \
-        --env GIT_CONFIG_KEY_0=safe.directory \
-        --env "GIT_CONFIG_VALUE_0=$container_checkout" \
-        --env GIT_CONFIG_KEY_1=safe.directory \
-        --env "GIT_CONFIG_VALUE_1=$PROCESS_CONTROL_CHECKOUT" \
-        --env RECONCILE_RUN_ID=123456 \
-        --env RECONCILE_RUN_ATTEMPT=2 \
-        --env RECONCILE_AUTOMATION_POLICY_ID=nonproduction \
-        --env "RECONCILE_CONTROL_OID=$control_oid" \
-        --env "RECONCILE_STATE_BRANCH=$PROCESS_STATE_BRANCH" \
-        --env "RECONCILE_BASE_OID=$base_oid" \
-        --env "RECONCILE_REF_HASH=$branch_hash" \
-        --env "RECONCILE_CONTROL_CHECKOUT=$PROCESS_CONTROL_CHECKOUT" \
-        --env "RECONCILE_PREPARATION_BUNDLE_DIR=$bundle" \
-        --env "RECONCILE_VALIDATION_OUTCOME_DIR=$outcome" \
-        --env "RECONCILE_TARGET_CHECKOUT=$container_checkout" \
-        --env "RECONCILE_VERIFIED_RESULT_DIR=$verified" \
-        "$PROCESS_CONTAINER_ID" /bin/bash "$RECONCILE_SCRIPT" verify \
-        >"$stdout_file" 2>"$stderr_file"; then
-        fail "verification accepted a non-UTF-8 candidate path collision"
-    fi
-    [[ ! -s "$stdout_file" ]] \
-        || fail "non-UTF-8 candidate rejection emitted unexpected stdout"
-    grep -F 'candidate patch path is not valid UTF-8' "$stderr_file" >/dev/null \
-        || fail "non-UTF-8 candidate rejection emitted the wrong diagnostic"
-    [[ ! -e "$verified" ]] \
-        || fail "non-UTF-8 candidate rejection produced a verified result"
-}
-
-test_processing_rejects_gitignored_terraform_file() {
-    # Production break caught: ordinary porcelain status omits an ignored direct `.tf` file, so
-    # target-selected Terraform input bypasses the changed-path allow-list entirely.
-    setup_processing_workspace
-    printf '%s\n' 'root/ignored.tf' >"$PROCESS_TARGET_CHECKOUT/.gitignore"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- ".gitignore"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: ignore hostile Terraform input"
-    printf '%s\n' 'terraform {}' >"$PROCESS_TARGET_CHECKOUT/root/ignored.tf"
-
-    assert_processing_failure \
-        "processing status error: ignored path is forbidden" \
-        "gitignored Terraform file"
-}
-
-test_processing_rejects_deleted_terraform_file() {
-    # Production break caught: a deleted direct `.tf` path is treated as an allowed source change
-    # even though no regular file remains for the future candidate.
-    setup_processing_workspace
-    mv "$PROCESS_TARGET_CHECKOUT/root/main.tf" "$PROCESS_TMP_ROOT/deleted-main.tf"
-
-    local status_output
-    status_output=$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        status --porcelain=v1 --untracked-files=all)
-    [[ "$status_output" == " D root/main.tf" ]] \
-        || fail "deletion fixture did not produce the expected real Git status: $status_output"
-
-    assert_processing_failure \
-        "processing status error: changed path must be a regular non-symlink file" \
-        "deleted Terraform file"
-}
-
-test_processing_rejects_renamed_terraform_file() {
-    # Production break caught: a staged rename between two otherwise allowed direct `.tf` paths
-    # is accepted even though the old path is deleted from the future candidate.
-    setup_processing_workspace
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" mv -- \
-        "root/main.tf" "root/renamed.tf"
-
-    local status_output
-    status_output=$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" \
-        status --porcelain=v1 --untracked-files=all)
-    [[ "$status_output" == "R  root/main.tf -> root/renamed.tf" ]] \
-        || fail "rename fixture did not produce the expected real Git status: $status_output"
-
-    assert_processing_failure \
-        "processing status error: renamed or copied paths are forbidden" \
-        "renamed Terraform file"
-}
-
-test_processing_rejects_changed_terraform_file_not_directly_in_root() {
-    # Production break caught: recursive containment attributes an omitted nested module's change
-    # to its configured ancestor instead of requiring exactly one direct root.
-    setup_processing_workspace
-    mkdir "$PROCESS_TARGET_CHECKOUT/root/child"
-    printf '%s\n' 'terraform {}' >"$PROCESS_TARGET_CHECKOUT/root/child/main.tf"
-    PROCESS_TERRAFORM_ROOTS="root"
-
-    assert_processing_failure \
-        "processing status error: changed Terraform file must be directly within exactly one configured root" \
-        "changed Terraform file below configured root"
-}
-
-test_processing_rejects_mismatched_control_head_before_target_write() {
-    # Production break caught: caller-asserted control identity is copied into the manifest even
-    # when the checked-out config and helper come from a different control revision.
-    setup_processing_workspace
-    PROCESS_CONTROL_OID="1111111111111111111111111111111111111111"
-
-    assert_processing_failure \
-        "processing setup error: control checkout HEAD does not match control OID" \
-        "mismatched control checkout HEAD"
-    grep -F 'required_version = ">= 1.0"' \
-        "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
-        || fail "mismatched control checkout changed target source"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR" ]] \
-        || fail "mismatched control checkout produced a preparation bundle"
-}
-
-test_processing_rejects_mismatched_target_head_before_target_write() {
-    # Production break caught: caller-asserted base identity is copied into the manifest even when
-    # preparation reads and updates a different target revision.
-    setup_processing_workspace
-    PROCESS_BASE_OID="2222222222222222222222222222222222222222"
-
-    assert_processing_failure \
-        "processing setup error: target checkout HEAD does not match base OID" \
-        "mismatched target checkout HEAD"
-    grep -F 'required_version = ">= 1.0"' \
-        "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
-        || fail "mismatched target checkout changed target source"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR" ]] \
-        || fail "mismatched target checkout produced a preparation bundle"
-}
-
-test_processing_rejects_mismatched_ref_hash_before_target_write() {
-    # Production break caught: a caller-asserted branch hash can misname and misbind an artefact
-    # because prepare never recomputes it from the complete state ref.
-    setup_processing_workspace
-    PROCESS_REF_HASH="3333333333333333333333333333333333333333333333333333333333333333"
-
-    assert_processing_failure \
-        "processing setup error: state ref hash does not match ref hash" \
-        "mismatched complete-ref hash"
-    grep -F 'required_version = ">= 1.0"' \
-        "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
-        || fail "mismatched complete-ref hash changed target source"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR" ]] \
-        || fail "mismatched complete-ref hash produced a preparation bundle"
-}
-
-test_processing_prepares_with_released_cli_and_pinned_terraform() {
-    # Production break caught: preparation substitutes a working-tree build, trusts an unchecked
-    # archive, accepts the wrong tool version, or never applies the reviewed config to the direct
-    # Terraform files before initialisation.
-    setup_processing_workspace
-
-    local stdout_file="$PROCESS_TMP_ROOT/preparation.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/preparation.stderr"
-    assert_silent_success "released candidate preparation" \
-        "$stdout_file" "$stderr_file" run_processing_prepare
-    grep -F 'required_version = ">= 1.15.0"' \
-        "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
-        || fail "released CLI did not apply the reviewed Terraform version update"
-}
-
-test_processing_aggregates_released_cli_reports() {
-    # Production break caught: preparation drops or mis-aggregates per-root block counts, or uses
-    # a controlled executable instead of the published updater for the valid report contract.
-    setup_processing_workspace
-    cp -- "$NONPRODUCTION_CONFIG" \
-        "$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
-    mkdir "$PROCESS_TARGET_CHECKOUT/second"
-    local terraform_root
-    for terraform_root in root second; do
-        cat >"$PROCESS_TARGET_CHECKOUT/$terraform_root/main.tf" <<'EOF'
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "4.0.0"
-}
-EOF
-    done
-    "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- \
-        ".github/tf-version-bump/test.yml"
-    fixture_commit "$PROCESS_CONTROL_CHECKOUT" "Processing Test" \
-        "processing-test@example.invalid" "test: configure report aggregation"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- \
-        "root/main.tf" "second/main.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
-        "processing-test@example.invalid" "test: add report aggregation roots"
-
-    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
-    mkdir "$fixture_bin"
-    local stub_body
-    stub_body=$(cat <<'EOF'
-root=${1#-chdir=}
-printf '%s\n' '# controlled lock fixture' >"$root/.terraform.lock.hcl"
-printf '%s\n' 'Terraform has been successfully initialized!'
-EOF
-    )
-    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
-    PROCESS_PATH_PREFIX=$fixture_bin
-    PROCESS_TERRAFORM_ROOTS=$'root\nsecond'
-    prepopulate_verified_processing_release_cache
-
-    local stdout_file="$PROCESS_TMP_ROOT/aggregation.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/aggregation.stderr"
-    assert_silent_success "released multi-root report aggregation" \
-        "$stdout_file" "$stderr_file" run_processing_prepare
-    jq -e '
-      .schema_version == 2 and
-      .classification == "success" and
-      .updates.module_blocks_updated == 2 and
-      .updates.provider_blocks_updated == 2 and
-      (.updates.changed_files | length) >= 2 and
-      .formatting == {ran: false, changed_files: []} and
-      .final_changed_files == .updates.changed_files
-    ' "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null
-    [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]]
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch" ]]
-}
-
-test_processing_init_upgrade_is_opt_in() {
-    # Production break caught: plain init upgrades locked providers, an explicit upgrade
-    # is ignored, or a locked-version conflict silently enables upgrade.
-    local mode expected_version mirror newer_package
-    for mode in unset false true conflict conflict-upgrade; do
-        setup_processing_workspace
-        configure_validation_provider_base
-        mirror="$PROCESS_VALIDATION_FIXTURE_ROOT/provider-mirror/registry.terraform.io/yesdevnull/test"
-        chmod u+w "$mirror"
-        newer_package="$mirror/0.2.0/linux_amd64"
-        mkdir -p "$newer_package"
-        cp "$mirror/0.1.0/linux_amd64/terraform-provider-test_v0.1.0_x5" \
-            "$newer_package/terraform-provider-test_v0.2.0_x5"
-        chmod -R a-w "$mirror"
-        expected_version=0.1.0
-        case "$mode" in
-            false) PROCESS_TERRAFORM_INIT_UPGRADE=false ;;
-            true|conflict-upgrade)
-                PROCESS_TERRAFORM_INIT_UPGRADE=true
-                expected_version=0.2.0
-                ;;
-        esac
-        if [[ "$mode" == conflict* ]]; then
-            printf '%s\n' 'providers:' '  - name: test' '    version: "0.2.0"' \
-                >"$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
-            "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- .github/tf-version-bump/test.yml
-            fixture_commit "$PROCESS_CONTROL_CHECKOUT" "Processing Test" \
-                "processing-test@example.invalid" "test: request a newer locked provider"
-        else
-            sed -i.bak 's/version = "0.1.0"/version = ">= 0.1.0"/' "$PROCESS_TARGET_CHECKOUT/root/main.tf"
-            rm "$PROCESS_TARGET_CHECKOUT/root/main.tf.bak"
-            "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- root/main.tf
-            fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
-                "processing-test@example.invalid" "test: allow both provider releases"
-        fi
-        if [[ "$mode" == conflict ]]; then
-            assert_processing_failure 'processing status error: terraform init failed for Terraform root root' \
-                'locked provider conflict without upgrade'
-            grep -F 'does not match configured version constraint' "$PROCESS_PREPARATION_BUNDLE_DIR/logs/init-1.log" >/dev/null \
-                || fail "plain init did not report the locked provider conflict"
-            jq -e '.classification == "branch-init" and
-                .failure.command == "terraform -chdir=root init -backend=false -input=false -no-color"' \
-                "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-                || fail "init failure did not record the actual non-upgrade command"
-            continue
-        fi
-        assert_silent_success "init upgrade $mode" "$PROCESS_TMP_ROOT/init.stdout" \
-            "$PROCESS_TMP_ROOT/init.stderr" run_processing_prepare
-        grep -F "version     = \"$expected_version\"" "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" >/dev/null \
-            || fail "init upgrade $mode did not select provider $expected_version"
-        "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" reset --hard HEAD >/dev/null
-        assert_silent_success "validate init upgrade $mode" "$PROCESS_TMP_ROOT/validate.stdout" \
-            "$PROCESS_TMP_ROOT/validate.stderr" run_processing_validate
-    done
-}
-
-test_processing_rejects_invalid_init_upgrade_input() {
-    # Production break caught: a malformed upgrade request is silently treated as a boolean.
-    local value
-    for value in '' TRUE 1; do
-        setup_processing_workspace
-        PROCESS_TERRAFORM_INIT_UPGRADE=$value
-        assert_processing_failure 'processing setup error: Terraform init upgrade must be true or false' \
-            'invalid Terraform init upgrade input'
-        [[ -z "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" status --porcelain=v1)" ]] \
-            || fail "invalid upgrade request changed target files"
-        [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR" ]] \
-            || fail "invalid upgrade request produced a preparation bundle"
-    done
-}
-
-test_processing_formatting_disabled() {
-    # Production break caught: preparation formats Terraform files even though the reusable input
-    # is disabled, or records formatting as having run.
-    setup_processing_workspace
-    configure_call_log_terraform_stub
-
-    run_processing_prepare
-
-    jq -e '.terraform_fmt == false and .formatting == {ran: false, changed_files: []}' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "disabled formatting was not represented exactly"
-    ! grep -F 'fmt -recursive' "$PROCESS_TEST_CALL_LOG" >/dev/null \
-        || fail "Terraform formatting ran while disabled"
-}
-
-test_processing_rejects_invalid_formatting_input() {
-    # Production break caught: a truthy spelling other than the exact workflow strings true/false
-    # enables formatting or is silently normalised.
-    setup_processing_workspace
-    PROCESS_TERRAFORM_FMT=TRUE
-
-    assert_processing_failure \
-        "processing setup error: Terraform formatting must be true or false" \
-        "invalid Terraform formatting input"
-    grep -F 'required_version = ">= 1.0"' \
-        "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
-        || fail "invalid Terraform formatting input changed target source"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR" ]] \
-        || fail "invalid Terraform formatting input produced a preparation bundle"
-}
-
-test_processing_skips_formatting_without_update_diff() {
-    # Production break caught: enabled formatting runs without an aggregate update/init diff, or
-    # an ineligible branch loses the requested input value in its manifest.
-    setup_processing_workspace
-    printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' \
-        >"$PROCESS_TARGET_CHECKOUT/root/main.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/main.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
-        "processing-test@example.invalid" "test: create formatting-ineligible fixture"
-    configure_call_log_terraform_stub
-    PROCESS_TERRAFORM_FMT=true
-
-    run_processing_prepare
-
-    jq -e '.classification == "no-change" and .terraform_fmt == true and
-           .formatting == {ran: false, changed_files: []}' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "ineligible formatting was not skipped exactly"
-    ! grep -F 'fmt -recursive' "$PROCESS_TEST_CALL_LOG" >/dev/null \
-        || fail "Terraform formatting ran without an update diff"
-}
-
-test_processing_formats_nested_files_from_every_root() {
-    # Production break caught: enabled formatting omits a declared root, does not recurse into
-    # nested Terraform files, or reports one formatted path more than once.
-    setup_processing_workspace
-    local terraform_root
-    for terraform_root in root-a root-b; do
-        mkdir -p "$PROCESS_TARGET_CHECKOUT/$terraform_root/nested"
-        printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
-            >"$PROCESS_TARGET_CHECKOUT/$terraform_root/main.tf"
-        printf '%s\n' 'locals { nested={value="unformatted"} }' \
-            >"$PROCESS_TARGET_CHECKOUT/$terraform_root/nested/child.tf"
-    done
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- \
-        "root-a/main.tf" "root-a/nested/child.tf" \
-        "root-b/main.tf" "root-b/nested/child.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
-        "processing-test@example.invalid" "test: add recursive formatting roots"
-    configure_call_log_terraform_stub
-    PROCESS_TERRAFORM_ROOTS=$'root-a\nroot-b'
-    PROCESS_TERRAFORM_FMT=true
-
-    run_processing_prepare
-
-    [[ "$(grep -Fxc 'terraform -chdir=root-a fmt -recursive' "$PROCESS_TEST_CALL_LOG")" -eq 1 ]] \
-        || fail "Terraform formatting did not run exactly once from root-a"
-    [[ "$(grep -Fxc 'terraform -chdir=root-b fmt -recursive' "$PROCESS_TEST_CALL_LOG")" -eq 1 ]] \
-        || fail "Terraform formatting did not run exactly once from root-b"
-    [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch" ]] \
-        || fail "recursive formatting did not produce format.patch"
-    jq -e '[.formatting.changed_files[].path] ==
-           ["root-a/nested/child.tf", "root-b/nested/child.tf"]' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "recursive formatting paths were not exact and sorted"
-}
-
-test_processing_deduplicates_formatting_paths_for_overlapping_roots() {
-    # Production break caught: overlapping recursive roots duplicate one Git path in formatting
-    # metadata even though both declared formatter invocations are retained.
-    setup_processing_workspace
-    mkdir -p "$PROCESS_TARGET_CHECKOUT/root/nested/deeper"
-    printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
-        >"$PROCESS_TARGET_CHECKOUT/root/nested/main.tf"
-    printf '%s\n' 'locals { nested={value="unformatted"} }' \
-        >"$PROCESS_TARGET_CHECKOUT/root/nested/deeper/child.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- \
-        "root/nested/main.tf" "root/nested/deeper/child.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
-        "processing-test@example.invalid" "test: add overlapping formatting roots"
-    configure_call_log_terraform_stub
-    PROCESS_TERRAFORM_ROOTS=$'root\nroot/nested'
-    PROCESS_TERRAFORM_FMT=true
-
-    run_processing_prepare
-
-    [[ "$(grep -Fxc 'terraform -chdir=root fmt -recursive' "$PROCESS_TEST_CALL_LOG")" -eq 1 \
-        && "$(grep -Fxc 'terraform -chdir=root/nested fmt -recursive' "$PROCESS_TEST_CALL_LOG")" -eq 1 ]] \
-        || fail "overlapping roots did not each receive one recursive formatter invocation"
-    jq -e '[.formatting.changed_files[].path] ==
-           ["root/nested/deeper/child.tf"]' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "overlapping roots duplicated or widened formatting metadata"
-}
-
-test_processing_formatting_without_diff_omits_patch() {
-    # Production break caught: a successful formatting invocation with no stage diff is recorded
-    # as skipped or emits an empty format patch.
-    setup_processing_workspace
-    cat >"$PROCESS_TARGET_CHECKOUT/root/main.tf" <<'EOF'
-terraform {
-  required_version = ">= 1.0"
-}
-EOF
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/main.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
-        "processing-test@example.invalid" "test: add already-formatted Terraform root"
-    configure_call_log_terraform_stub
-    PROCESS_TERRAFORM_FMT=true
-
-    run_processing_prepare
-
-    jq -e '.classification == "success" and .formatting.ran == true and
-           .formatting.changed_files == [] and (.formatting | has("patch_sha256") | not)' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "unchanged formatting metadata was not exact"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch" ]] \
-        || fail "unchanged formatting emitted format.patch"
-}
-
-test_processing_formatting_can_cancel_update_diff() {
-    # Production break caught: formatting that restores the exact base still publishes stale
-    # intermediate patches or is classified as a successful final change.
-    setup_processing_workspace
-    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
-    mkdir "$fixture_bin"
-    local stub_body
-    stub_body=$(cat <<'EOF'
-if [[ "${2:-}" == "fmt" && "${3:-}" == "-recursive" ]]; then
-    terraform_root=${1#-chdir=}
-    printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
-        >"$terraform_root/main.tf"
-fi
-EOF
-    )
-    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
-    PROCESS_PATH_PREFIX=$fixture_bin
-    PROCESS_TERRAFORM_FMT=true
-    prepopulate_verified_processing_release_cache
-
-    run_processing_prepare
-
-    jq -e '.classification == "no-change" and
-           .formatting.ran == true and
-           .updates.changed_files == [] and
-           .formatting.changed_files == [] and
-           .final_changed_files == []' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "formatting cancellation did not produce final no-change metadata"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]] \
-        || fail "formatting cancellation retained update.patch"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch" ]] \
-        || fail "formatting cancellation retained format.patch"
-
-    run_processing_validate
-    jq -e '.classification == "no-change" and .command_status == 0' \
-        "$PROCESS_VALIDATION_OUTCOME_DIR/manifest.json" >/dev/null \
-        || fail "formatting cancellation did not complete no-change validation"
-}
-
-test_processing_format_failure_is_bounded() {
-    # Production break caught: a recursive formatter failure loses its root/status/log attribution
-    # or exposes a partial update or format patch.
-    setup_processing_workspace
-    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
-    mkdir "$fixture_bin"
-    local stub_body
-    stub_body=$(cat <<'EOF'
-if [[ "${2:-}" == "fmt" && "${3:-}" == "-recursive" ]]; then
-    printf '%s\n' 'controlled recursive formatting failure' >&2
-    exit 9
-fi
-EOF
-    )
-    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
-    PROCESS_PATH_PREFIX=$fixture_bin
-    PROCESS_TERRAFORM_FMT=true
-    prepopulate_verified_processing_release_cache
-
-    local stdout_file="$PROCESS_TMP_ROOT/format-failure.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/format-failure.stderr"
-    if run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
-        fail "recursive formatting failure succeeded"
-    fi
-    [[ ! -s "$stdout_file" ]] \
-        || fail "recursive formatting failure emitted unexpected stdout"
-    grep -F 'processing status error: terraform fmt failed for Terraform root root' \
-        "$stderr_file" >/dev/null \
-        || fail "recursive formatting failure emitted the wrong diagnostic"
-    jq -e '.classification == "branch-format" and
-           .failure == {stage: "terraform fmt", root: "root",
-                       command: "terraform -chdir=root fmt -recursive", status: 9}' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "recursive formatting failure manifest was not exact"
-    [[ "$(<"$PROCESS_PREPARATION_BUNDLE_DIR/logs/format-1.log")" \
-        == "controlled recursive formatting failure" ]] \
-        || fail "recursive formatting failure log was not retained exactly"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" \
-        && ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch" ]] \
-        || fail "recursive formatting failure exposed a patch"
-}
-
-test_processing_rejects_unsafe_recursive_formatting_paths() {
-    # Production breaks caught: recursive formatting can report a nested file outside every root,
-    # a .terraform entry, a symlink, executable content, invalid UTF-8, or a non-.tf path.
-    local row expected_diagnostic
-    while IFS=$'\t' read -r row expected_diagnostic; do
-        setup_processing_workspace
-        local fixture_path=""
-        case "$row" in
-            nested-outside)
-                fixture_path="other/nested/child.tf"
-                mkdir -p "$PROCESS_TARGET_CHECKOUT/other/nested"
-                printf '%s\n' 'locals { value = "base" }' \
-                    >"$PROCESS_TARGET_CHECKOUT/$fixture_path"
-                ;;
-            symlink|executable)
-                fixture_path="root/nested/child.tf"
-                mkdir -p "$PROCESS_TARGET_CHECKOUT/root/nested"
-                printf '%s\n' 'locals { value = "base" }' \
-                    >"$PROCESS_TARGET_CHECKOUT/$fixture_path"
-                ;;
-            undeclared)
-                fixture_path="root/nested/notes.txt"
-                mkdir -p "$PROCESS_TARGET_CHECKOUT/root/nested"
-                printf '%s\n' 'base' >"$PROCESS_TARGET_CHECKOUT/$fixture_path"
-                ;;
-            dot-terraform)
-                fixture_path=".gitignore"
-                printf '%s\n' 'root/.terraform/' \
-                    >"$PROCESS_TARGET_CHECKOUT/$fixture_path"
-                ;;
-            ignored)
-                fixture_path=".gitignore"
-                printf '%s\n' 'root/nested/generated.tf' \
-                    >"$PROCESS_TARGET_CHECKOUT/$fixture_path"
-                ;;
-            invalid-utf8) ;;
-            *) fail "unknown unsafe formatting fixture: $row" ;;
-        esac
-        if [[ -n "$fixture_path" ]]; then
-            "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "$fixture_path"
-            fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
-                "processing-test@example.invalid" "test: add $row formatting fixture"
-        fi
-
-        local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
-        mkdir "$fixture_bin"
-        local stub_body
-        case "$row" in
-            nested-outside)
-                stub_body=$(cat <<'EOF'
-if [[ "${2:-}" == "fmt" ]]; then
-    printf '%s\n' 'locals { value = "changed" }' \
-        >"${PROCESS_TARGET_CHECKOUT:?}/other/nested/child.tf"
-fi
-EOF
-                )
-                ;;
-            dot-terraform)
-                stub_body=$(cat <<'EOF'
-if [[ "${2:-}" == "fmt" ]]; then
-    mkdir -p "${PROCESS_TARGET_CHECKOUT:?}/root/.terraform"
-    printf '%s\n' 'locals { value = "changed" }' \
-        >"$PROCESS_TARGET_CHECKOUT/root/.terraform/child.tf"
-fi
-EOF
-                )
-                ;;
-            symlink)
-                stub_body=$(cat <<'EOF'
-if [[ "${2:-}" == "fmt" ]]; then
-    rm -- "${PROCESS_TARGET_CHECKOUT:?}/root/nested/child.tf"
-    ln -s ../main.tf "$PROCESS_TARGET_CHECKOUT/root/nested/child.tf"
-fi
-EOF
-                )
-                ;;
-            executable)
-                stub_body=$(cat <<'EOF'
-if [[ "${2:-}" == "fmt" ]]; then
-    chmod 755 "${PROCESS_TARGET_CHECKOUT:?}/root/nested/child.tf"
-fi
-EOF
-                )
-                ;;
-            invalid-utf8)
-                stub_body=$(cat <<'EOF'
-if [[ "${2:-}" == "fmt" ]]; then
-    invalid_path="${PROCESS_TARGET_CHECKOUT:?}/root/nested"
-    invalid_path+=$'\377'
-    invalid_path+='.tf'
-    printf '%s\n' 'locals { value = "changed" }' >"$invalid_path"
-fi
-EOF
-                )
-                ;;
-            ignored)
-                stub_body=$(cat <<'EOF'
-if [[ "${2:-}" == "fmt" ]]; then
-    mkdir -p "${PROCESS_TARGET_CHECKOUT:?}/root/nested"
-    printf '%s\n' 'locals { generated = true }' \
-        >"$PROCESS_TARGET_CHECKOUT/root/nested/generated.tf"
-fi
-EOF
-                )
-                ;;
-            undeclared)
-                stub_body=$(cat <<'EOF'
-if [[ "${2:-}" == "fmt" ]]; then
-    printf '%s\n' 'changed' \
-        >"${PROCESS_TARGET_CHECKOUT:?}/root/nested/notes.txt"
-fi
-EOF
-                )
-                ;;
-        esac
-        write_terraform_stub "$fixture_bin/terraform" "$stub_body"
-        PROCESS_PATH_PREFIX=$fixture_bin
-        PROCESS_TERRAFORM_FMT=true
-        prepopulate_verified_processing_release_cache
-        ensure_processing_container
-
-        local host_target=$PROCESS_TARGET_CHECKOUT
-        local container_target="/tmp/tf-version-bump-format-policy-$row-$RANDOM"
-        PROCESS_BASE_OID=$(processing_base_oid)
-        PROCESS_CONTROL_OID=$(processing_control_oid)
-        docker exec "$PROCESS_CONTAINER_ID" cp -a "$host_target" "$container_target"
-        docker exec "$PROCESS_CONTAINER_ID" chown -R \
-            "$(id -u):$(id -g)" "$container_target"
-        PROCESS_TARGET_CHECKOUT=$container_target
-
-        local stdout_file="$PROCESS_TMP_ROOT/$row.stdout"
-        local stderr_file="$PROCESS_TMP_ROOT/$row.stderr"
-        if run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
-            fail "$row recursive formatting path succeeded"
-        fi
-        grep -F "$expected_diagnostic" "$stderr_file" >/dev/null \
-            || fail "$row recursive formatting path emitted the wrong diagnostic: $(<"$stderr_file")"
-        [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR" \
-            && ! -e "$PROCESS_VALIDATION_OUTCOME_DIR" ]] \
-            || fail "$row recursive formatting path produced a consumable result"
-    done <<'EOF'
-nested-outside	formatted Terraform file must be beneath a configured root
-dot-terraform	formatting changed a path beneath .terraform
-symlink	changed path must be a regular non-symlink file
-executable	changed file mode must be 100644
-invalid-utf8	changed path is not valid UTF-8
-undeclared	formatting changed a non-Terraform path
-ignored	ignored path is forbidden
-EOF
-}
-
-test_processing_rejects_invalid_update_reports_as_automation() {
-    # Production break caught: preparation accepts absent, malformed, non-v2, non-integral, or
-    # extended updater reports and exposes their partial working-tree changes for publication.
-    local row report_payload
-    while IFS=$'\t' read -r row report_payload; do
-        setup_processing_workspace
-        write_controlled_update_report_archive "$report_payload"
-
-        local stdout_file="$PROCESS_TMP_ROOT/$row.stdout"
-        local stderr_file="$PROCESS_TMP_ROOT/$row.stderr"
-        if run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
-            fail "$row update report succeeded"
-        fi
-        [[ ! -s "$stdout_file" ]] \
-            || fail "$row update report emitted unexpected stdout"
-        jq -e '
-          .schema_version == 2 and
-          .classification == "automation" and
-          .failure.stage == "tf-version-bump report" and
-          has("updates") == false
-        ' "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null
-        [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]]
-        [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch" ]]
-    done <<'EOF'
-missing	__MISSING__
-malformed	not json
-schema-1	{"schema_version":1,"terraform_blocks_updated":0,"module_blocks_updated":0,"provider_blocks_updated":0}
-missing-terraform-count	{"schema_version":2,"module_blocks_updated":0,"provider_blocks_updated":0}
-negative-terraform-count	{"schema_version":2,"terraform_blocks_updated":-1,"module_blocks_updated":0,"provider_blocks_updated":0}
-fractional-terraform-count	{"schema_version":2,"terraform_blocks_updated":1.5,"module_blocks_updated":0,"provider_blocks_updated":0}
-negative-module-count	{"schema_version":2,"terraform_blocks_updated":0,"module_blocks_updated":-1,"provider_blocks_updated":0}
-fractional-provider-count	{"schema_version":2,"terraform_blocks_updated":0,"module_blocks_updated":0,"provider_blocks_updated":1.5}
-extra-key	{"schema_version":2,"terraform_blocks_updated":0,"module_blocks_updated":0,"provider_blocks_updated":0,"extra":true}
-EOF
-}
-
-test_processing_rejects_release_archive_before_extraction_on_checksum_mismatch() {
-    # Production break caught: an archive whose bytes do not match the recorded release digest is
-    # extracted or executed before the mismatch is rejected.
-    setup_processing_workspace
-    PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
-
-    assert_processing_failure \
-        "processing setup error: tf-version-bump release archive checksum mismatch" \
-        "release archive checksum mismatch"
-    [[ -z "$(find "$PROCESS_RUNNER_TEMP" -type f -name tf-version-bump -print -quit)" ]] \
-        || fail "checksum-mismatched release archive was extracted before rejection"
-    [[ -z "$(find "$PROCESS_RUNNER_TEMP" -mindepth 1 -maxdepth 1 \
-        -type d \( -name 'tf-version-bump-data.*' -o -name 'preparation-bundle-stage.*' \) \
-        -print -quit)" ]] \
-        || fail "checksum failure did not clean private preparation staging"
-}
-
-test_processing_verifies_exact_terraform_version_before_target_writes() {
-    # Production break caught: a mismatched setup-terraform binary is discovered only after the
-    # updater has already changed target-controlled source files.
-    setup_processing_workspace
-    PROCESS_TERRAFORM_VERSION="1.15.4"
-
-    assert_processing_failure \
-        "processing setup error: Terraform reported an unexpected version" \
-        "mismatched Terraform version"
-    grep -F 'required_version = ">= 1.0"' \
-        "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
-        || fail "target source changed before Terraform version verification"
-}
-
-test_processing_rejects_expired_deadline_before_workspace_setup() {
-    # Production break caught: prepare begins path/setup work and allocates trusted data after the
-    # pre-recorded absolute branch budget has already expired.
-    setup_processing_workspace
-    PROCESS_PREPARATION_DEADLINE_EPOCH=$(($(date +%s) - 1))
-
-    assert_processing_failure \
-        "processing setup error: preparation deadline expired before workspace setup" \
-        "expired preparation deadline"
-    [[ -z "$(find "$PROCESS_RUNNER_TEMP" -mindepth 1 -maxdepth 1 \
-        -type d -name 'tf-version-bump-data.*' -print -quit)" ]] \
-        || fail "expired preparation deadline allocated trusted Terraform data"
-}
-
-test_processing_initialises_with_remaining_absolute_deadline() {
-    # Production break caught: preparation renews its budget after setup, writes `.terraform`
-    # beneath the checkout, skips initialisation, or omits the backend/input/colour safety flags.
-    setup_processing_workspace
-    cat >>"$PROCESS_TARGET_CHECKOUT/root/main.tf" <<'EOF'
-
-terraform {
-  backend "http" {
-    address = "http://127.0.0.1:1/state"
-  }
-}
-EOF
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/main.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add disabled backend fixture"
-    PROCESS_PREPARATION_DEADLINE_EPOCH=$(($(date +%s) + 1200))
-
-    local stdout_file="$PROCESS_TMP_ROOT/init.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/init.stderr"
-    assert_silent_success "deadline-bound Terraform initialisation" \
-        "$stdout_file" "$stderr_file" run_processing_prepare
-    [[ ! -e "$PROCESS_TARGET_CHECKOUT/root/.terraform" ]] \
-        || fail "Terraform initialisation wrote data inside the target checkout"
-
-    local init_log
-    init_log=$(find "$PROCESS_RUNNER_TEMP" -type f -name 'init-1.log' -print -quit)
-    [[ -n "$init_log" ]] || fail "Terraform initialisation did not produce its captured log"
-    grep -F 'Terraform has been successfully initialized!' "$init_log" >/dev/null \
-        || fail "Terraform initialisation did not complete with backend disabled"
-}
-
-configure_processing_provider_root() {
-    cat >"$PROCESS_TARGET_CHECKOUT/root/main.tf" <<'EOF'
-terraform {
-  required_version = ">= 1.0"
-
-  required_providers {
-    null = {
-      source  = "hashicorp/null"
-      version = "3.2.4"
-    }
-  }
-}
-EOF
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/main.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add provider processing fixture"
-}
-
-test_processing_rejects_ignored_new_provider_lock() {
-    # Production break caught: a provider package is installed but its newly generated lock file
-    # is ignored, so the candidate cannot persist the provider selection reproducibly.
-    setup_processing_workspace
-    configure_processing_provider_root
-    printf '%s\n' 'root/.terraform.lock.hcl' >"$PROCESS_TARGET_CHECKOUT/.gitignore"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- ".gitignore"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: ignore generated provider lock"
-
-    assert_processing_failure \
-        "processing status error: required provider lock file is ignored for Terraform root root" \
-        "ignored newly required provider lock"
-    [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" ]] \
-        || fail "ignored required lock did not preserve an automation failure manifest"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]] \
-        || fail "ignored required lock exposed a publishable patch"
-    jq -e \
-        '.classification == "automation" and .failure.root == "root"' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "ignored required lock was not classified as repository-policy automation failure"
-    [[ -z "$(find "$PROCESS_RUNNER_TEMP" -mindepth 1 -maxdepth 1 \
-        -type d -name 'tf-version-bump-data.*' -print -quit)" ]] \
-        || fail "ignored required lock did not clean trusted Terraform data"
-}
-
-test_processing_init_timeout_preserves_failure_bundle_after_shared_budget() {
-    # Production break caught: each root receives a fresh timeout, a later-root timeout loses its
-    # deterministic root/stage attribution, or normal timeout handling exits before cleanup and
-    # uploadable failure-bundle creation.
-    setup_processing_workspace
-    mkdir "$PROCESS_TARGET_CHECKOUT/second"
-    printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
-        >"$PROCESS_TARGET_CHECKOUT/second/main.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "second/main.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add second deadline root"
-
-    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
-    mkdir "$fixture_bin"
-    local stub_body
-    stub_body=$(cat <<'EOF'
-root=${1#-chdir=}
-printf '%s\n' "${root##*/}" >>"${PROCESS_TEST_CALL_LOG:?}"
-if [[ "${root##*/}" == "root" ]]; then
-    sleep 2
-else
-    trap '' TERM
-    sleep 20
-fi
-printf '%s\n' 'Terraform has been successfully initialized!'
-EOF
-    )
-    write_terraform_stub "$fixture_bin/terraform" "$stub_body" 1
-
-    PROCESS_PATH_PREFIX=$fixture_bin
-    PROCESS_TEST_CALL_LOG="$PROCESS_TMP_ROOT/terraform-calls.log"
-    PROCESS_TERRAFORM_ROOTS=$'root\nsecond'
-    prepopulate_verified_processing_release_cache
-    ensure_processing_container
-    local preparation_deadline_seconds=6
-    PROCESS_PREPARATION_DEADLINE_EPOCH=$(($(date +%s) + preparation_deadline_seconds))
-
-    local started_at
-    started_at=$(date +%s)
-    assert_processing_failure \
-        "processing status error: terraform init timed out for Terraform root second" \
-        "shared-budget second-root init timeout"
-    local elapsed=$(( $(date +%s) - started_at ))
-    # The ceiling is the deadline plus the script's own kill-after grace (--kill-after=1s) plus a
-    # generous fixed allowance for scheduling/docker-exec overhead on a loaded runner. The property
-    # under test is that one absolute budget is honoured and kill-after is applied -- not a tight
-    # bound on wall-clock overhead.
-    local kill_after_grace_seconds=1
-    local overhead_allowance_seconds=5
-    local elapsed_ceiling=$((preparation_deadline_seconds + kill_after_grace_seconds + overhead_allowance_seconds))
-    [[ "$elapsed" -le "$elapsed_ceiling" ]] \
-        || fail "non-returning init exceeded the one absolute preparation deadline plus its kill-after grace: ${elapsed}s (ceiling ${elapsed_ceiling}s)"
-    [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" ]] \
-        || fail "init timeout did not preserve an uploadable failure manifest"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]] \
-        || fail "init timeout exposed a publishable candidate patch"
-    jq -e \
-        '.classification == "branch-init" and .failure.root == "second"' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "init timeout manifest did not attribute branch-init to the second root"
-    [[ -z "$(find "$PROCESS_RUNNER_TEMP" -mindepth 1 -maxdepth 1 \
-        -type d -name 'tf-version-bump-data.*' -print -quit)" ]] \
-        || fail "init timeout did not clean trusted Terraform data"
-    [[ "$(<"$PROCESS_TEST_CALL_LOG")" == $'root\nsecond' ]] \
-        || fail "sequential roots were not attempted in configured order"
-}
-
-test_processing_timeout_terminates_the_supervised_process_tree() {
-    # Production break caught: foreground timeout kills only the directly supervised shell, so a
-    # target-controlled descendant can outlive preparation and act after cleanup.
-    setup_processing_workspace
-    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
-    mkdir "$fixture_bin"
-    local stub_body
-    stub_body=$(cat <<'EOF'
-trap '' TERM
-(
-    sleep 6
-    printf '%s\n' 'descendant survived timeout' >"${PROCESS_TEST_CALL_LOG:?}.sentinel"
-) &
-printf '%s\n' "$!" >"${PROCESS_TEST_CALL_LOG:?}.pid"
-wait
-EOF
-    )
-    write_terraform_stub "$fixture_bin/terraform" "$stub_body"
-
-    PROCESS_PATH_PREFIX=$fixture_bin
-    PROCESS_TEST_CALL_LOG="$PROCESS_TMP_ROOT/process-tree"
-    prepopulate_verified_processing_release_cache
-    ensure_processing_container
-    PROCESS_PREPARATION_DEADLINE_EPOCH=$(($(date +%s) + 4))
-
-    assert_processing_failure \
-        "processing status error: terraform init timed out for Terraform root root" \
-        "process-tree init timeout"
-    [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" \
-        && ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]] \
-        || fail "process-tree timeout did not preserve a non-publishable failure bundle"
-    sleep 4
-    [[ ! -e "$PROCESS_TEST_CALL_LOG.sentinel" ]] \
-        || fail "supervised descendant survived timeout and wrote after cleanup"
-}
-
-# Shared by test_processing_aggregate_update_failure_has_no_publishable_patch and
-# test_processing_failure_manifest_binds_candidate_lineage: a workspace where rc.9's own
-# aggregate non-zero status (after it has already changed a valid sibling file) fails prepare.
-create_aggregate_update_failure_fixture() {
-    setup_processing_workspace
-    printf '%s\n' 'terraform {' >"$PROCESS_TARGET_CHECKOUT/root/broken.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/broken.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add aggregate update failure"
-
-    assert_processing_failure \
-        "processing status error: tf-version-bump failed for Terraform root root" \
-        "aggregate tf-version-bump failure"
-}
-
-test_processing_aggregate_update_failure_has_no_publishable_patch() {
-    # Production break caught: rc.9's aggregate non-zero status is ignored after it changes a
-    # valid sibling file, allowing a partial source update to become a publishable candidate.
-    create_aggregate_update_failure_fixture
-    grep -F 'required_version = ">= 1.15.0"' \
-        "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
-        || fail "aggregate failure fixture did not prove a later valid file was updated"
-    [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" ]] \
-        || fail "aggregate update failure did not preserve its failure manifest"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]] \
-        || fail "aggregate update failure exposed a publishable candidate patch"
-    jq -e \
-        '.classification == "branch-update" and .failure.root == "root"' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "aggregate update failure was not classified for the affected root"
-}
-
-test_processing_failure_manifest_binds_candidate_lineage() {
-    # Production break caught: a non-publishable failure bundle can cross run attempts, policies,
-    # control/base revisions, or state refs because its upload identity is not manifest-bound.
-    create_aggregate_update_failure_fixture
-    local expected_control_oid
-    local expected_base_oid
-    local expected_ref_hash
-    expected_control_oid=$(processing_control_oid)
-    expected_base_oid=$(processing_base_oid)
-    expected_ref_hash=$(processing_ref_hash)
-    jq -e \
-        --arg control_oid "$expected_control_oid" \
-        --arg base_oid "$expected_base_oid" \
-        --arg ref_hash "$expected_ref_hash" \
-        '.schema_version == 2 and
-         .run_id == "123456" and .run_attempt == "2" and
-         .automation_policy_id == "nonproduction" and
-         .control_oid == $control_oid and
-         .state_branch == "state/nonproduction/example-thing" and
-         .base_oid == $base_oid and
-         .ref_hash == $ref_hash and
-         .artifact_name == ("preparation-123456-2-nonproduction-" + $ref_hash)' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "failure manifest did not bind its immutable candidate lineage"
-}
-
-ensure_successful_preparation_bundle() {
-    if [[ "$SUCCESSFUL_PREPARATION_READY" == "true" ]]; then
-        return
-    fi
-
-    setup_processing_workspace
-    configure_processing_provider_root
-    mkdir "$PROCESS_TARGET_CHECKOUT/provider-free"
-    printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
-        >"$PROCESS_TARGET_CHECKOUT/provider-free/main.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "provider-free/main.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add provider-free preparation root"
-    PROCESS_TERRAFORM_ROOTS=$'root\nprovider-free'
-
-    local stdout_file="$PROCESS_TMP_ROOT/success.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/success.stderr"
-    assert_silent_success "successful provider and provider-free preparation" \
-        "$stdout_file" "$stderr_file" run_processing_prepare
-    [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" ]] \
-        || fail "successful preparation did not produce a manifest"
-    SUCCESSFUL_PREPARATION_READY=true
-}
-
-test_processing_success_manifest_binds_run_and_repository_identity() {
-    # Production break caught: a candidate can be consumed under a different run attempt, policy,
-    # control revision, state ref, base revision, or full-ref hash.
-    ensure_successful_preparation_bundle
-    local expected_control_oid
-    local expected_base_oid
-    local expected_ref_hash
-    expected_control_oid=$(processing_control_oid)
-    expected_base_oid=$(processing_base_oid)
-    expected_ref_hash=$(processing_ref_hash)
-    jq -e \
-        --arg control_oid "$expected_control_oid" \
-        --arg base_oid "$expected_base_oid" \
-        --arg ref_hash "$expected_ref_hash" \
-        '.run_id == "123456" and .run_attempt == "2" and
-         .automation_policy_id == "nonproduction" and
-         .control_oid == $control_oid and
-         .state_branch == "state/nonproduction/example-thing" and
-         .base_oid == $base_oid and
-         .ref_hash == $ref_hash' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "successful manifest did not bind the immutable run/repository identity"
-}
-
-test_processing_success_manifest_binds_config_and_tool_pins() {
-    # Production break caught: verification cannot reproduce the candidate because the reviewed
-    # config or one of the exact updater/archive/Terraform pins is missing or ambiguous.
-    ensure_successful_preparation_bundle
-    jq -e \
-        --arg tf_version_bump_version "$TF_VERSION_BUMP_VERSION" \
-        --arg tf_version_bump_archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" \
-        '.config_path == ".github/tf-version-bump/test.yml" and
-         .tools.tf_version_bump.version == $tf_version_bump_version and
-         .tools.tf_version_bump.archive_sha256 == $tf_version_bump_archive_sha256 and
-         .tools.terraform.version == "1.15.5" and
-         (.tools.terraform | has("image") | not)' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "successful manifest did not bind the config and exact tool pins"
-}
-
-test_processing_success_manifest_omits_provider_dependency_state() {
-    # Production break caught: same-run provider-init details leak into the immutable candidate
-    # contract, despite no later stage consuming them.
-    ensure_successful_preparation_bundle
-    [[ -f "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" \
-        && ! -L "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" ]] \
-        || fail "provider root did not retain a regular generated lock file"
-    [[ ! -e "$PROCESS_TARGET_CHECKOUT/provider-free/.terraform.lock.hcl" ]] \
-        || fail "provider-free root unexpectedly received a lock file"
-    jq -e \
-        '.roots == [{path: "root"}, {path: "provider-free"}]' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "successful manifest retained provider dependency state"
-}
-
-test_processing_success_bundle_has_immutable_binary_patch_and_artifact_key() {
-    # Production break caught: the candidate has no replayable binary patch, its recorded digest
-    # does not bind the bytes, or two run attempts/policies/full refs can collide on one artefact.
-    ensure_successful_preparation_bundle
-    local patch_file="$PROCESS_PREPARATION_BUNDLE_DIR/update.patch"
-    [[ -f "$patch_file" && ! -L "$patch_file" ]] \
-        || fail "successful preparation did not create a regular binary patch"
-    local permissions
-    permissions=$(processing_container_file_mode "$patch_file")
-    [[ "$permissions" == "444" ]] \
-        || fail "candidate patch was not made read-only: $permissions"
-    local patch_sha256
-    patch_sha256=$(sha256_file "$patch_file")
-    local expected_ref_hash
-    expected_ref_hash=$(processing_ref_hash)
-    jq -e \
-        --arg patch_sha256 "$patch_sha256" \
-        --arg ref_hash "$expected_ref_hash" \
-        '.artifact_name == ("preparation-123456-2-nonproduction-" + $ref_hash) and
-         .updates.patch_sha256 == $patch_sha256' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "manifest did not bind the artifact key and exact patch bytes"
-
-    local replay_checkout="$PROCESS_TMP_ROOT/replay"
-    "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$replay_checkout"
-    "$TEST_GIT" -C "$replay_checkout" apply --binary "$patch_file"
-    grep -F 'required_version = ">= 1.15.0"' "$replay_checkout/root/main.tf" >/dev/null \
-        || fail "binary patch did not replay the source update"
-    [[ -f "$replay_checkout/root/.terraform.lock.hcl" ]] \
-        || fail "binary patch did not replay the new provider lock"
-}
-
-test_processing_success_manifest_records_changed_paths_modes_and_hashes() {
-    # Production break caught: verification cannot constrain the patch because a changed source
-    # or lock path, Git mode, or exact post-update file digest is absent or wrong.
-    ensure_successful_preparation_bundle
-    local manifest="$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-    jq -e \
-        '[.updates.changed_files[].path] == [
-          "provider-free/main.tf",
-          "root/.terraform.lock.hcl",
-          "root/main.tf"
-        ] and all(.updates.changed_files[]; .mode == "100644")' \
-        "$manifest" >/dev/null \
-        || fail "manifest did not record the exact sorted changed paths and Git modes"
-
-    local relative_path
-    local expected_sha256
-    local recorded_sha256
-    for relative_path in \
-        "provider-free/main.tf" \
-        "root/.terraform.lock.hcl" \
-        "root/main.tf"; do
-        expected_sha256=$(sha256_file "$PROCESS_TARGET_CHECKOUT/$relative_path")
-        recorded_sha256=$(jq -er \
-            --arg path "$relative_path" \
-            '.updates.changed_files[] | select(.path == $path) | .sha256' \
-            "$manifest")
-        [[ "$recorded_sha256" == "$expected_sha256" ]] \
-            || fail "manifest recorded the wrong SHA-256 for $relative_path"
-    done
-}
-
-test_processing_success_manifest_records_correct_mode_for_glob_metacharacter_path() {
-    # Production break caught: a changed filename containing pathspec glob metacharacters (e.g.
-    # "a[5].tf") made a per-path `git ls-files --stage` mode lookup match a differently permissioned
-    # sibling file instead of itself, corrupting the recorded mode -- which verification later
-    # trusts as its executable-smuggling check.
-    setup_processing_workspace
-    printf '%s\n' 'terraform { required_version = ">= 1.0" }' \
-        >"$PROCESS_TARGET_CHECKOUT/root/a[5].tf"
-    printf '%s\n' 'resource "null_resource" "sibling" {}' \
-        >"$PROCESS_TARGET_CHECKOUT/root/a5.tf"
-    chmod 755 "$PROCESS_TARGET_CHECKOUT/root/a5.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/a[5].tf" "root/a5.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: add glob-metacharacter sibling fixture"
-
-    local stdout_file="$PROCESS_TMP_ROOT/glob-metacharacter.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/glob-metacharacter.stderr"
-    if ! run_processing_prepare >"$stdout_file" 2>"$stderr_file"; then
-        fail "glob-metacharacter preparation failed: $(<"$stderr_file")"
-    fi
-    jq -e --arg path "root/a[5].tf" \
-        '.updates.changed_files[] | select(.path == $path) | .mode == "100644"' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "manifest recorded the wrong mode for a glob-metacharacter changed path"
-}
-
-test_processing_no_change_runs_validation_and_dry_run_skips_publication_mutation() {
-    # Production break caught: an unchanged provider-free root emits an empty candidate patch,
-    # skips validation, or reaches commit/ref/GitHub mutation during dry-run publication.
-    setup_processing_workspace
-    printf '%s\n' 'terraform { required_version = ">= 1.15.0" }' \
-        >"$PROCESS_TARGET_CHECKOUT/root/main.tf"
-    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- "root/main.tf"
-    fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" "processing-test@example.invalid" "test: create unchanged provider-free root"
-
-    run_processing_prepare
-    jq -e '.classification == "no-change" and .updates.changed_files == [] and
-        (.updates | has("patch_sha256") | not) and
-        .formatting == {ran: false, changed_files: []} and .final_changed_files == []' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
-        || fail "unchanged preparation did not produce a patch-free no-change manifest"
-    [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]] \
-        || fail "unchanged preparation emitted a candidate patch"
-
-    run_processing_validate
-    jq -e '.classification == "no-change"' \
-        "$PROCESS_VALIDATION_OUTCOME_DIR/manifest.json" >/dev/null \
-        || fail "unchanged provider-free root did not complete validation"
-
-    local verified="$PROCESS_RUNNER_TEMP/verified-no-change"
-    RECONCILE_RUN_ID=123456 \
-        RECONCILE_RUN_ATTEMPT=2 \
-        RECONCILE_AUTOMATION_POLICY_ID=nonproduction \
-        RECONCILE_CONTROL_OID="$(processing_control_oid)" \
-        RECONCILE_STATE_BRANCH="$PROCESS_STATE_BRANCH" \
-        RECONCILE_BASE_OID="$(processing_base_oid)" \
-        RECONCILE_REF_HASH="$(processing_ref_hash)" \
-        RECONCILE_CONTROL_CHECKOUT="$PROCESS_CONTROL_CHECKOUT" \
-        RECONCILE_PREPARATION_BUNDLE_DIR="$PROCESS_PREPARATION_BUNDLE_DIR" \
-        RECONCILE_VALIDATION_OUTCOME_DIR="$PROCESS_VALIDATION_OUTCOME_DIR" \
-        RECONCILE_TARGET_CHECKOUT="$PROCESS_TARGET_CHECKOUT" \
-        RECONCILE_VERIFIED_RESULT_DIR="$verified" \
-        "$RECONCILE_SCRIPT" verify
-    jq -e '.classification == "no-change" and
-        (.updates | has("patch_sha256") | not)' \
-        "$verified/manifest.json" >/dev/null \
-        || fail "verification did not bind the no-change result"
-
-    local before_head before_refs before_status sentinel_bin
-    before_head=$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" rev-parse HEAD)
-    before_refs=$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" show-ref)
-    before_status=$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" status --porcelain=v1)
-    sentinel_bin="$PROCESS_RUNNER_TEMP/no-change-bin"
-    mkdir "$sentinel_bin"
-    cat >"$sentinel_bin/gh" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' called >"${NO_CHANGE_GH_SENTINEL:?}"
-exit 99
-EOF
-    chmod 755 "$sentinel_bin/gh"
-
-    PATH="$sentinel_bin:$PATH" \
-        NO_CHANGE_GH_SENTINEL="$PROCESS_RUNNER_TEMP/gh-called" \
-        RECONCILE_RUN_ID=123456 \
-        RECONCILE_RUN_ATTEMPT=2 \
-        RECONCILE_AUTOMATION_POLICY_ID=nonproduction \
-        RECONCILE_CONTROL_OID="$(processing_control_oid)" \
-        RECONCILE_STATE_BRANCH="$PROCESS_STATE_BRANCH" \
-        RECONCILE_BASE_OID="$(processing_base_oid)" \
-        RECONCILE_REF_HASH="$(processing_ref_hash)" \
-        RECONCILE_VERIFIED_RESULT_DIR="$verified" \
-        RECONCILE_TARGET_CHECKOUT="" \
-        RECONCILE_GIT_REMOTE="" \
-        RECONCILE_REPOSITORY="" \
-        RECONCILE_COMMIT_AUTHOR_NAME="" \
-        RECONCILE_COMMIT_AUTHOR_EMAIL="" \
-        RECONCILE_DRY_RUN=true \
-        GH_TOKEN="" \
-        "$RECONCILE_SCRIPT" publish
-    [[ "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" rev-parse HEAD)" == "$before_head" \
-        && "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" show-ref)" == "$before_refs" \
-        && "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" status --porcelain=v1)" == "$before_status" ]] \
-        || fail "no-change dry-run publication mutated local Git state"
-    [[ ! -e "$PROCESS_RUNNER_TEMP/gh-called" ]] \
-        || fail "no-change dry-run publication called GitHub"
-
-    yq -o=json '.jobs' "$REUSABLE_WORKFLOW" | jq -e '
-        any(.prepare.steps[]; .name == "Confirm preparation classification" and
-            (.run | contains("no-change"))) and
-        any(.validate.steps[]; .name == "Validate candidate" and
-            ((.run | contains("success")) and (.run | contains("no-change")))) and
-        any(.validate.steps[]; .name == "Confirm verified classification" and
-            (.run | contains("no-change")))
-    ' >/dev/null || fail "workflow does not route no-change candidates through validation"
-}
-
-test_processing_validation_runs_provider_root() {
-    # Production break caught: direct validation skips real provider execution, changes the
-    # immutable bundle or lock, or fails to retain a successful command outcome.
-    setup_processing_workspace
-    configure_validation_provider_base
-    create_validation_candidate_bundle
-    local candidate_patch_sha256
-    candidate_patch_sha256=$(sha256sum "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch")
-    local candidate_manifest_sha256
-    candidate_manifest_sha256=$(sha256sum "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json")
-    local lock_sha256
-    lock_sha256=$(sha256sum "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl")
-    local stdout_file="$PROCESS_TMP_ROOT/provider-validation.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/provider-validation.stderr"
-    GITHUB_TOKEN="must-not-enter-container" \
-        assert_silent_success "real test-provider validation" \
-        "$stdout_file" "$stderr_file" run_processing_validate
-    grep -F 'required_version = ">= 1.15.0"' \
-        "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
-        || fail "verified candidate patch was not applied to the disposable checkout"
-
-    local outcome="$PROCESS_VALIDATION_OUTCOME_DIR/manifest.json"
-    [[ -f "$outcome" ]] || fail "direct validation did not retain the validation outcome"
-    jq -e \
-        '.classification == "success" and .command_status == 0 and
-         has("semantic_validation_authenticated") == false' "$outcome" >/dev/null \
-        || fail "direct validation retained an unused authentication field"
-    [[ "$(sha256sum "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch")" == "$candidate_patch_sha256" \
-        && "$(sha256sum "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json")" == "$candidate_manifest_sha256" ]] \
-        || fail "provider execution modified the immutable candidate bundle"
-    [[ "$(sha256sum "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl")" == "$lock_sha256" ]] \
-        || fail "provider execution replaced the read-only disposable lock file"
-}
-
-test_processing_validation_rejects_incomplete_contract_before_terraform() {
-    # Production breaks caught: validation runs Terraform or materialises a patch before rejecting
-    # an incorrectly named bundle, drifted control input, or missing/ambiguous log contract.
-    local row
-    for row in artifact-name config-path updater-version updater-digest missing-logs unexpected-log; do
-        setup_processing_workspace
-        create_validation_candidate_bundle
-
-        local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
-        local terraform_calls="$PROCESS_TMP_ROOT/terraform-calls"
-        mkdir "$fixture_bin"
-        cat >"$fixture_bin/terraform" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "\$*" >>"$terraform_calls"
-if [[ "\${1:-}" == "version" && "\${2:-}" == "-json" ]]; then
-    printf '%s\n' '{"terraform_version":"1.15.5"}'
-    exit 0
-fi
-exit 99
-EOF
-        chmod 755 "$fixture_bin/terraform"
-        PROCESS_PATH_PREFIX=$fixture_bin
-
-        chmod u+w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-        case "$row" in
-            artifact-name)
-                jq '.artifact_name = "preparation-wrong"' \
-                    "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" \
-                    >"$PROCESS_TMP_ROOT/malformed-manifest.json"
-                mv "$PROCESS_TMP_ROOT/malformed-manifest.json" \
-                    "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-                ;;
-            config-path)
-                jq '.config_path = 7' "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" \
-                    >"$PROCESS_TMP_ROOT/malformed-manifest.json"
-                mv "$PROCESS_TMP_ROOT/malformed-manifest.json" \
-                    "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-                ;;
-            updater-version)
-                jq '.tools.tf_version_bump.version = "v9.9.9"' \
-                    "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" \
-                    >"$PROCESS_TMP_ROOT/malformed-manifest.json"
-                mv "$PROCESS_TMP_ROOT/malformed-manifest.json" \
-                    "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-                ;;
-            updater-digest)
-                jq '.tools.tf_version_bump.archive_sha256 = ("0" * 64)' \
-                    "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" \
-                    >"$PROCESS_TMP_ROOT/malformed-manifest.json"
-                mv "$PROCESS_TMP_ROOT/malformed-manifest.json" \
-                    "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-                ;;
-            missing-logs)
-                rm -rf "$PROCESS_PREPARATION_BUNDLE_DIR/logs"
-                ;;
-            unexpected-log)
-                printf '%s\n' sensitive >"$PROCESS_PREPARATION_BUNDLE_DIR/logs/unexpected.log"
-                ;;
-        esac
-        chmod a-w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-
-        local stdout_file="$PROCESS_TMP_ROOT/$row.stdout"
-        local stderr_file="$PROCESS_TMP_ROOT/$row.stderr"
-        if run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
-            fail "validation accepted incomplete preparation contract row $row"
-        fi
-        [[ ! -e "$terraform_calls" ]] \
-            || fail "validation invoked Terraform before rejecting incomplete contract row $row"
-        [[ -z "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" status --porcelain=v1 --untracked-files=all)" ]] \
-            || fail "validation materialised the candidate before rejecting incomplete contract row $row"
-        [[ ! -e "$PROCESS_VALIDATION_OUTCOME_DIR" ]] \
-            || fail "incomplete preparation contract row $row produced a validation outcome"
-    done
-}
-
-test_processing_validation_preflights_stage_policy_before_materialisation() {
-    # Production breaks caught: a digest-consistent patch with an unsafe declared path is applied
-    # to the validation checkout before its update or formatting path policy is checked.
-    local stage
-    for stage in update format; do
-        setup_processing_workspace
-        if [[ "$stage" == "update" ]]; then
-            create_validation_candidate_bundle
-            local candidate="$PROCESS_TMP_ROOT/unsafe-update-candidate"
-            "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$candidate"
-            mkdir -p "$candidate/root/nested"
-            printf '%s\n' 'locals { unsafe = true }' >"$candidate/root/nested/unsafe.tf"
-            "$TEST_GIT" -C "$candidate" add -- "root/nested/unsafe.tf"
-            chmod u+w "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch"
-            "$TEST_GIT" -C "$candidate" diff --cached --binary --full-index --no-color \
-                >"$PROCESS_PREPARATION_BUNDLE_DIR/update.patch"
-            local patch_digest file_digest
-            patch_digest=$(sha256_file "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch")
-            file_digest=$(sha256_file "$candidate/root/nested/unsafe.tf")
-            chmod u+w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-            jq --arg patch_digest "$patch_digest" --arg file_digest "$file_digest" '
-                .terraform_fmt = false |
-                .updates.patch_sha256 = $patch_digest |
-                .updates.changed_files = [
-                    {path: "root/nested/unsafe.tf", mode: "100644", sha256: $file_digest}
-                ] |
-                .formatting = {ran: false, changed_files: []} |
-                .final_changed_files = .updates.changed_files' \
-                "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" \
-                >"$PROCESS_TMP_ROOT/unsafe-update-manifest.json"
-            mv "$PROCESS_TMP_ROOT/unsafe-update-manifest.json" \
-                "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-            chmod a-w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-        else
-            create_two_stage_validation_candidate_bundle
-            local candidate="$PROCESS_TMP_ROOT/unsafe-format-candidate"
-            "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$candidate"
-            "$TEST_GIT" -C "$candidate" apply --index --binary \
-                "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch"
-            local update_tree
-            update_tree=$("$TEST_GIT" -C "$candidate" write-tree)
-            mkdir -p "$candidate/root/.terraform"
-            printf '%s\n' 'locals { unsafe = true }' \
-                >"$candidate/root/.terraform/unsafe.tf"
-            "$TEST_GIT" -C "$candidate" add -- "root/.terraform/unsafe.tf"
-            local final_tree
-            final_tree=$("$TEST_GIT" -C "$candidate" write-tree)
-            chmod u+w "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch"
-            "$TEST_GIT" -C "$candidate" diff --binary --full-index --no-color \
-                "$update_tree" "$final_tree" \
-                >"$PROCESS_PREPARATION_BUNDLE_DIR/format.patch"
-            local patch_digest file_digest
-            patch_digest=$(sha256_file "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch")
-            file_digest=$(sha256_file "$candidate/root/.terraform/unsafe.tf")
-            chmod u+w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-            jq --arg patch_digest "$patch_digest" --arg file_digest "$file_digest" '
-                .formatting.patch_sha256 = $patch_digest |
-                .formatting.changed_files = [
-                    {path: "root/.terraform/unsafe.tf", mode: "100644", sha256: $file_digest}
-                ] |
-                .final_changed_files = (.formatting.changed_files + .updates.changed_files)' \
-                "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" \
-                >"$PROCESS_TMP_ROOT/unsafe-format-manifest.json"
-            mv "$PROCESS_TMP_ROOT/unsafe-format-manifest.json" \
-                "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-            chmod a-w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-        fi
-
-        local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
-        local terraform_calls="$PROCESS_TMP_ROOT/terraform-calls"
-        mkdir "$fixture_bin"
-        cat >"$fixture_bin/terraform" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "\$*" >>"$terraform_calls"
-if [[ "\${1:-}" == "version" && "\${2:-}" == "-json" ]]; then
-    printf '%s\n' '{"terraform_version":"1.15.5"}'
-    exit 0
-fi
-exit 99
-EOF
-        chmod 755 "$fixture_bin/terraform"
-        PROCESS_PATH_PREFIX=$fixture_bin
-
-        local stdout_file="$PROCESS_TMP_ROOT/unsafe-$stage.stdout"
-        local stderr_file="$PROCESS_TMP_ROOT/unsafe-$stage.stderr"
-        if run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
-            fail "validation accepted unsafe $stage patch policy"
-        fi
-        local expected_diagnostic
-        if [[ "$stage" == "update" ]]; then
-            expected_diagnostic="changed Terraform file must be directly within exactly one configured root"
-        else
-            expected_diagnostic="formatting changed a path beneath .terraform"
-        fi
-        grep -F "$expected_diagnostic" "$stderr_file" >/dev/null \
-            || fail "unsafe $stage patch did not reach path-policy validation: $(<"$stderr_file")"
-        [[ -z "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" status --porcelain=v1 --untracked-files=all)" ]] \
-            || fail "validation materialised an unsafe $stage patch before rejection"
-        [[ ! -e "$terraform_calls" ]] \
-            || fail "validation invoked Terraform before rejecting unsafe $stage patch policy"
-        [[ ! -e "$PROCESS_VALIDATION_OUTCOME_DIR" ]] \
-            || fail "unsafe $stage patch policy produced a validation outcome"
-    done
-}
-
-test_processing_validation_accepts_update_patch_with_added_lock_file() {
-    # Production break caught: applying the update patch only to the worktree leaves a newly added
-    # provider lockfile untracked, so raw-diff verification omits it and rejects a valid manifest.
-    setup_processing_workspace
-    configure_validation_provider_base_without_lock
-    create_validation_candidate_bundle true
-    [[ ! -e "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" ]] \
-        || fail "added-lock validation fixture already contained the candidate lockfile"
-
-    local stdout_file="$PROCESS_TMP_ROOT/added-lock-validation.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/added-lock-validation.stderr"
-    assert_silent_success "validation with added provider lockfile" \
-        "$stdout_file" "$stderr_file" run_processing_validate
-    [[ -f "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" ]] \
-        || fail "validation did not apply the added provider lockfile"
-    jq -e '.classification == "success" and .command_status == 0' \
-        "$PROCESS_VALIDATION_OUTCOME_DIR/manifest.json" >/dev/null \
-        || fail "added-lock validation did not produce a successful outcome"
-}
-
-test_processing_validation_checks_update_before_format_stage() {
-    # Production break caught: validation applies both patches before checking the update-stage
-    # digest, allowing a final digest to conceal tampered intermediate content.
-    setup_processing_workspace
-    create_two_stage_validation_candidate_bundle
-    local update_sha256 final_sha256
-    update_sha256=$(jq -er \
-        '.updates.changed_files[] | select(.path == "root/main.tf") | .sha256' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json")
-    final_sha256=$(jq -er \
-        '.final_changed_files[] | select(.path == "root/main.tf") | .sha256' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json")
-    [[ "$update_sha256" != "$final_sha256" ]] \
-        || fail "two-stage fixture did not provide distinct intermediate and final digests"
-
-    local stdout_file="$PROCESS_TMP_ROOT/two-stage-validation.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/two-stage-validation.stderr"
-    assert_silent_success "ordered two-stage validation" \
-        "$stdout_file" "$stderr_file" run_processing_validate
-    grep -F 'required_version = ">= 1.15.0"' \
-        "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
-        || fail "ordered validation did not apply the final formatted content"
-    jq -e '.classification == "success" and .command_status == 0' \
-        "$PROCESS_VALIDATION_OUTCOME_DIR/manifest.json" >/dev/null \
-        || fail "ordered two-stage validation did not retain a successful outcome"
-}
-
-test_processing_validation_rejects_wrong_update_stage_digest() {
-    # Production break caught: the final digest is accepted for a file that appears in both stage
-    # lists because validation checks metadata only after applying format.patch.
-    setup_processing_workspace
-    create_two_stage_validation_candidate_bundle
-    chmod u+w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-    jq '(.updates.changed_files[] | select(.path == "root/main.tf") | .sha256) =
-        (.final_changed_files[] | select(.path == "root/main.tf") | .sha256)' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" \
-        >"$PROCESS_TMP_ROOT/wrong-update-digest.json"
-    mv "$PROCESS_TMP_ROOT/wrong-update-digest.json" \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-    chmod a-w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-
-    local stdout_file="$PROCESS_TMP_ROOT/wrong-update-digest.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/wrong-update-digest.stderr"
-    if run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
-        fail "validation accepted the final digest at the update-stage boundary"
-    fi
-    [[ ! -e "$PROCESS_VALIDATION_OUTCOME_DIR" ]] \
-        || fail "wrong update-stage digest produced a validation outcome"
-}
-
-test_processing_validation_rejects_unrun_format_patch() {
-    # Production break caught: a manifest can declare formatting disabled and not run while still
-    # carrying a format patch that validation applies.
-    setup_processing_workspace
-    create_two_stage_validation_candidate_bundle
-    chmod u+w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-    jq '.terraform_fmt = false | .formatting.ran = false' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" \
-        >"$PROCESS_TMP_ROOT/unrun-format-patch.json"
-    mv "$PROCESS_TMP_ROOT/unrun-format-patch.json" \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-    chmod a-w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-
-    local stdout_file="$PROCESS_TMP_ROOT/unrun-format-patch.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/unrun-format-patch.stderr"
-    if run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
-        fail "validation accepted a format patch declared as not run"
-    fi
-    [[ ! -e "$PROCESS_VALIDATION_OUTCOME_DIR" ]] \
-        || fail "format patch declared as not run produced a validation outcome"
-}
-
-test_processing_validation_rejects_tampered_stage_patches() {
-    # Production break caught: validation consumes update or format patch bytes that no longer
-    # match their manifest-bound SHA-256 values.
-    local stage
-    for stage in update format; do
-        setup_processing_workspace
-        create_two_stage_validation_candidate_bundle
-        chmod u+w "$PROCESS_PREPARATION_BUNDLE_DIR/$stage.patch"
-        printf '%s\n' '# tampered stage patch' \
-            >>"$PROCESS_PREPARATION_BUNDLE_DIR/$stage.patch"
-        chmod a-w "$PROCESS_PREPARATION_BUNDLE_DIR/$stage.patch"
-
-        local stdout_file="$PROCESS_TMP_ROOT/tampered-$stage.stdout"
-        local stderr_file="$PROCESS_TMP_ROOT/tampered-$stage.stderr"
-        if run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
-            fail "validation accepted tampered $stage.patch"
-        fi
-        [[ ! -e "$PROCESS_VALIDATION_OUTCOME_DIR" ]] \
-            || fail "tampered $stage.patch produced a validation outcome"
-    done
-}
-
-test_processing_validation_allows_provider_free_root_without_lock() {
-    # Production break caught: a provider-free root without a lock is rejected. Terraform 1.15.5
-    # tolerates readonly mode without a lock, so this test honestly proves acceptance, not omission.
-    setup_processing_workspace
-    create_validation_candidate_bundle
-
-    if ! run_processing_validate \
-        >"$PROCESS_TMP_ROOT/provider-free.stdout" \
-        2>"$PROCESS_TMP_ROOT/provider-free.stderr"; then
-        fail "provider-free validation failed: $(<"$PROCESS_TMP_ROOT/provider-free.stderr")"
-    fi
-    [[ ! -e "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" ]] \
-        || fail "provider-free validation created a lock file in the read-only checkout"
-    jq -e '.classification == "success" and .command_status == 0' \
-        "$PROCESS_VALIDATION_OUTCOME_DIR/manifest.json" >/dev/null \
-        || fail "provider-free validation did not produce a successful host outcome"
-}
-
-test_processing_validation_runs_directly_without_docker_executable() {
-    # Production break caught: validation requires Docker rather than using the installed pinned
-    # Terraform CLI, or direct Terraform leaves undeclared files in the candidate checkout.
-    setup_processing_workspace
-    create_validation_candidate_bundle
-    ensure_processing_container
-    if docker exec "$PROCESS_CONTAINER_ID" command -v docker >/dev/null 2>&1; then
-        fail "direct validation fixture unexpectedly provides Docker to the helper"
-    fi
-
-    local stdout_file="$PROCESS_TMP_ROOT/direct-validation.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/direct-validation.stderr"
-    assert_silent_success "direct Terraform validation without Docker" \
-        "$stdout_file" "$stderr_file" run_processing_validate
-    [[ ! -e "$PROCESS_TARGET_CHECKOUT/root/.terraform" ]] \
-        || fail "direct Terraform validation left a .terraform directory in the candidate checkout"
-    [[ "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" diff HEAD --name-only)" == "root/main.tf" ]] \
-        || fail "direct Terraform validation changed files outside the immutable candidate patch"
-    jq -e '.classification == "success" and .command_status == 0' \
-        "$PROCESS_VALIDATION_OUTCOME_DIR/manifest.json" >/dev/null \
-        || fail "direct Terraform validation did not produce a successful outcome"
-}
-
-test_processing_validation_rejects_installed_version_mismatch_before_candidate_apply() {
-    # Production break caught: target content is applied before the installed Terraform CLI is
-    # checked against the exact requested version.
-    setup_processing_workspace
-    create_validation_candidate_bundle
-    chmod u+w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-    jq '.tools.terraform.version = "1.15.4"' \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" \
-        >"$PROCESS_TMP_ROOT/mismatched-manifest.json"
-    mv "$PROCESS_TMP_ROOT/mismatched-manifest.json" \
-        "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-    chmod a-w "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json"
-    PROCESS_TERRAFORM_VERSION="1.15.4"
-
-    local stdout_file="$PROCESS_TMP_ROOT/version-mismatch.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/version-mismatch.stderr"
-    if run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
-        fail "mismatched installed Terraform version succeeded"
-    fi
-    [[ ! -s "$stdout_file" ]] \
-        || fail "mismatched installed Terraform version emitted unexpected stdout"
-    grep -F 'Terraform reported an unexpected version' "$stderr_file" >/dev/null \
-        || fail "mismatched installed Terraform version did not report the pin error"
-    grep -F 'required_version = ">= 1.0"' \
-        "$PROCESS_TARGET_CHECKOUT/root/main.tf" >/dev/null \
-        || fail "candidate was applied before Terraform version verification"
-}
-
-test_processing_validation_produces_bounded_outcome_when_deadline_expires_before_first_log() {
-    # Production break caught: a validation deadline that expires between passing its top-level
-    # check and the first `terraform init` attempt left the validation data root with zero *.log
-    # files. The unguarded `cp *.log` glob then crashed under `set -e` instead of the documented
-    # bounded branch-validation outcome that verify/publish turn into a marked failure issue.
-    #
-    # The race is deterministically forced (rather than raced against the wall clock) with a fake
-    # `date` that answers "not yet expired" for the two deadline checks that must succeed before
-    # the root loop (the top-level dispatch check and verify_terraform_version's own check), then
-    # "expired" from the third call onward -- exactly the root-1 init deadline check.
-    setup_processing_workspace
-    create_validation_candidate_bundle
-
-    local fixture_bin="$PROCESS_TMP_ROOT/fixture-bin"
-    mkdir "$fixture_bin"
-    local clock_calls="$PROCESS_TMP_ROOT/fake-date-calls"
-    cat >"$fixture_bin/date" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-count=0
-[[ ! -f "$clock_calls" ]] || count=\$(<"$clock_calls")
-count=\$((count + 1))
-printf '%s\n' "\$count" >"$clock_calls"
-if [[ "\$count" -le 2 ]]; then
-    printf '%s\n' 1000000000
-else
-    printf '%s\n' 1000000100
-fi
-EOF
-    chmod 755 "$fixture_bin/date"
-
-    PROCESS_PATH_PREFIX=$fixture_bin
-    PROCESS_VALIDATION_DEADLINE_EPOCH=1000000050
-
-    local stdout_file="$PROCESS_TMP_ROOT/expired-deadline.stdout"
-    local stderr_file="$PROCESS_TMP_ROOT/expired-deadline.stderr"
-    if run_processing_validate >"$stdout_file" 2>"$stderr_file"; then
-        fail "validation with a deadline expiring before the first log succeeded"
-    fi
-    [[ ! -s "$stdout_file" ]] \
-        || fail "deadline-expiry validation emitted unexpected stdout: $(<"$stdout_file")"
-
-    local outcome="$PROCESS_VALIDATION_OUTCOME_DIR/manifest.json"
-    [[ -f "$outcome" ]] \
-        || fail "deadline-expiry validation did not produce a bounded outcome manifest: $(<"$stderr_file")"
-    jq -e '.classification == "branch-validation" and .failure.stage == "terraform init" and
-           .failure.root == "root" and .command_status == 124' \
-        "$outcome" >/dev/null \
-        || fail "deadline-expiry outcome did not attribute a bounded timeout to terraform init"
-    [[ -d "$PROCESS_VALIDATION_OUTCOME_DIR/logs" ]] \
-        || fail "deadline-expiry outcome dropped the logs directory"
-    [[ -z "$(find "$PROCESS_VALIDATION_OUTCOME_DIR/logs" -mindepth 1 -print -quit)" ]] \
-        || fail "deadline-expiry outcome unexpectedly retained a log file that was never written"
-}
-
-test_processing_validation() {
-    test_processing_validation_rejects_incomplete_contract_before_terraform
-    test_processing_validation_preflights_stage_policy_before_materialisation
-    test_processing_validation_runs_directly_without_docker_executable
-    test_processing_validation_runs_provider_root
-    test_processing_validation_accepts_update_patch_with_added_lock_file
-    test_processing_validation_checks_update_before_format_stage
-    test_processing_validation_rejects_wrong_update_stage_digest
-    test_processing_validation_rejects_unrun_format_patch
-    test_processing_validation_rejects_tampered_stage_patches
-    test_processing_validation_allows_provider_free_root_without_lock
-    test_processing_validation_rejects_installed_version_mismatch_before_candidate_apply
-    test_processing_validation_produces_bounded_outcome_when_deadline_expires_before_first_log
-}
-
-test_processing_preparation() {
-    test_processing_init_upgrade_is_opt_in
-    test_processing_rejects_invalid_init_upgrade_input
-    test_processing_rejects_mismatched_control_head_before_target_write
-    test_processing_rejects_mismatched_target_head_before_target_write
-    test_processing_rejects_mismatched_ref_hash_before_target_write
-    test_processing_prepares_with_released_cli_and_pinned_terraform
-    test_processing_aggregates_released_cli_reports
-    test_processing_formatting_disabled
-    test_processing_rejects_invalid_formatting_input
-    test_processing_skips_formatting_without_update_diff
-    test_processing_formats_nested_files_from_every_root
-    test_processing_deduplicates_formatting_paths_for_overlapping_roots
-    test_processing_formatting_without_diff_omits_patch
-    test_processing_formatting_can_cancel_update_diff
-    test_processing_format_failure_is_bounded
-    test_processing_rejects_unsafe_recursive_formatting_paths
-    test_processing_rejects_invalid_update_reports_as_automation
-    test_processing_rejects_release_archive_before_extraction_on_checksum_mismatch
-    test_processing_verifies_exact_terraform_version_before_target_writes
-    test_processing_rejects_expired_deadline_before_workspace_setup
-    test_processing_initialises_with_remaining_absolute_deadline
-    test_processing_rejects_ignored_new_provider_lock
-    test_processing_init_timeout_preserves_failure_bundle_after_shared_budget
-    test_processing_timeout_terminates_the_supervised_process_tree
-    test_processing_aggregate_update_failure_has_no_publishable_patch
-    test_processing_failure_manifest_binds_candidate_lineage
-    test_processing_success_manifest_binds_run_and_repository_identity
-    test_processing_success_manifest_binds_config_and_tool_pins
-    test_processing_success_manifest_omits_provider_dependency_state
-    test_processing_success_bundle_has_immutable_binary_patch_and_artifact_key
-    test_processing_success_manifest_records_changed_paths_modes_and_hashes
-    test_processing_success_manifest_records_correct_mode_for_glob_metacharacter_path
-}
 
 test_discovery_selects_literal_prefixes() {
     # Production break caught: glob-like matching, unsorted results, an inexact OID, or hashing the
@@ -3594,6 +536,7 @@ test_discovery_selects_literal_prefixes() {
     ' <<<"$output" >/dev/null || fail "discovery did not emit the expected sorted immutable entries: $output"
 }
 
+
 test_discovery_manual_prefix_only_narrows() {
     # Production break caught: a manual dispatch prefix can widen its caller's configured policy or
     # is ignored instead of selecting only its matching subset.
@@ -3617,6 +560,7 @@ test_discovery_manual_prefix_only_narrows() {
     [[ ! -s "$failure_stdout" ]] || fail "widening manual prefix emitted a matrix"
 }
 
+
 test_discovery_deduplicates_overlapping_prefixes() {
     # Production break caught: one remote branch matching two allowed prefixes creates duplicate
     # matrix jobs for the same immutable ref.
@@ -3630,6 +574,7 @@ test_discovery_deduplicates_overlapping_prefixes() {
     jq -e '.include | map(.branch) == ["state/nonproduction/example"]' <<<"$output" >/dev/null \
         || fail "overlapping prefixes produced duplicate discovery entries: $output"
 }
+
 
 test_discovery_accepts_caller_block_scalar_prefixes() {
     # Production break caught: the caller's newline-terminated YAML block scalar gains an empty
@@ -3648,6 +593,7 @@ test_discovery_accepts_caller_block_scalar_prefixes() {
     ]' <<<"$output" >/dev/null \
         || fail "caller-shaped prefixes did not produce the expected branch matrix: $output"
 }
+
 
 test_discovery_rejects_invalid_inputs_by_stage() {
     # Production break caught: invalid policy/caller inputs reach matrix creation, failures emit
@@ -3679,6 +625,7 @@ test_discovery_rejects_invalid_inputs_by_stage() {
     DISCOVERY_CALLER_REF="refs/heads/feature"
     assert_discovery_failure "discovery caller error:" "non-default caller ref"
 }
+
 
 test_discovery_treats_hostile_refs_as_inert_data() {
     # Production break caught: shell evaluation, word splitting, option parsing, locale filtering,
@@ -3731,6 +678,7 @@ test_discovery_treats_hostile_refs_as_inert_data() {
         || fail "hostile branch command substitution was executed"
 }
 
+
 test_discovery_enforces_matrix_limit_before_output() {
     # Production break caught: discovery sends a 257-job matrix to GitHub instead of stopping
     # before JSON emission with actionable policy-narrowing guidance.
@@ -3757,6 +705,7 @@ test_discovery_enforces_matrix_limit_before_output() {
     [[ "$diagnostic" == *"narrow or partition"* ]] \
         || fail "257-entry discovery did not instruct the caller to narrow or partition: $diagnostic"
 }
+
 
 test_discovery_binds_supplied_immutable_identities() {
     # Production break caught: matrix entries omit run lineage/policy identity or re-resolve a
@@ -3801,6 +750,7 @@ test_discovery_binds_supplied_immutable_identities() {
     ' <<<"$output" >/dev/null || fail "discovery did not bind supplied immutable identities: $output"
 }
 
+
 test_discovery_validates_policy_id() {
     # Production break caught: an empty, syntactically unsafe, uppercase, or overlength policy ID
     # reaches matrix entries, or a valid boundary value is rejected.
@@ -3830,30 +780,208 @@ test_discovery_validates_policy_id() {
     done
 }
 
-test_processing_path_and_workspace_safety() {
-    test_processing_help_documents_prepare_safety_contract
-    test_processing_rejects_absolute_config_path
-    test_processing_rejects_config_symlink_into_target_checkout
-    test_processing_rejects_missing_config_path
-    test_processing_rejects_overlapping_control_and_target_checkouts
-    test_processing_rejects_terraform_root_parent_traversal_into_control
-    test_processing_rejects_missing_terraform_root
-    test_processing_rejects_terraform_root_symlink_outside_checkouts
-    test_processing_rejects_duplicate_canonical_terraform_roots
-    test_processing_rejects_terraform_file_symlink_into_control
-    test_processing_rejects_lock_file_symlink_outside_checkouts
-    test_processing_rejects_repository_terraform_directory
-    test_processing_rejects_runner_temp_inside_either_checkout
-    test_processing_allocates_fresh_trusted_data_directory_per_nested_root
-    test_processing_removes_incomplete_bundle_when_final_mode_change_fails
-    test_processing_rejects_unexpected_changed_path
-    test_processing_rejects_newline_in_changed_path
-    test_processing_rejects_non_utf8_changed_path
-    test_reconciliation_rejects_non_utf8_candidate_path_collision
-    test_processing_rejects_gitignored_terraform_file
-    test_processing_rejects_deleted_terraform_file
-    test_processing_rejects_renamed_terraform_file
-    test_processing_rejects_changed_terraform_file_not_directly_in_root
+
+test_processing_init_upgrade_is_opt_in() {
+    # Production break caught: plain init upgrades locked providers, an explicit upgrade
+    # is ignored, or a locked-version conflict silently enables upgrade.
+    local mode expected_version mirror newer_package
+    for mode in unset false true conflict conflict-upgrade; do
+        setup_processing_workspace
+        configure_validation_provider_base
+        mirror="$PROCESS_VALIDATION_FIXTURE_ROOT/provider-mirror/registry.terraform.io/yesdevnull/test"
+        chmod u+w "$mirror"
+        newer_package="$mirror/0.2.0/linux_amd64"
+        mkdir -p "$newer_package"
+        cp "$mirror/0.1.0/linux_amd64/terraform-provider-test_v0.1.0_x5" \
+            "$newer_package/terraform-provider-test_v0.2.0_x5"
+        chmod -R a-w "$mirror"
+        expected_version=0.1.0
+        case "$mode" in
+            false) PROCESS_TERRAFORM_INIT_UPGRADE=false ;;
+            true|conflict-upgrade)
+                PROCESS_TERRAFORM_INIT_UPGRADE=true
+                expected_version=0.2.0
+                ;;
+        esac
+        if [[ "$mode" == conflict* ]]; then
+            printf '%s\n' 'providers:' '  - name: test' '    version: "0.2.0"' \
+                >"$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
+            "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- .github/tf-version-bump/test.yml
+            fixture_commit "$PROCESS_CONTROL_CHECKOUT" "Processing Test" \
+                "processing-test@example.invalid" "test: request a newer locked provider"
+        else
+            sed -i.bak 's/version = "0.1.0"/version = ">= 0.1.0"/' "$PROCESS_TARGET_CHECKOUT/root/main.tf"
+            rm "$PROCESS_TARGET_CHECKOUT/root/main.tf.bak"
+            "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- root/main.tf
+            fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
+                "processing-test@example.invalid" "test: allow both provider releases"
+        fi
+        if [[ "$mode" == conflict ]]; then
+            assert_processing_failure 'processing status error: terraform init failed for Terraform root root' \
+                'locked provider conflict without upgrade'
+            grep -F 'does not match configured version constraint' "$PROCESS_RESULT_DIR/logs/init-1.log" >/dev/null \
+                || fail "plain init did not report the locked provider conflict"
+            jq -e '.classification == "branch-init" and
+                .failure.stage == "terraform init"' \
+                "$PROCESS_RESULT_DIR/result.json" >/dev/null \
+                || fail "init failure did not record the actual non-upgrade command"
+            continue
+        fi
+        assert_silent_success "init upgrade $mode" "$PROCESS_TMP_ROOT/init.stdout" \
+            "$PROCESS_TMP_ROOT/init.stderr" run_processing
+        grep -F "version     = \"$expected_version\"" "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" >/dev/null \
+            || fail "init upgrade $mode did not select provider $expected_version"
+
+    done
+}
+
+
+test_processing_combines_update_init_format_validate() {
+    setup_processing_workspace
+    PROCESS_TERRAFORM_FMT=true
+    mkdir -p "$PROCESS_TARGET_CHECKOUT/root/nested" "$PROCESS_TARGET_CHECKOUT/second"
+    printf '%s\n' 'locals { value={ a="b" } }' >"$PROCESS_TARGET_CHECKOUT/root/nested/child.tf"
+    printf '%s\n' 'terraform { required_version = ">= 1.0" }' >"$PROCESS_TARGET_CHECKOUT/second/main.tf"
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- root/nested/child.tf second/main.tf
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: add multiple roots and formatting input'
+    PROCESS_TERRAFORM_ROOTS=$'root\nsecond'
+    local base_oid
+    base_oid=$(processing_base_oid)
+    assert_silent_success 'combined processing' "$PROCESS_TMP_ROOT/stdout" "$PROCESS_TMP_ROOT/stderr" run_processing
+    jq -e --arg base "$base_oid" '.schema_version == 3 and .classification == "success" and
+        .base_oid == $base and .roots == ["root", "second"] and (.patch_sha256 | length == 64)' \
+        "$PROCESS_RESULT_DIR/result.json" >/dev/null || fail 'missing combined result contract'
+    [[ "$(processing_base_oid)" == "$base_oid" ]] || fail 'processing created a commit'
+    [[ -f "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'missing final patch'
+    [[ "$(find "$PROCESS_RESULT_DIR" -maxdepth 1 -name '*.patch' | wc -l | tr -d ' ')" == 1 ]] || fail 'multiple patches emitted'
+    "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$PROCESS_TMP_ROOT/applied"
+    "$TEST_GIT" -C "$PROCESS_TMP_ROOT/applied" apply --index "$PROCESS_RESULT_DIR/candidate.patch"
+    local file
+    for file in root/main.tf second/main.tf root/nested/child.tf; do
+        cmp "$PROCESS_TMP_ROOT/applied/$file" "$PROCESS_TARGET_CHECKOUT/$file" || fail 'patch differs from validated candidate'
+    done
+    grep -F '>= 1.15.0' "$PROCESS_TMP_ROOT/applied/second/main.tf" >/dev/null || fail 'second root was not updated'
+    grep -F 'value = { a = "b" }' "$PROCESS_TMP_ROOT/applied/root/nested/child.tf" >/dev/null || fail 'recursive formatting missing from patch'
+}
+
+test_processing_validates_unchanged_candidates() {
+    local mode
+    for mode in valid invalid; do
+        setup_processing_workspace
+        printf '%s\n' 'terraform_version: ">= 1.0"' >"$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
+        "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- .github/tf-version-bump/test.yml
+        fixture_commit "$PROCESS_CONTROL_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: request unchanged version'
+        if [[ "$mode" == invalid ]]; then
+            printf '%s\n' 'resource "terraform_data" "bad" { nonexistent = true }' >>"$PROCESS_TARGET_CHECKOUT/root/main.tf"
+            "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- root/main.tf
+            fixture_commit "$PROCESS_TARGET_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: add invalid unchanged resource'
+            assert_processing_failure 'processing status error: terraform validate failed for Terraform root root' 'unchanged invalid candidate'
+            jq -e '.classification == "branch-validation" and .failure.stage == "terraform validate" and .failure.root == "root" and .failure.status > 0' "$PROCESS_RESULT_DIR/result.json" >/dev/null
+            grep -F 'Unsupported argument' "$PROCESS_RESULT_DIR/logs/validate-1.log" >/dev/null
+        else
+            assert_silent_success 'unchanged valid candidate' "$PROCESS_TMP_ROOT/stdout" "$PROCESS_TMP_ROOT/stderr" run_processing
+            jq -e '.classification == "no-change"' "$PROCESS_RESULT_DIR/result.json" >/dev/null
+            [[ -s "$PROCESS_RESULT_DIR/logs/validate-1.log" ]] || fail 'no-change skipped validation'
+        fi
+        [[ ! -e "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'unchanged or failed candidate emitted patch'
+    done
+}
+
+test_workflow_runs_three_jobs_with_current_attempt_results() {
+    yq -o=json '.jobs' "$REUSABLE_WORKFLOW" | jq -e '
+        keys == ["discover", "process", "publish"] and
+        .process.needs == "discover" and .publish.needs == ["discover", "process"] and
+        .process.permissions == {contents:"read"} and .publish.permissions.contents == "write" and
+        ([.process.steps[] | select(.env.PROCESS_RESULT_DIR)] | length == 1) and
+        ([.process.steps[] | select(.with.name != null) | .with.name] ==
+         [.publish.steps[] | select(.with.name != null) | .with.name]) and
+        ([.publish.steps[] | select(.env.TF_TOKEN_app_terraform_io != null)] | length == 0) and
+        ([.publish.steps[] | select(.env.RECONCILE_RUN_URL != null)] | length == 1)
+    ' >/dev/null || fail 'workflow does not wire the three-job current-attempt result contract'
+}
+
+test_processing_records_real_update_and_format_failures() {
+    local mode stage classification log
+    for mode in update format; do
+        setup_processing_workspace
+        if [[ "$mode" == update ]]; then
+            printf 'terraform { invalid\n' >"$PROCESS_TARGET_CHECKOUT/root/main.tf"
+            stage=tf-version-bump
+            classification='branch-update'
+            log=update-1.log
+        else
+            mkdir "$PROCESS_TARGET_CHECKOUT/root/nested"
+            printf 'locals { invalid\n' >"$PROCESS_TARGET_CHECKOUT/root/nested/child.tf"
+            PROCESS_TERRAFORM_FMT=true
+            stage='terraform fmt'
+            classification='branch-format'
+            log=fmt-1.log
+        fi
+        "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add --all -- .
+        fixture_commit "$PROCESS_TARGET_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' "test: invalid $mode input"
+        assert_processing_failure "processing status error: $stage failed for Terraform root root" "$mode failure"
+        jq -e --arg c "$classification" '.classification == $c and .failure.status > 0' "$PROCESS_RESULT_DIR/result.json" >/dev/null
+        [[ ! -e "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'failed processing emitted patch'
+        grep -E 'Error|error' "$PROCESS_RESULT_DIR/logs/$log" >/dev/null || fail 'missing command diagnostics'
+    done
+}
+
+test_processing_rejects_invalid_inputs_before_updates() {
+    local mode expected
+    for mode in boolean-upgrade boolean-format root-absolute root-traversal root-missing duplicate config-absolute config-invalid symlink control-oid base-oid hash deadline; do
+        setup_processing_workspace
+        case "$mode" in
+            boolean-upgrade) PROCESS_TERRAFORM_INIT_UPGRADE=TRUE; expected='Terraform init upgrade must be true or false' ;;
+            boolean-format) PROCESS_TERRAFORM_FMT=1; expected='Terraform formatting must be true or false' ;;
+            root-absolute) PROCESS_TERRAFORM_ROOTS=/tmp; expected='Terraform root must be repository-relative' ;;
+            root-traversal) PROCESS_TERRAFORM_ROOTS=../control; expected="Terraform root must not contain '..'" ;;
+            root-missing) PROCESS_TERRAFORM_ROOTS=missing; expected='Terraform root does not exist' ;;
+            duplicate) PROCESS_TERRAFORM_ROOTS=$'root\n./root'; expected='duplicate canonical Terraform root' ;;
+            config-absolute) PROCESS_CONFIG_PATH=/tmp/config; expected='config path must be repository-relative' ;;
+            config-invalid)
+                printf 'unknown: true\n' >"$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
+                "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- .github/tf-version-bump/test.yml
+                fixture_commit "$PROCESS_CONTROL_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: invalid config'
+                expected='invalid control configuration'
+                ;;
+            symlink)
+                ln -s "$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml" "$PROCESS_TARGET_CHECKOUT/root/escape.tf"
+                "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- root/escape.tf
+                fixture_commit "$PROCESS_TARGET_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: escaping Terraform file'
+                expected='Terraform file must be a regular non-symlink'
+                ;;
+            control-oid) PROCESS_CONTROL_OID=0000000000000000000000000000000000000000; expected='control checkout HEAD does not match control OID' ;;
+            base-oid) PROCESS_BASE_OID=0000000000000000000000000000000000000000; expected='target checkout HEAD does not match base OID' ;;
+            hash) PROCESS_REF_HASH=bad; expected='state ref hash does not match ref hash' ;;
+            deadline) PROCESS_PREPARATION_DEADLINE_EPOCH=1; expected='processing deadline expired before workspace setup' ;;
+        esac
+        assert_processing_failure "$expected" "$mode input"
+        [[ -z "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" status --porcelain)" ]] || fail 'invalid input modified target'
+        [[ ! -e "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'invalid input produced patch'
+    done
+}
+
+test_processing_rejects_ignored_generated_lock() {
+    setup_processing_workspace
+    configure_validation_provider_base_without_lock
+    printf '.terraform.lock.hcl\n' >"$PROCESS_TARGET_CHECKOUT/.gitignore"
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- .gitignore
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: ignore provider lock'
+    assert_processing_failure 'required provider lock file is ignored' 'ignored lock'
+    jq -e '.classification == "automation"' "$PROCESS_RESULT_DIR/result.json" >/dev/null
+    [[ ! -e "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'ignored lock became publishable'
+}
+
+test_processing_rejects_formatter_changes_outside_patch_policy() {
+    setup_processing_workspace
+    PROCESS_TERRAFORM_FMT=true
+    printf 'value={a="b"}\n' >"$PROCESS_TARGET_CHECKOUT/root/input.tfvars"
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- root/input.tfvars
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: formatter changes non-Terraform path'
+    assert_processing_failure 'formatting changed a non-Terraform path' 'unexpected candidate path'
+    jq -e '.classification == "automation"' "$PROCESS_RESULT_DIR/result.json" >/dev/null
+    [[ -s "$PROCESS_RESULT_DIR/logs/fmt-1.log" ]] || fail 'automation failure lost diagnostics'
+    [[ ! -e "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'unexpected path became publishable'
 }
 
 cleanup_test_repositories() {
@@ -3862,40 +990,30 @@ cleanup_test_repositories() {
     cleanup_processing_container
     rm -rf -- "$TEST_TMP_ROOT"
 }
-
 trap cleanup_test_repositories EXIT
 
+# Route subprocess Git through the caller's signer, including runtime publication tests.
+if [[ "$TEST_GIT" != git ]]; then
+    mkdir "$TEST_TMP_ROOT/git-bin"
+    ln -s "$TEST_GIT" "$TEST_TMP_ROOT/git-bin/git"
+    export PATH="$TEST_TMP_ROOT/git-bin:$PATH"
+fi
+
 if [[ $# -eq 0 ]]; then
-    test_actionlint_launcher_reports_pinned_version
-    test_example_configs_pass_cli_dry_run
-    test_ci_proves_go_floor_and_builds_on_the_release_toolchain
-    test_modules_declare_intended_go_versions
-    test_copyable_workflow_layout
-    test_operator_documentation_describes_stage_two_contract
-    test_fixture_version_diagnostics_follow_current_expected_version
-    test_reusable_workflow_declares_lean_interface
-    test_reusable_workflow_wires_current_attempt_pipeline
-    test_callers_define_weekly_policies_and_tool_pins
-    test_config_validation_workflow_is_read_only
-    test_workflows_keep_representative_execution_boundaries
-    test_runtime_helpers_provide_help
-    TEST_GIT="$TEST_GIT" "$RECONCILE_TEST"
-    test_processing_path_and_workspace_safety
-    test_processing_preparation
-    test_processing_no_change_runs_validation_and_dry_run_skips_publication_mutation
-    test_processing_validation
-    test_discovery_resolves_origin_from_control_checkout
-    test_discovery_uses_runner_git_not_a_workstation_shim
-    test_processing_exposes_only_prepare_and_validate
-    test_discovery_selects_literal_prefixes
-    test_discovery_manual_prefix_only_narrows
-    test_discovery_deduplicates_overlapping_prefixes
-    test_discovery_accepts_caller_block_scalar_prefixes
-    test_discovery_rejects_invalid_inputs_by_stage
-    test_discovery_treats_hostile_refs_as_inert_data
-    test_discovery_enforces_matrix_limit_before_output
-    test_discovery_binds_supplied_immutable_identities
-    test_discovery_validates_policy_id
+    tests=(test_processing_combines_update_init_format_validate
+        test_processing_validates_unchanged_candidates test_processing_init_upgrade_is_opt_in
+        test_workflow_runs_three_jobs_with_current_attempt_results
+        test_processing_records_real_update_and_format_failures test_processing_rejects_invalid_inputs_before_updates
+        test_processing_rejects_ignored_generated_lock test_processing_rejects_formatter_changes_outside_patch_policy)
+    while IFS= read -r test_name; do tests+=("$test_name"); done < <(compgen -A function test_discovery_)
+    for test_name in "${tests[@]}"; do
+        "$test_name"
+        printf 'PASS: %s\n' "$test_name"
+    done
+    "$RECONCILE_TEST"
 else
-    "$@"
+    for test_name in "$@"; do
+        "$test_name"
+        printf 'PASS: %s\n' "$test_name"
+    done
 fi
