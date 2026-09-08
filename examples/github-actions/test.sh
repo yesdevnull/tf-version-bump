@@ -928,7 +928,7 @@ test_processing_records_real_update_and_format_failures() {
 
 test_processing_rejects_invalid_inputs_before_updates() {
     local mode expected
-    for mode in boolean-upgrade boolean-format root-absolute root-traversal root-missing duplicate config-absolute config-invalid symlink control-oid base-oid hash deadline; do
+    for mode in boolean-upgrade boolean-format root-absolute root-traversal root-missing duplicate config-absolute symlink control-oid base-oid hash deadline; do
         setup_processing_workspace
         case "$mode" in
             boolean-upgrade) PROCESS_TERRAFORM_INIT_UPGRADE=TRUE; expected='Terraform init upgrade must be true or false' ;;
@@ -938,12 +938,6 @@ test_processing_rejects_invalid_inputs_before_updates() {
             root-missing) PROCESS_TERRAFORM_ROOTS=missing; expected='Terraform root does not exist' ;;
             duplicate) PROCESS_TERRAFORM_ROOTS=$'root\n./root'; expected='duplicate canonical Terraform root' ;;
             config-absolute) PROCESS_CONFIG_PATH=/tmp/config; expected='config path must be repository-relative' ;;
-            config-invalid)
-                printf 'unknown: true\n' >"$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
-                "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- .github/tf-version-bump/test.yml
-                fixture_commit "$PROCESS_CONTROL_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: invalid config'
-                expected='invalid control configuration'
-                ;;
             symlink)
                 ln -s "$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml" "$PROCESS_TARGET_CHECKOUT/root/escape.tf"
                 "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- root/escape.tf
@@ -961,6 +955,34 @@ test_processing_rejects_invalid_inputs_before_updates() {
     done
 }
 
+test_processing_invalid_config_reconciles_branch_failure() {
+    local mode diagnostic
+    for mode in malformed unknown-field; do
+        setup_processing_workspace
+        if [[ "$mode" == malformed ]]; then
+            printf 'modules: [\n' >"$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
+            diagnostic='did not find expected node content'
+        else
+            printf 'unknown: true\n' >"$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
+            diagnostic='field unknown not found'
+        fi
+        "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- .github/tf-version-bump/test.yml
+        fixture_commit "$PROCESS_CONTROL_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' "test: $mode bump configuration"
+        assert_processing_failure 'tf-version-bump failed for Terraform root root' "$mode configuration"
+        jq -e '.classification == "branch-update" and .failure.stage == "tf-version-bump" and
+            .failure.root == "root" and .failure.status > 0' "$PROCESS_RESULT_DIR/result.json" >/dev/null
+        grep -F "$diagnostic" "$PROCESS_RESULT_DIR/logs/update-1.log" >/dev/null || fail 'configuration diagnostic missing'
+        [[ ! -e "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'invalid configuration emitted a patch'
+        [[ -z "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" status --porcelain)" ]] || fail 'invalid configuration modified target'
+        if ! PROCESSING_RESULT_FIXTURE="$PROCESS_RESULT_DIR" PROCESSING_TARGET_FIXTURE="$PROCESS_TARGET_CHECKOUT" \
+            "$RECONCILE_TEST" test_reconciles_supplied_processing_failure \
+            >"$PROCESS_TMP_ROOT/lifecycle.stdout" 2>"$PROCESS_TMP_ROOT/lifecycle.stderr"; then
+            fail "invalid configuration lifecycle failed: $(<"$PROCESS_TMP_ROOT/lifecycle.stderr")"
+        fi
+        [[ ! -s "$PROCESS_TMP_ROOT/lifecycle.stderr" ]] || fail 'failure lifecycle emitted unexpected diagnostics'
+    done
+}
+
 test_processing_rejects_ignored_generated_lock() {
     setup_processing_workspace
     configure_validation_provider_base_without_lock
@@ -970,6 +992,58 @@ test_processing_rejects_ignored_generated_lock() {
     assert_processing_failure 'required provider lock file is ignored' 'ignored lock'
     jq -e '.classification == "automation"' "$PROCESS_RESULT_DIR/result.json" >/dev/null
     [[ ! -e "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'ignored lock became publishable'
+}
+
+test_processing_formats_only_after_dependency_or_lock_changes() {
+    local mode mirror newer_package original_lock
+    for mode in unchanged new-lock upgraded-lock; do
+        setup_processing_workspace
+        PROCESS_TERRAFORM_FMT=true
+        printf '%s\n' 'terraform_version: ">= 1.0"' >"$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
+        "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- .github/tf-version-bump/test.yml
+        fixture_commit "$PROCESS_CONTROL_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: keep requested Terraform version unchanged'
+        if [[ "$mode" == new-lock ]]; then
+            configure_validation_provider_base_without_lock
+        elif [[ "$mode" == upgraded-lock ]]; then
+            configure_validation_provider_base
+            mirror="$PROCESS_VALIDATION_FIXTURE_ROOT/provider-mirror/registry.terraform.io/yesdevnull/test"
+            chmod u+w "$mirror"
+            newer_package="$mirror/0.2.0/linux_amd64"
+            mkdir -p "$newer_package"
+            cp "$mirror/0.1.0/linux_amd64/terraform-provider-test_v0.1.0_x5" \
+                "$newer_package/terraform-provider-test_v0.2.0_x5"
+            chmod -R a-w "$mirror"
+            sed -i.bak 's/version = "0.1.0"/version = ">= 0.1.0"/' "$PROCESS_TARGET_CHECKOUT/root/main.tf"
+            rm "$PROCESS_TARGET_CHECKOUT/root/main.tf.bak"
+            PROCESS_TERRAFORM_INIT_UPGRADE=true
+        fi
+        mkdir "$PROCESS_TARGET_CHECKOUT/root/nested"
+        printf '%s\n' 'locals { value={ a="b" } }' >"$PROCESS_TARGET_CHECKOUT/root/nested/child.tf"
+        "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- root
+        fixture_commit "$PROCESS_TARGET_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' "test: $mode formatting candidate"
+        cp "$PROCESS_TARGET_CHECKOUT/root/main.tf" "$PROCESS_TMP_ROOT/original-main.tf"
+        cp "$PROCESS_TARGET_CHECKOUT/root/nested/child.tf" "$PROCESS_TMP_ROOT/original-child.tf"
+        original_lock=''
+        if [[ -f "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" ]]; then
+            original_lock=$(sha256_file "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl")
+        fi
+        assert_silent_success "$mode formatting candidate" "$PROCESS_TMP_ROOT/stdout" "$PROCESS_TMP_ROOT/stderr" run_processing
+        cmp "$PROCESS_TMP_ROOT/original-main.tf" "$PROCESS_TARGET_CHECKOUT/root/main.tf" || fail 'lock-only case changed Terraform constraints'
+        if [[ "$mode" == unchanged ]]; then
+            jq -e '.classification == "no-change"' "$PROCESS_RESULT_DIR/result.json" >/dev/null || fail 'unchanged dependencies produced a formatting-only candidate'
+            cmp "$PROCESS_TMP_ROOT/original-child.tf" "$PROCESS_TARGET_CHECKOUT/root/nested/child.tf" || fail 'unchanged dependencies triggered formatting'
+            [[ ! -e "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'unchanged dependencies emitted a patch'
+        else
+            [[ "$(sha256_file "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl")" != "$original_lock" ]] || fail 'lock fixture did not change'
+            grep -F 'value = { a = "b" }' "$PROCESS_TARGET_CHECKOUT/root/nested/child.tf" >/dev/null || fail 'lock-only change did not enable formatting'
+            jq -e '.classification == "success"' "$PROCESS_RESULT_DIR/result.json" >/dev/null
+            "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$PROCESS_TMP_ROOT/applied"
+            "$TEST_GIT" -C "$PROCESS_TMP_ROOT/applied" apply --index "$PROCESS_RESULT_DIR/candidate.patch"
+            cmp "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" "$PROCESS_TMP_ROOT/applied/root/.terraform.lock.hcl" || fail 'patch omitted lock change'
+            cmp "$PROCESS_TARGET_CHECKOUT/root/nested/child.tf" "$PROCESS_TMP_ROOT/applied/root/nested/child.tf" || fail 'patch omitted formatting'
+        fi
+        [[ -s "$PROCESS_RESULT_DIR/logs/validate-1.log" ]] || fail 'formatting gate skipped validation'
+    done
 }
 
 test_processing_rejects_formatter_changes_outside_patch_policy() {
@@ -1004,6 +1078,8 @@ if [[ $# -eq 0 ]]; then
         test_processing_validates_unchanged_candidates test_processing_init_upgrade_is_opt_in
         test_workflow_runs_three_jobs_with_current_attempt_results
         test_processing_records_real_update_and_format_failures test_processing_rejects_invalid_inputs_before_updates
+        test_processing_invalid_config_reconciles_branch_failure
+        test_processing_formats_only_after_dependency_or_lock_changes
         test_processing_rejects_ignored_generated_lock test_processing_rejects_formatter_changes_outside_patch_policy)
     while IFS= read -r test_name; do tests+=("$test_name"); done < <(compgen -A function test_discovery_)
     for test_name in "${tests[@]}"; do
