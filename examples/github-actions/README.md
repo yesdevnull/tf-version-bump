@@ -1,26 +1,22 @@
-# GitHub Actions state-branch automation POC
+# GitHub Actions state-branch automation
 
-This copyable proof of concept discovers selected Terraform state branches, prepares and validates one candidate per branch, verifies the result, then opens or refreshes a pull request when files change. The reusable workflow has four jobs: `discover`, `prepare`, `validate`, and `publish`. An unchanged branch still validates every configured root and finishes without a commit or Git ref mutation; live publication closes any marked update pull request and resolves any marked failure issue. Update, initialisation, formatting, and validation failures close the marked update pull request before creating or refreshing a marked issue.
+This copyable example updates Terraform dependencies across selected branches and opens or refreshes a pull request for each changed branch. It uses three jobs:
 
-## Operating assumptions and limits
+1. **Discover** selects branches by literal prefix and records their commit IDs.
+2. **Process** updates each branch in a disposable checkout, runs `terraform init`, optionally formats the candidate, then runs `terraform validate`.
+3. **Publish** checks the result and patch, then manages the update branch, pull request and failure issue.
 
-Use this POC only where Terraform modules are written by your organisation, providers are official HashiCorp providers or organisation-developed providers, and provider/module egress is controlled by an NVA. The scripts do not sandbox malicious Terraform, providers, or modules; private and first-party providers are trusted code that can execute in the runner, and private and first-party module sources are trusted code. Post-Terraform checks run on the same runner and detect only accidental or non-adversarial mutation. Untrusted provider or module code requires independent verification or isolation. A successful validation is only the observed result of Terraform in that run.
+The processing job has read-only repository permissions. Only the separate publication job has repository write permissions; it does not run Terraform or receive the registry token.
 
-It intentionally omits comprehensive hostile-content defence, recovery after interrupted publication, automatic update-ref deletion, and exhaustive publication-race handling. A lease or ownership failure is reported for the next run to handle. Review the workflow and helper scripts before using them with a different trust model.
+## Intended environment
 
-Pull-request cleanup matches the policy/branch marker and the expected head and base branches. Update refs are retained. Dry runs do not change GitHub records, and automation failures or invalid/unverified artefacts do not trigger cleanup. A pull-request lookup or closure failure stops publication before issue reconciliation.
+Use this example with trusted official providers and your organisation's private modules, including modules from the HCP Terraform registry. The checks prevent configuration mistakes and accidental publication of unrelated files. They do not sandbox malicious providers or modules.
 
-Both Terraform jobs install the pinned Terraform CLI with `hashicorp/setup-terraform` and run it directly. Docker is not a workflow prerequisite or production validation boundary. The repository harness uses a Docker container only as reproducible local Linux/Terraform test infrastructure, where the helper is deliberately run without a Docker executable.
-
-Each caller also runs when its own control config changes on the default branch. The existing
-default-branch guard safely skips matching changes on other branches. Pull requests that change
-either control config run a read-only CLI dry-run check against a temporary fixture; it does not
-discover state branches, run Terraform, or publish anything. A full pull-request state-branch
-dry-run remains deferred.
+The workflow uses disposable Ubuntu runners and a pinned Terraform CLI. Docker is only used by this repository's local test harness. Processing and validation share one checkout and one initialisation; there is no separate fresh-checkout validation stage.
 
 ## Install
 
-On the default branch of the target repository, copy the example `.github` directory into the repository root:
+Copy the example `.github` directory onto the default branch of your Terraform repository:
 
 ```bash
 source=/path/to/tf-version-bump
@@ -29,46 +25,35 @@ mkdir -p "$consumer/.github"
 cp -R "$source/examples/github-actions/.github/." "$consumer/.github/"
 ```
 
-Review and commit the copied files. The example supplies two callers:
+Review and commit the copied files. The example supplies separate callers for:
 
-- `tf-version-bump-nonproduction.yml` for `state/nonproduction/`, `state/staging/`, `aws-state/nonproduction/`, and `aws-state/staging/`;
-- `tf-version-bump-production.yml` for `state/production/` and `aws-state/production/`.
+- **Non-production:** `state/nonproduction/`, `state/staging/`, `aws-state/nonproduction/` and `aws-state/staging/`.
+- **Production:** `state/production/` and `aws-state/production/`.
 
-Both callers run only when the workflow revision is on the default branch. Their schedules are Monday 04:17 and Sunday 04:43 respectively in `Australia/Melbourne`.
-Changing `.github/tf-version-bump/nonproduction.yml` or `production.yml` on that branch also starts
-the matching caller. The separate configuration-validation workflow runs for pull requests that
-change either file. Pull requests validate only the YAML runtime contract without selecting
-Terraform files.
+Both callers run only from the default branch. Their schedules are Monday 04:17 and Sunday 04:43 respectively in `Australia/Melbourne`. They also run when their control configuration changes, and can be started manually. A manual `branch_prefix` can narrow the configured prefixes but cannot select another branch family.
 
-Configure Actions to permit the workflow's `contents`, `pull-requests`, and `issues` write permissions. Before live publication, enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** for the repository or organisation.
+Allow the workflow's `contents`, `pull-requests` and `issues` write permissions. Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** before live publication.
 
-Create a repository Actions secret named `TF_API_TOKEN` containing an HCP Terraform token with
-read access to the private modules and providers used by the configured roots. The supplied callers
-pass it to the reusable workflow, which exposes it as `TF_TOKEN_app_terraform_io` only while the
-prepare and validate helpers run. The publish job does not receive the token in its environment.
+Create an Actions secret named `TF_API_TOKEN` with read access to your HCP Terraform registry modules and providers. The workflow exposes it as `TF_TOKEN_app_terraform_io` only during processing. The processing checkouts disable persisted Git credentials.
 
-`actions/checkout` manages the built-in token only for discovery's read-only control checkout and publication's write-capable target checkout. Terraform checkouts disable persisted credentials, and the validate job performs validation and verification in its one target checkout; no custom token files, App, or PAT credentials are used.
-The reconciliation helper owns its exact-ref fetches and exact-lease publication directly; the
-processing helper only prepares and validates candidates.
+## Configure updates
 
-## Configure roots and version changes
-
-The control configuration lives on the default branch at:
+Edit the control configurations on the default branch:
 
 ```text
 .github/tf-version-bump/nonproduction.yml
 .github/tf-version-bump/production.yml
 ```
 
-Edit the provider and module targets in those files. They are strict `tf-version-bump` config files, so the workflow owns the `*.tf` file selection; do not add a `pattern` key.
+These are strict `tf-version-bump` configuration files. The workflow owns file selection, so do not add a `pattern` key. Pull requests changing these files run a read-only config validation check; they do not process state branches or run Terraform.
 
-The callers are configured for the repository root with:
+The callers process the repository root by default:
 
 ```yaml
 terraform_directories: .
 ```
 
-For several direct Terraform roots, use a newline-separated list in the caller instead:
+For several Terraform roots, use a newline-separated list:
 
 ```yaml
 terraform_directories: |
@@ -76,59 +61,47 @@ terraform_directories: |
   environments/staging
 ```
 
-Each configured root is processed independently. Keep the config path repository-relative and committed on the default branch that starts the run. `terraform_fmt` defaults to `false`, and both supplied callers set `terraform_fmt: true`. For every configured root, preparation runs the updater and `terraform init` before formatting is eligible. When enabled for a changed candidate, Terraform runs `terraform fmt -recursive` in every configured root.
+Roots must exist inside the state-branch checkout and must not resolve to duplicate directories. Version updates apply to `*.tf` files directly inside each configured root. When `terraform_fmt` is enabled and updates have changed files, formatting runs recursively below each root. Both supplied callers enable formatting; the reusable workflow defaults it to `false`.
 
-`terraform_init_upgrade` defaults to `false`. Enable it in the manual workflow inputs to run preparation with `terraform init -upgrade`. Scheduled and config-change runs use ordinary `init`; to opt those runs into upgrades, set `terraform_init_upgrade: true` in the caller's `with` block. Direct script callers can set `PROCESS_TERRAFORM_INIT_UPGRADE=true`; an omitted value defaults to `false`, and other values besides exact `true` or `false` are rejected.
+The callers pin `tf-version-bump` to `v1.0.0-rc.11` and verify archive SHA-256 `5560b45e220650e8b18d5836eff05d471f602a6ac970aeeb9628781797f54c85` before running it.
 
-Ordinary `init` preserves existing provider selections when they satisfy the updated constraints. If a requested version excludes a locked provider version, preparation reports a `branch-init` failure; it does not retry with `-upgrade`. Enable upgrade explicitly to select newer versions. Upgrade applies to all eligible dependencies, so providers outside the bump config can also move within their existing constraints. Without an existing provider lock entry, ordinary `init` still selects a matching version. Modules are not covered by the provider lock file; these fresh checkouts resolve their configured module constraints on every run. Validation always uses ordinary `init`, with `-lockfile=readonly` when a lock file exists.
+## Initialisation and upgrades
 
-When a root has provider selections, its resulting `.terraform.lock.hcl` change is included in the
-update branch for reproducible runs. A provider-free root can legitimately have no lock file.
+`terraform_init_upgrade` defaults to `false`. Ordinary `init` preserves existing provider selections when they satisfy the updated constraints. If a requested version conflicts with the lock file, the run reports an initialisation failure; it does not retry with upgrade automatically.
 
-The callers pin `tf-version-bump` to `v1.0.0-rc.11` and verify the archive SHA-256 `5560b45e220650e8b18d5836eff05d471f602a6ac970aeeb9628781797f54c85` before execution.
+Enable `terraform_init_upgrade` in the manual workflow inputs to use `terraform init -upgrade`. To enable it for scheduled and config-change runs, set `terraform_init_upgrade: true` in the caller's `with` block. Direct script callers can set `PROCESS_TERRAFORM_INIT_UPGRADE=true`; an omitted value defaults to `false`, and values other than exact `true` or `false` are rejected.
 
-## Results, failures, and pull requests
+Upgrade applies to all eligible dependencies, including providers outside the bump configuration. Without an existing provider lock entry, ordinary `init` still selects a matching version. Modules are not covered by the provider lock file; a fresh checkout resolves their configured module constraints on each run.
 
-Validation and verification use one target checkout in `validate`; there is no separate fresh verification checkout. The run retains `preparation-*` and `verified-*` artefacts; it has no separate validation artefact or verification job. Inspect the `preparation-*` and `verified-*` artefacts for manifests and captured logs.
+Initialisation disables the backend and interactive prompts. Generated `.terraform.lock.hcl` files are included in the patch; do not ignore them in provider roots. Validation uses the same initialised directory. A provider-free root can have no lock file.
 
-For a changed candidate, publication first creates one dynamic dependency commit. Its subject reflects the update result: `chore: bump Terraform provider and module versions`, `chore: bump Terraform provider versions`, `chore: bump Terraform module versions`, or `chore: update Terraform configuration`. If recursive formatting changed files, publication adds the second commit, `chore: run Terraform fmt`. A formatting run with no file changes produces no format patch and no `chore: run Terraform fmt` commit.
+## Results and publication
 
-The managed pull request reports exact `Module blocks updated` and `Provider blocks updated` counts, followed by separate `Dependency and lock-file changes` and `Formatting changes` file lists. A `branch-format` result means `terraform fmt -recursive` failed in a configured root; it creates or refreshes the marked failure issue rather than publishing an update branch.
+The processing result contains `result.json`, diagnostic logs and, for a changed valid candidate, `candidate.patch`. Publication checks the run and branch identity, patch checksum, configured roots and permitted file changes before constructing one commit containing dependency, lock-file and formatting changes.
 
-## Authentication and publication
+For `state/nonproduction/example-thing`, the managed update branch is `update_state/nonproduction/example-thing`. The publisher checks that the state branch still matches its discovered commit. It updates an existing automation-owned ref using an exact force-with-lease; ownership or lease failures stop publication for the next run to handle.
 
-The POC uses only the workflow's built-in `GITHUB_TOKEN` to publish update branches, pull requests, and failure issues. Automation commits are explicitly unsigned, even when repository or runner Git configuration enables signing.
-
-GitHub suppresses push events generated with `GITHUB_TOKEN`, and workflows triggered by opening, synchronising, or reopening its pull requests require approval. Do not rely on those events to pass required checks automatically. GitHub App authentication, commit signing, and publication-environment approval are deferred from this POC.
-
-## Run and inspect
-
-Start with a manual dry run from the default branch. In **Actions**, select the non-production workflow, choose **Run workflow**, leave `branch_prefix` empty (or enter a literal configured prefix), and select `dry_run`. A dry run performs preparation, validation, verification, and local commit construction only when files changed. A dry run does not push a branch or create or update a pull request or issue.
-
-The weekly schedule uses all configured prefixes. A manual `branch_prefix` only narrows that policy; it cannot select an unconfigured branch family.
-
-For a state branch such as `state/nonproduction/example-thing`, the update branch is `update_state/nonproduction/example-thing`. Pull requests and issues include the stable marker:
+Pull requests and failure issues carry this stable marker:
 
 ```html
 <!-- tf-version-bump:<policy>:<ref-hash> -->
 ```
 
-Reruns use that marker to refresh rather than duplicate the pull request or issue. If a run needs to be repeated, use **Re-run all jobs**. Partial job reruns are unsupported because the artefacts are tied to one run attempt.
+| Result | Publication |
+| --- | --- |
+| Changed and valid | Create or refresh the marked PR; close the marked failure issue |
+| Unchanged and valid | Close the obsolete marked PR and failure issue |
+| Update, init, fmt or validation failure | Close the marked PR first, then create or refresh the failure issue |
+| Automation failure or missing/invalid result | Stop without changing managed PRs, issues or refs |
 
-Open the workflow run to inspect the `discover`, `prepare`, `validate`, and `publish` jobs. Download and inspect the `preparation-*` and `verified-*` artefacts from the run for their manifests and captured logs; example artefacts are retained for seven days.
+Unchanged candidates still run validation. Cleanup matches the policy/branch marker and the expected PR head and base. Update refs are retained. GitHub lookup and closure errors stop reconciliation.
 
-## Operator-run battle test
+Publication uses the built-in `GITHUB_TOKEN`. The helper respects Git's signing configuration; the example does not provision a signing key. If signing is enabled, the runner must have a working key. Do not assume token-created branches and PRs will automatically run your downstream checks; review GitHub's [GITHUB_TOKEN workflow behaviour](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow#triggering-a-workflow-from-a-workflow) when configuring required checks.
 
-No disposable GitHub repository is created or mutated by this example repository. Before enabling regular publication, an operator should run the following in a disposable private repository. Replace every angle-bracket value with an operator-supplied value.
+## Run and inspect
 
-```bash
-repository=<OWNER/REPOSITORY>
-default_branch=<DEFAULT-BRANCH>
-branch_prefix=state/nonproduction/
+Start with a manual run from the default branch and select `dry_run`. This processes and validates candidates and checks publication locally, without pushing refs or changing PRs or issues. Inspect the candidate patch and logs before enabling live publication.
 
-gh workflow run tf-version-bump-nonproduction.yml --repo "$repository" --ref "$default_branch" \
-  -f branch_prefix="$branch_prefix" -f dry_run=true
-gh run list --repo "$repository" --workflow tf-version-bump-nonproduction.yml --limit 1
-```
+Open the workflow run to inspect `discover`, `process` and `publish`. Download its result artefacts to see `result.json`, `candidate.patch` and captured command logs. Artefacts are retained for seven days. Results belong to one run attempt; use **Re-run all jobs**, as partial job reruns are unsupported.
 
-Confirm the dry run reaches all four jobs and creates no update branch, pull request, or issue. Then repeat with `dry_run=false`, record the run URL, and confirm it creates or refreshes the expected `update_<state-branch>` pull request. Run it once more and confirm the same pull request is refreshed. Finally, introduce a controlled validation error on one disposable matching state branch, run again, and confirm one marked issue is created or refreshed. Record the workflow URLs and observed result in your deployment change record; do not add credentials or private repository content to this example.
+Before enabling schedules, test in a disposable private repository: run a dry run, publish a valid change twice and check that the same PR is refreshed, then introduce a validation failure and confirm that the PR closes and one failure issue is maintained. Finally, test a valid no-change result and confirm that the issue closes. No live GitHub repository is created or mutated by this repository's local component tests.
