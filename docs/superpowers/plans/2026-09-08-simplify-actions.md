@@ -32,38 +32,38 @@ Discovery and caller configuration stay compatible unless wiring requires edits.
 the version 3 result.json and candidate.patch specified in the design.
 Publication consumes the same contract and workflow-supplied roots/run URL.
 
-- [ ] Read the current scripts and harness, preserve reusable real fixtures.
-- [ ] Add a failing combined-pipeline test: run `process`, assert updated Terraform,
+- [x] Read the current scripts and harness, preserve reusable real fixtures.
+- [x] Add a failing combined-pipeline test: run `process`, assert updated Terraform,
   success classification and one patch; apply to exact base and compare content.
   An unchanged invalid resource must report branch-validation, not no-change.
-- [ ] Run focused tests and record expected old-contract failures.
-- [ ] Implement the combined processing path and compact publication contract.
-- [ ] Adapt real provider tests: unset/false retains compatible lock, true upgrades;
+- [x] Run focused tests and record expected old-contract failures.
+- [x] Implement the combined processing path and compact publication contract.
+- [x] Adapt real provider tests: unset/false retains compatible lock, true upgrades;
   incompatible lock fails without upgrade and succeeds with it.
-- [ ] Test formatter inclusion, multiple roots, failed update/init/validate,
+- [x] Test formatter inclusion, multiple roots, failed update/init/validate,
   invalid booleans/roots/config, unexpected patch paths and corrupt identity/digest.
-- [ ] Test publication with real temporary Git repositories: one owned commit,
+- [x] Test publication with real temporary Git repositories: one owned commit,
   unchanged base, exact lease, foreign-owned update ref and moved base refusal.
-- [ ] Test GitHub lifecycle decisions through command capture: success create/edit,
+- [x] Test GitHub lifecycle decisions through command capture: success create/edit,
   failure closes PR before issue, no-change closes PR/issue, dry-run and invalid
   result no mutation, API lookup/closure failure stops subsequent actions.
-- [ ] Wire three jobs and artifact names with run attempt identity; lint installed
+- [x] Wire three jobs and artifact names with run attempt identity; lint installed
   example layout using existing actionlint runner.
-- [ ] Run focused harness and ShellCheck; self-review and commit signed changes.
-- [ ] Task review checks contract and quality; fix findings with regression tests.
+- [x] Run focused harness and ShellCheck; self-review and commit signed changes.
+- [x] Task review checks contract and quality; fix findings with regression tests.
 
 ### Task 2: Document and verify the complete flow
 
 **Files:** examples/github-actions/README.md and docs/ADVANCED-USAGE.md.
 **Interfaces:** Describe Task 1's final exported inputs, result files and job flow.
 
-- [ ] Replace old phase descriptions with the three-job flow and single patch/commit.
-- [ ] Document trusted-code limits, explicit upgrade semantics and failure lifecycle.
-- [ ] Document result/log inspection, supported reruns and signing configuration.
-- [ ] Run full appropriate Go tests, build, module verification, docs-check,
+- [x] Replace old phase descriptions with the three-job flow and single patch/commit.
+- [x] Document trusted-code limits, explicit upgrade semantics and failure lifecycle.
+- [x] Document result/log inspection, supported reruns and signing configuration.
+- [x] Run full appropriate Go tests, build, module verification, docs-check,
   golangci-lint v2.12 and shell/action lint plus the meaningful example tests.
-- [ ] Independent test-cleanup pass, then whole-branch code review and fixes.
-- [ ] Commit final signed changes and report worktree, size reduction and validation.
+- [x] Independent test-cleanup pass, then whole-branch code review and fixes.
+- [x] Commit final signed changes and report worktree, size reduction and validation.
 
 ## Self-review
 
@@ -71,3 +71,24 @@ Task 1 produces the same result fields Task 2 documents. Runtime and workflow
 changes are kept in one task because their interfaces are tightly coupled.
 The old stage-specific tests must change, but retained behaviour requires real
 test coverage. Baseline `go test ./...` passed in the clean new worktree.
+
+## Completion record
+
+Implemented in signed commits be10fd4 and b9e514e; maintained guides updated in
+9793a5d. Helpers total 1,015 lines (143 discovery, 520 processing, 352 publication),
+down from 2,877. Reusable workflow is 225 lines, down from 342.
+
+Independent full review found two regressions: invalid config bypassed stale PR
+cleanup, and formatting ran on unchanged dependency candidates. Both were fixed
+with real regressions and approved on scoped re-review. No important finding
+remains. Independent cleanup kept all 28 original groups and the four groups
+touched by the fix, with no justified removals.
+
+Verification passed: all 30 default example harness groups plus its actual-result
+publication helper, installed-layout actionlint, ShellCheck on all five shell
+files, Git diff checks, Go race tests (93.8% coverage), build, module verification,
+golangci-lint v2.12, docs-check and release-pin maintenance tests. GitHub lifecycle
+checks are component tests; no live GitHub repository was mutated.
+
+The branch and worktree are retained for Dan. No push, PR or merge was requested
+for this work.
