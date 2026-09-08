@@ -183,6 +183,14 @@ publish_update_ref() {
         "$RECONCILE_GIT_REMOTE" "HEAD:$update_ref" || reconcile_error 'update ref push failed its exact lease'
 }
 
+verify_remote_base() {
+    local state_ref="refs/heads/$RECONCILE_STATE_BRANCH" remote_ref
+    remote_ref=$(bounded git -C "$RECONCILE_TARGET_CHECKOUT" ls-remote --refs "$RECONCILE_GIT_REMOTE" "$state_ref") \
+        || reconcile_error 'could not inspect remote state ref'
+    [[ "$remote_ref" == "$RECONCILE_BASE_OID"$'\t'"$state_ref" ]] \
+        || reconcile_error 'state ref moved after discovery'
+}
+
 write_github_body() {
     local body="$RECONCILE_TEMPORARY_PATH/body"
     printf '%s\n\nTerraform dependency update for %s.\n\nResult: %s\n\nBase: %s\n\nWorkflow run: <a href="%s">run %s, attempt %s</a>\n' \
@@ -238,6 +246,7 @@ publish_result() {
     : "${RECONCILE_RUN_URL:?RECONCILE_RUN_URL must be set}"
     : "${GH_TOKEN:?GH_TOKEN must be set}"
     if [[ "$CLASSIFICATION" == success ]]; then construct_update_commit; publish_update_ref; fi
+    verify_remote_base
     reconcile_lifecycle
 }
 
