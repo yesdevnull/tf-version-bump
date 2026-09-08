@@ -90,13 +90,17 @@ ensure_processing_container() {
     # No --rm: a failed `apk add` must leave the container inspectable (State.Running and
     # `docker logs`) so the readiness loop can report why, instead of polling a vanished
     # container for two minutes. cleanup_processing_container force-removes it either way.
-    PROCESS_CONTAINER_ID=$(docker run --detach \
+    local startup_log="$TEST_TMP_ROOT/container-start.log"
+    if ! PROCESS_CONTAINER_ID=$(docker run --detach --pull="${1:-missing}" \
         --platform linux/amd64 \
         --entrypoint /bin/sh \
         --volume "$SCRIPT_DIR:$SCRIPT_DIR:ro" \
         --volume "$TEST_TMP_ROOT:$TEST_TMP_ROOT" \
         "$TERRAFORM_IMAGE" \
-        -c 'apk add --no-cache bash curl git jq coreutils && touch /tmp/harness-ready && exec tail -f /dev/null')
+        -c 'apk add --no-cache bash curl git jq coreutils && touch /tmp/harness-ready && exec tail -f /dev/null' \
+        2>"$startup_log"); then
+        fail "could not start Terraform test container: $(<"$startup_log")"
+    fi
 
     local attempts=0
     until docker exec "$PROCESS_CONTAINER_ID" /bin/sh -c \
@@ -836,6 +840,26 @@ test_processing_init_upgrade_is_opt_in() {
 }
 
 
+test_processing_container_setup_captures_pull_progress() {
+    cleanup_processing_container
+    # Always pull the real pinned image so this also exercises setup output on a warm cache.
+    assert_silent_success 'container setup with image pull' "$TEST_TMP_ROOT/setup.stdout" \
+        "$TEST_TMP_ROOT/setup.stderr" ensure_processing_container always
+    [[ "$(docker inspect --format='{{.State.Running}}' "$PROCESS_CONTAINER_ID")" == true ]] \
+        || fail 'processing container did not start'
+    grep -F "${TERRAFORM_IMAGE#*@}" "$TEST_TMP_ROOT/container-start.log" >/dev/null \
+        || fail 'image pull diagnostics were not captured'
+    cleanup_processing_container
+    if (ensure_processing_container invalid-policy) >"$TEST_TMP_ROOT/setup.stdout" 2>"$TEST_TMP_ROOT/setup.stderr"; then
+        fail 'invalid Docker pull policy was accepted'
+    fi
+    [[ ! -s "$TEST_TMP_ROOT/setup.stdout" ]] || fail 'failed setup emitted stdout'
+    grep -F 'could not start Terraform test container:' "$TEST_TMP_ROOT/setup.stderr" >/dev/null \
+        || fail 'container startup failure was not reported'
+    grep -F 'invalid-policy' "$TEST_TMP_ROOT/setup.stderr" >/dev/null \
+        || fail 'container startup failure lost Docker diagnostics'
+}
+
 test_processing_combines_update_init_format_validate() {
     setup_processing_workspace
     PROCESS_TERRAFORM_FMT=true
@@ -1074,7 +1098,7 @@ if [[ "$TEST_GIT" != git ]]; then
 fi
 
 if [[ $# -eq 0 ]]; then
-    tests=(test_processing_combines_update_init_format_validate
+    tests=(test_processing_container_setup_captures_pull_progress test_processing_combines_update_init_format_validate
         test_processing_validates_unchanged_candidates test_processing_init_upgrade_is_opt_in
         test_workflow_runs_three_jobs_with_current_attempt_results
         test_processing_records_real_update_and_format_failures test_processing_rejects_invalid_inputs_before_updates
