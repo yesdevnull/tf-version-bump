@@ -165,8 +165,6 @@ install_tools() {
         || processing_setup_error 'could not read Terraform version'
     [[ "$(jq -er '.terraform_version' "$RESULT_STAGE/logs/terraform-version.json")" == "$PROCESS_TERRAFORM_VERSION" ]] \
         || processing_setup_error 'Terraform reported an unexpected version'
-    run_bounded "$RESULT_STAGE/logs/config.log" "$DATA_ROOT/tf-version-bump" -validate-config "$CONFIG_PATH" \
-        || processing_setup_error 'invalid control configuration'
 }
 
 process_roots() {
@@ -188,7 +186,9 @@ process_roots() {
             processing_status_error "required provider lock file is ignored for Terraform root $relative"
         fi
     done
-    if [[ "$PROCESS_TERRAFORM_FMT" == true ]]; then
+    local candidate_status
+    candidate_status=$(git -C "$TARGET_CHECKOUT" status --porcelain=v1 --untracked-files=all)
+    if [[ "$PROCESS_TERRAFORM_FMT" == true && -n "$candidate_status" ]]; then
         index=0
         for root in "${TERRAFORM_ROOTS[@]}"; do
             index=$((index + 1))

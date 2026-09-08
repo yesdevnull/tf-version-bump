@@ -134,8 +134,8 @@ run_publish() {
     PATH="$FIXTURE_BIN:$PATH" \
         GH_CAPTURE_DIR="$FIXTURE_GH_CAPTURE" \
         RECONCILE_RUN_URL=https://github.com/yesdevnull/reconciliation-test/actions/runs/100 \
-        RECONCILE_RUN_ID=100 \
-        RECONCILE_RUN_ATTEMPT=1 \
+        RECONCILE_RUN_ID=${RECONCILE_RUN_ID-100} \
+        RECONCILE_RUN_ATTEMPT=${RECONCILE_RUN_ATTEMPT-1} \
         RECONCILE_AUTOMATION_POLICY_ID=nonproduction \
         RECONCILE_CONTROL_OID="$FIXTURE_CONTROL_OID" \
         RECONCILE_STATE_BRANCH="$FIXTURE_STATE_BRANCH" \
@@ -212,6 +212,32 @@ assert_publish_failure() {
     fi
     grep -F "$expected" "$FIXTURE_ROOT/stderr" >/dev/null || fail "unexpected publication error: $(<"$FIXTURE_ROOT/stderr")"
     [[ ! -s "$FIXTURE_ROOT/stdout" ]] || fail 'failed publication emitted stdout'
+}
+
+test_reconciles_supplied_processing_failure() {
+    # Consumes the real processor's failure artefact; only GitHub is captured.
+    : "${PROCESSING_RESULT_FIXTURE:?PROCESSING_RESULT_FIXTURE must be set}"
+    : "${PROCESSING_TARGET_FIXTURE:?PROCESSING_TARGET_FIXTURE must be set}"
+    FIXTURE_ROOT=$(mktemp -d "$TEST_ROOT/processing-failure.XXXXXX")
+    FIXTURE_RESULT="$FIXTURE_ROOT/result"
+    cp -R "$PROCESSING_RESULT_FIXTURE" "$FIXTURE_RESULT"
+    FIXTURE_STATE_BRANCH=$(jq -r '.state_branch' "$FIXTURE_RESULT/result.json")
+    FIXTURE_BASE_OID=$(jq -r '.base_oid' "$FIXTURE_RESULT/result.json")
+    FIXTURE_CONTROL_OID=$(jq -r '.control_oid' "$FIXTURE_RESULT/result.json")
+    FIXTURE_REMOTE="$FIXTURE_ROOT/origin.git"
+    FIXTURE_CHECKOUT="$FIXTURE_ROOT/checkout"
+    "$TEST_GIT" clone --quiet "$PROCESSING_TARGET_FIXTURE" "$FIXTURE_CHECKOUT"
+    setup_gh_capture
+    if [[ "$TEST_GIT" != git ]]; then ln -s "$TEST_GIT" "$FIXTURE_BIN/git"; fi
+    existing_records
+    rm "$FIXTURE_GH_CAPTURE/existing-failure-issue"
+    RECONCILE_RUN_ID=$(jq -r '.run_id' "$FIXTURE_RESULT/result.json") \
+        RECONCILE_RUN_ATTEMPT=$(jq -r '.run_attempt' "$FIXTURE_RESULT/result.json") \
+        RECONCILE_DRY_RUN=false assert_silent_success 'actual processing failure publication' \
+        "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" run_publish
+    [[ "$(<"$FIXTURE_GH_CAPTURE/closed-pr")" == 17 ]] || fail 'invalid configuration left obsolete PR open'
+    [[ "$(sed -n '2p' "$FIXTURE_GH_CAPTURE/calls")" == 'pr close 17 '* ]] || fail 'failure issue handled before PR closure'
+    grep -F 'issue create ' "$FIXTURE_GH_CAPTURE/calls" >/dev/null || fail 'invalid configuration did not create failure issue'
 }
 
 test_publishes_one_owned_commit_from_exact_base() {
