@@ -888,6 +888,36 @@ test_processing_combines_update_init_format_validate() {
     grep -F 'value = { a = "b" }' "$PROCESS_TMP_ROOT/applied/root/nested/child.tf" >/dev/null || fail 'recursive formatting missing from patch'
 }
 
+test_processing_updates_dependent_roots_before_init() {
+    # Regression: initialising a parent before updating its local module caches old registry versions.
+    setup_processing_workspace
+    mkdir "$PROCESS_TARGET_CHECKOUT/shared"
+    printf '%s\n' 'module "shared" { source = "../shared" }' >>"$PROCESS_TARGET_CHECKOUT/root/main.tf"
+    cat >"$PROCESS_TARGET_CHECKOUT/shared/main.tf" <<'EOF'
+module "templates" {
+  source   = "hashicorp/dir/template"
+  version  = "1.0.1"
+  base_dir = path.module
+}
+EOF
+    printf '%s\n' 'modules:' '  - source: hashicorp/dir/template' '    version: "1.0.2"' \
+        >"$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
+    "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- .github/tf-version-bump/test.yml
+    fixture_commit "$PROCESS_CONTROL_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: bump nested registry module'
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- root/main.tf shared/main.tf
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: reference a later configured root'
+    PROCESS_TERRAFORM_ROOTS=$'root\nshared'
+    assert_silent_success 'dependent roots' "$PROCESS_TMP_ROOT/stdout" "$PROCESS_TMP_ROOT/stderr" run_processing
+    jq -e '.classification == "success"' "$PROCESS_RESULT_DIR/result.json" >/dev/null \
+        || fail 'dependent roots did not produce a validated candidate'
+    "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$PROCESS_TMP_ROOT/applied"
+    "$TEST_GIT" -C "$PROCESS_TMP_ROOT/applied" apply --index "$PROCESS_RESULT_DIR/candidate.patch"
+    grep -F '"1.0.2"' "$PROCESS_TMP_ROOT/applied/shared/main.tf" >/dev/null \
+        || fail 'candidate omitted nested module update'
+    cmp "$PROCESS_TARGET_CHECKOUT/shared/main.tf" "$PROCESS_TMP_ROOT/applied/shared/main.tf" \
+        || fail 'candidate differs from validated module'
+}
+
 test_processing_validates_unchanged_candidates() {
     local mode
     for mode in valid invalid; do
@@ -1099,6 +1129,7 @@ fi
 
 if [[ $# -eq 0 ]]; then
     tests=(test_processing_container_setup_captures_pull_progress test_processing_combines_update_init_format_validate
+        test_processing_updates_dependent_roots_before_init
         test_processing_validates_unchanged_candidates test_processing_init_upgrade_is_opt_in
         test_workflow_runs_three_jobs_with_current_attempt_results
         test_processing_records_real_update_and_format_failures test_processing_rejects_invalid_inputs_before_updates
