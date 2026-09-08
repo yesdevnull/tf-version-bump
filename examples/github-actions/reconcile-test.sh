@@ -238,6 +238,10 @@ setup_gh_capture() {
 set -euo pipefail
 printf '%s\n' "$*" >>"${GH_CAPTURE_DIR:?}/calls"
 if [[ "$1 $2" == "pr list" ]]; then
+    if [[ -f "$GH_CAPTURE_DIR/fail-pr-list" ]]; then
+        echo 'PR lookup failed' >&2
+        exit 1
+    fi
     [[ ! -f "$GH_CAPTURE_DIR/existing-pr" ]] || cat "$GH_CAPTURE_DIR/existing-pr"
     exit 0
 fi
@@ -249,6 +253,14 @@ fi
 kind=$1
 action=$2
 shift 2
+if [[ "$kind $action" == "pr close" ]]; then
+    if [[ -f "$GH_CAPTURE_DIR/fail-pr-close" ]]; then
+        echo 'PR closure failed' >&2
+        exit 1
+    fi
+    printf '%s\n' "$1" >"$GH_CAPTURE_DIR/closed-pr"
+    exit 0
+fi
 if [[ "$kind $action" == "issue close" ]]; then
     printf '%s\n' "$1" >"$GH_CAPTURE_DIR/closed-issue"
     exit 0
@@ -1087,7 +1099,12 @@ test_publish_failure_requires_dry_run_to_be_set() {
     # Production break caught: a manual failure-publish replay without RECONCILE_DRY_RUN set
     # defaulted to the mutating direction instead of failing closed, unlike the success path.
     setup_success_fixture
-    mutate_bundle_into_branch_update_failure
+    if [[ "${1:-branch-update}" == no-change ]]; then
+        configure_no_change
+        run_verify
+    else
+        mutate_bundle_into_branch_update_failure
+    fi
     setup_gh_capture
 
     # RECONCILE_REPOSITORY/GH_TOKEN/RUNNER_TEMP are set and $FIXTURE_BIN (the gh sentinel) is put
@@ -1364,6 +1381,121 @@ EOF
     unset RECONCILE_DRY_RUN
 }
 
+test_reconciles_obsolete_pull_requests() {
+    # Production break caught: a verified failure or no-change leaves an obsolete PR
+    # mergeable, or closes a PR belonging to another policy.
+    local classification dry_run match marker calls
+    for classification in "$@"; do
+        setup_success_fixture
+        case "$classification" in
+            no-change) configure_no_change ;;
+            branch-validation)
+                jq '.classification = "branch-validation" | .command_status = 1 |
+                    .failure = {stage: "terraform validate", root: "root", status: 1}' \
+                    "$FIXTURE_OUTCOME/manifest.json" >"$FIXTURE_ROOT/failed-validation.json"
+                mv "$FIXTURE_ROOT/failed-validation.json" "$FIXTURE_OUTCOME/manifest.json"
+                ;;
+            branch-update) configure_preparation_failure "$classification" 'tf-version-bump' 1 ;;
+            branch-init) configure_preparation_failure "$classification" 'terraform init' 1 ;;
+            branch-format) configure_preparation_failure "$classification" 'terraform fmt' 1 ;;
+        esac
+        run_verify
+        setup_gh_capture
+        marker='<!-- tf-version-bump:nonproduction:'"$(ref_hash)"' -->'
+        "$TEST_GIT" --git-dir "$FIXTURE_REMOTE" update-ref \
+            refs/heads/update_state/nonproduction/example "$FIXTURE_BASE_OID"
+        printf '[{"number":42,"body":"%s","closed":false}]\n' "$marker" \
+            >"$FIXTURE_GH_CAPTURE/existing-failure-issue"
+        for dry_run in true false; do
+            for match in absent unrelated marked; do
+                rm -f "$FIXTURE_GH_CAPTURE/calls" "$FIXTURE_GH_CAPTURE/closed-pr" \
+                    "$FIXTURE_GH_CAPTURE/closed-issue"
+                case "$match" in
+                    absent) printf '[]\n' >"$FIXTURE_GH_CAPTURE/existing-pr" ;;
+                    unrelated)
+                        printf '[{"number":17,"body":"<!-- tf-version-bump:production:%s -->"}]\n' \
+                            "$(ref_hash)" >"$FIXTURE_GH_CAPTURE/existing-pr"
+                        ;;
+                    marked)
+                        printf '[{"number":16,"body":"unmarked"},{"number":17,"body":"%s"}]\n' \
+                            "$marker" >"$FIXTURE_GH_CAPTURE/existing-pr"
+                        ;;
+                esac
+                RECONCILE_DRY_RUN=$dry_run assert_silent_success "$classification $dry_run $match" \
+                    "$FIXTURE_ROOT/publish.stdout" "$FIXTURE_ROOT/publish.stderr" run_publish
+                if [[ "$dry_run" == true ]]; then
+                    [[ ! -e "$FIXTURE_GH_CAPTURE/calls" ]] \
+                        || fail "$classification dry-run invoked GitHub"
+                    continue
+                fi
+                if [[ "$match" == marked ]]; then
+                    [[ -f "$FIXTURE_GH_CAPTURE/closed-pr" && "$(<"$FIXTURE_GH_CAPTURE/closed-pr")" == 17 ]] \
+                        || fail "$classification did not close the marked obsolete PR"
+                else
+                    [[ ! -e "$FIXTURE_GH_CAPTURE/closed-pr" ]] \
+                        || fail "$classification closed an unrelated PR"
+                fi
+                [[ -f "$FIXTURE_GH_CAPTURE/calls" ]] \
+                    || fail "$classification did not reconcile GitHub records"
+                calls=$(<"$FIXTURE_GH_CAPTURE/calls")
+                [[ "$calls" == *"pr list --repo yesdevnull/reconciliation-test --state open --head update_state/nonproduction/example --base state/nonproduction/example --json number,body"* ]] \
+                    || fail "$classification did not scope the PR lookup to the state branch"
+                if [[ "$classification" == no-change ]]; then
+                    [[ -f "$FIXTURE_GH_CAPTURE/closed-issue" && "$(<"$FIXTURE_GH_CAPTURE/closed-issue")" == 42 ]] \
+                        || fail "no-change did not resolve the marked failure issue"
+                else
+                    [[ "$calls" == *"issue edit 42"* && ! -e "$FIXTURE_GH_CAPTURE/closed-issue" ]] \
+                        || fail "$classification did not preserve the failure issue lifecycle"
+                    if [[ "$match" == marked ]]; then
+                        [[ "$calls" == *"pr close 17"*"issue edit 42"* ]] \
+                            || fail "$classification published the failure issue before closing the PR"
+                    fi
+                fi
+            done
+        done
+        [[ "$("$TEST_GIT" --git-dir "$FIXTURE_REMOTE" rev-parse refs/heads/update_state/nonproduction/example)" == "$FIXTURE_BASE_OID" ]] \
+            || fail "$classification mutated the retained update ref"
+        unset RECONCILE_VALIDATION_OUTCOME_DIR
+    done
+}
+
+test_obsolete_pr_cleanup_fails_closed() {
+    # Production break caught: lookup/closure errors are mistaken for no PR and
+    # publication claims a reconciled result while the old PR remains mergeable.
+    local classification operation diagnostic
+    for classification in branch-update no-change; do
+        setup_success_fixture
+        if [[ "$classification" == no-change ]]; then
+            configure_no_change
+            run_verify
+        else
+            mutate_bundle_into_branch_update_failure
+        fi
+        setup_gh_capture
+        printf '[{"number":17,"body":"<!-- tf-version-bump:nonproduction:%s -->"}]\n' \
+            "$(ref_hash)" >"$FIXTURE_GH_CAPTURE/existing-pr"
+        for operation in list close; do
+            touch "$FIXTURE_GH_CAPTURE/fail-pr-$operation"
+            rm -f "$FIXTURE_GH_CAPTURE/calls"
+            if RECONCILE_DRY_RUN=false run_publish >"$FIXTURE_ROOT/publish.stdout" \
+                2>"$FIXTURE_ROOT/publish.stderr"; then
+                fail "$classification ignored PR $operation failure"
+            fi
+            diagnostic=$(<"$FIXTURE_ROOT/publish.stderr")
+            case "$operation" in
+                list) [[ "$diagnostic" == *'PR lookup failed'* ]] || fail "missing lookup error" ;;
+                close) [[ "$diagnostic" == *'PR closure failed'* ]] || fail "missing closure error" ;;
+            esac
+            [[ ! -s "$FIXTURE_ROOT/publish.stdout" ]] || fail "failed cleanup emitted stdout"
+            if grep -F 'issue ' "$FIXTURE_GH_CAPTURE/calls" >/dev/null; then
+                fail "$classification reconciled an issue after PR cleanup failed"
+            fi
+            rm "$FIXTURE_GH_CAPTURE/fail-pr-$operation"
+        done
+        unset RECONCILE_VALIDATION_OUTCOME_DIR
+    done
+}
+
 test_reconciles_marked_pull_request_or_failure_issue_payload() {
     # Production break caught: success and bounded failure results create duplicate/unmarked
     # lifecycle records, use the wrong base/head, or let failure publication mutate Git.
@@ -1495,6 +1627,9 @@ if [[ $# -eq 0 ]]; then
     test_verifies_deleting_candidate_reports_a_classified_digest_error
     test_verifies_only_bounded_branch_failures_without_a_patch
     test_publish_failure_requires_dry_run_to_be_set
+    test_publish_failure_requires_dry_run_to_be_set no-change
+    test_reconciles_obsolete_pull_requests branch-update branch-init branch-format branch-validation no-change
+    test_obsolete_pr_cleanup_fails_closed
     test_dry_run_constructs_unsigned_owned_commit_without_external_mutation
     test_constructs_deterministic_staged_commits
     test_renders_split_pull_request_change_summary
