@@ -76,7 +76,12 @@ terraform_directories: |
   environments/staging
 ```
 
-Each configured root is processed independently. Keep the config path repository-relative and committed on the default branch that starts the run. `terraform_fmt` defaults to `false`, and both supplied callers set `terraform_fmt: true`. For every configured root, preparation runs the updater and `terraform init -upgrade` before formatting is eligible. When enabled for a changed candidate, Terraform runs `terraform fmt -recursive` in every configured root.
+Each configured root is processed independently. Keep the config path repository-relative and committed on the default branch that starts the run. `terraform_fmt` defaults to `false`, and both supplied callers set `terraform_fmt: true`. For every configured root, preparation runs the updater and `terraform init` before formatting is eligible. When enabled for a changed candidate, Terraform runs `terraform fmt -recursive` in every configured root.
+
+`terraform_init_upgrade` defaults to `false`. Enable it in the manual workflow inputs to run preparation with `terraform init -upgrade`. Scheduled and config-change runs use ordinary `init`; to opt those runs into upgrades, set `terraform_init_upgrade: true` in the caller's `with` block. Direct script callers can set `PROCESS_TERRAFORM_INIT_UPGRADE=true`; an omitted value defaults to `false`, and other values besides exact `true` or `false` are rejected.
+
+Ordinary `init` preserves existing provider selections when they satisfy the updated constraints. If a requested version excludes a locked provider version, preparation reports a `branch-init` failure; it does not retry with `-upgrade`. Enable upgrade explicitly to select newer versions. Upgrade applies to all eligible dependencies, so providers outside the bump config can also move within their existing constraints. Without an existing provider lock entry, ordinary `init` still selects a matching version. Modules are not covered by the provider lock file; these fresh checkouts resolve their configured module constraints on every run. Validation always uses ordinary `init`, with `-lockfile=readonly` when a lock file exists.
+
 When a root has provider selections, its resulting `.terraform.lock.hcl` change is included in the
 update branch for reproducible runs. A provider-free root can legitimately have no lock file.
 

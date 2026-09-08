@@ -29,6 +29,7 @@ prepare validates the workspace, creates the pre-provider candidate, and require
   PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256  Linux x86-64 release archive digest
   PROCESS_TERRAFORM_VERSION exact installed Terraform version
   PROCESS_TERRAFORM_FMT     exact true or false formatting request
+  PROCESS_TERRAFORM_INIT_UPGRADE  optional true or false init upgrade request (default false)
   PROCESS_PREPARATION_DEADLINE_EPOCH  absolute deadline recorded before workflow setup
   PROCESS_PREPARATION_BUNDLE_DIR  previously absent destination below RUNNER_TEMP
 
@@ -195,6 +196,7 @@ prepare_bundle_contract() {
     : "${PROCESS_REF_HASH:?PROCESS_REF_HASH must be set}"
     : "${PROCESS_TERRAFORM_FMT:?PROCESS_TERRAFORM_FMT must be set}"
     : "${PROCESS_PREPARATION_BUNDLE_DIR:?PROCESS_PREPARATION_BUNDLE_DIR must be set}"
+    PROCESS_TERRAFORM_INIT_UPGRADE=${PROCESS_TERRAFORM_INIT_UPGRADE-false}
 
     [[ "$PROCESS_RUN_ID" =~ ^[1-9][0-9]*$ ]] \
         || processing_setup_error "run ID must be a positive integer"
@@ -210,6 +212,8 @@ prepare_bundle_contract() {
         || processing_setup_error "ref hash must be 64 lowercase hexadecimal characters"
     [[ "$PROCESS_TERRAFORM_FMT" == "true" || "$PROCESS_TERRAFORM_FMT" == "false" ]] \
         || processing_setup_error "Terraform formatting must be true or false"
+    [[ "$PROCESS_TERRAFORM_INIT_UPGRADE" == "true" || "$PROCESS_TERRAFORM_INIT_UPGRADE" == "false" ]] \
+        || processing_setup_error "Terraform init upgrade must be true or false"
     git check-ref-format "refs/heads/$PROCESS_STATE_BRANCH" >/dev/null 2>&1 \
         || processing_setup_error "state branch is not a valid branch name"
 
@@ -1391,6 +1395,8 @@ prepare_candidate_roots() {
     local update_report
     local lock_file
     local init_status
+    local -a init_arguments=(init -backend=false -input=false -no-color)
+    [[ "$PROCESS_TERRAFORM_INIT_UPGRADE" != "true" ]] || init_arguments+=(-upgrade)
     for terraform_root in "${PREPARATION_TERRAFORM_ROOTS[@]}"; do
         root_index=$((root_index + 1))
         update_status=0
@@ -1426,7 +1432,7 @@ prepare_candidate_roots() {
         init_status=0
         TF_DATA_DIR="$data_directory" TF_IN_AUTOMATION=1 CHECKPOINT_DISABLE=1 \
             run_before_preparation_deadline "$PREPARATION_DATA_ROOT/init-$root_index.log" \
-            terraform -chdir="$terraform_root" init -upgrade -backend=false -input=false -no-color \
+            terraform -chdir="$terraform_root" "${init_arguments[@]}" \
             || init_status=$?
         if [[ "$init_status" -ne 0 ]]; then
             relative_root=$(relative_terraform_root "$terraform_root")
@@ -1434,7 +1440,7 @@ prepare_candidate_roots() {
                 "branch-init" \
                 "terraform init" \
                 "$relative_root" \
-                "terraform -chdir=$relative_root init -upgrade -backend=false -input=false -no-color" \
+                "terraform -chdir=$relative_root ${init_arguments[*]}" \
                 "$init_status"
             if [[ "$init_status" -eq 124 || "$init_status" -eq 137 ]]; then
                 processing_status_error "terraform init timed out for Terraform root $relative_root"

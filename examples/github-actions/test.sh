@@ -155,6 +155,7 @@ setup_processing_workspace() {
     unset PROCESS_CONTROL_OID PROCESS_STATE_BRANCH PROCESS_BASE_OID PROCESS_REF_HASH
     unset PROCESS_TF_VERSION_BUMP_VERSION PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256
     unset PROCESS_TERRAFORM_FMT PROCESS_TERRAFORM_VERSION
+    unset PROCESS_TERRAFORM_INIT_UPGRADE
     unset TF_CLI_CONFIG_FILE
     PROCESS_PATH_PREFIX=""
     PROCESS_TEST_CALL_LOG=""
@@ -521,6 +522,10 @@ processing_ref_hash() {
 run_processing_prepare() {
     ensure_processing_container
     processing_shared_docker_env
+    local -a upgrade_environment=()
+    if [[ -v PROCESS_TERRAFORM_INIT_UPGRADE ]]; then
+        upgrade_environment=(--env "PROCESS_TERRAFORM_INIT_UPGRADE=$PROCESS_TERRAFORM_INIT_UPGRADE")
+    fi
     docker exec \
         --user "$(id -u):$(id -g)" \
         --env GIT_CONFIG_COUNT=2 \
@@ -536,6 +541,8 @@ run_processing_prepare() {
         --env "PROCESS_TF_VERSION_BUMP_VERSION=${PROCESS_TF_VERSION_BUMP_VERSION-$TF_VERSION_BUMP_VERSION}" \
         --env "PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256=${PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256-$TF_VERSION_BUMP_ARCHIVE_SHA256}" \
         --env "PROCESS_TERRAFORM_FMT=${PROCESS_TERRAFORM_FMT-false}" \
+        "${upgrade_environment[@]}" \
+        --env "TF_CLI_CONFIG_FILE=${TF_CLI_CONFIG_FILE-}" \
         --env "PROCESS_PREPARATION_DEADLINE_EPOCH=${PROCESS_PREPARATION_DEADLINE_EPOCH-$(($(date +%s) + 1200))}" \
         --env "PROCESS_PREPARATION_BUNDLE_DIR=${PROCESS_PREPARATION_BUNDLE_DIR-$PROCESS_RUNNER_TEMP/preparation-bundle}" \
         --env "PROCESS_TEST_CALL_LOG=${PROCESS_TEST_CALL_LOG-}" \
@@ -1008,7 +1015,7 @@ test_operator_documentation_describes_stage_two_contract() {
     normalised_readme=$(tr '\n' ' ' < "$readme")
     [[ "$normalised_readme" == *"validate only the YAML runtime contract without selecting Terraform files"* ]] \
         || fail "example README does not describe standalone configuration validation"
-    grep -F 'updater and `terraform init -upgrade` before formatting is eligible' "$readme" >/dev/null \
+    grep -F 'updater and `terraform init` before formatting is eligible' "$readme" >/dev/null \
         || fail "example README omits per-root update and initialisation ordering"
     grep -F '`terraform fmt -recursive` in every configured root' "$readme" >/dev/null \
         || fail "example README omits recursive configured-root formatting semantics"
@@ -1113,7 +1120,7 @@ test_reusable_workflow_declares_lean_interface() {
         keys == [
             "allowed_branch_prefixes", "automation_policy_id", "branch_prefix", "commit_author_email",
             "commit_author_name", "config_path", "dry_run", "max_parallel", "terraform_directories",
-            "terraform_fmt", "terraform_version", "tf_version_bump_archive_sha256",
+            "terraform_fmt", "terraform_init_upgrade", "terraform_version", "tf_version_bump_archive_sha256",
             "tf_version_bump_version"
         ] and
         .automation_policy_id == {type: "string", required: true} and
@@ -1122,6 +1129,7 @@ test_reusable_workflow_declares_lean_interface() {
         .config_path == {type: "string", required: true} and
         .terraform_directories == {type: "string", default: "."} and
         .terraform_fmt == {type: "boolean", default: false} and
+        .terraform_init_upgrade == {type: "boolean", default: false} and
         .terraform_version == {type: "string", required: true} and
         .tf_version_bump_version == {type: "string", required: true} and
         .tf_version_bump_archive_sha256 == {type: "string", required: true} and
@@ -1195,7 +1203,8 @@ test_reusable_workflow_wires_current_attempt_pipeline() {
                 .env.CURRENT_RUN_ATTEMPT == "${{ github.run_attempt }}")) and
         any(.prepare.steps[]; (.run // "") | contains("process-state-branch.sh\" prepare")) and
         any(.prepare.steps[]; .name == "Prepare candidate" and
-            (.env.PROCESS_TERRAFORM_FMT | contains("inputs.terraform_fmt"))) and
+            (.env.PROCESS_TERRAFORM_FMT | contains("inputs.terraform_fmt")) and
+            .env.PROCESS_TERRAFORM_INIT_UPGRADE == "${{ inputs.terraform_init_upgrade }}") and
         any(.prepare.steps[]; .name == "Confirm preparation classification" and
             (.run | contains("branch-format"))) and
         ((.validate.steps | map(.name // "")) as $validation_steps |
@@ -1274,6 +1283,11 @@ test_callers_define_weekly_policies_and_tool_pins() {
     ' >/dev/null || fail "production caller policy is not the approved weekly policy"
 
     for workflow in "$NONPRODUCTION_WORKFLOW" "$PRODUCTION_WORKFLOW"; do
+        yq -o=json '.' "$workflow" | jq -e '
+            .on.workflow_dispatch.inputs.terraform_init_upgrade.type == "boolean" and
+            .on.workflow_dispatch.inputs.terraform_init_upgrade.default == false and
+            .jobs.automation.with.terraform_init_upgrade == "${{ github.event_name == '\''workflow_dispatch'\'' && inputs.terraform_init_upgrade || false }}"
+        ' >/dev/null || fail "caller does not make init upgrades opt-in: $workflow"
         yq -o=json '.jobs.automation.with' "$workflow" | jq -e \
             --arg tf_version_bump_version "$TF_VERSION_BUMP_VERSION" \
             --arg tf_version_bump_archive_sha256 "$TF_VERSION_BUMP_ARCHIVE_SHA256" '
@@ -2027,6 +2041,77 @@ EOF
     ' "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null
     [[ -f "$PROCESS_PREPARATION_BUNDLE_DIR/update.patch" ]]
     [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/candidate.patch" ]]
+}
+
+test_processing_init_upgrade_is_opt_in() {
+    # Production break caught: plain init upgrades locked providers, an explicit upgrade
+    # is ignored, or a locked-version conflict silently enables upgrade.
+    local mode expected_version mirror newer_package
+    for mode in unset false true conflict conflict-upgrade; do
+        setup_processing_workspace
+        configure_validation_provider_base
+        mirror="$PROCESS_VALIDATION_FIXTURE_ROOT/provider-mirror/registry.terraform.io/yesdevnull/test"
+        chmod u+w "$mirror"
+        newer_package="$mirror/0.2.0/linux_amd64"
+        mkdir -p "$newer_package"
+        cp "$mirror/0.1.0/linux_amd64/terraform-provider-test_v0.1.0_x5" \
+            "$newer_package/terraform-provider-test_v0.2.0_x5"
+        chmod -R a-w "$mirror"
+        expected_version=0.1.0
+        case "$mode" in
+            false) PROCESS_TERRAFORM_INIT_UPGRADE=false ;;
+            true|conflict-upgrade)
+                PROCESS_TERRAFORM_INIT_UPGRADE=true
+                expected_version=0.2.0
+                ;;
+        esac
+        if [[ "$mode" == conflict* ]]; then
+            printf '%s\n' 'providers:' '  - name: test' '    version: "0.2.0"' \
+                >"$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
+            "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- .github/tf-version-bump/test.yml
+            fixture_commit "$PROCESS_CONTROL_CHECKOUT" "Processing Test" \
+                "processing-test@example.invalid" "test: request a newer locked provider"
+        else
+            sed -i.bak 's/version = "0.1.0"/version = ">= 0.1.0"/' "$PROCESS_TARGET_CHECKOUT/root/main.tf"
+            rm "$PROCESS_TARGET_CHECKOUT/root/main.tf.bak"
+            "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- root/main.tf
+            fixture_commit "$PROCESS_TARGET_CHECKOUT" "Processing Test" \
+                "processing-test@example.invalid" "test: allow both provider releases"
+        fi
+        if [[ "$mode" == conflict ]]; then
+            assert_processing_failure 'processing status error: terraform init failed for Terraform root root' \
+                'locked provider conflict without upgrade'
+            grep -F 'does not match configured version constraint' "$PROCESS_PREPARATION_BUNDLE_DIR/logs/init-1.log" >/dev/null \
+                || fail "plain init did not report the locked provider conflict"
+            jq -e '.classification == "branch-init" and
+                .failure.command == "terraform -chdir=root init -backend=false -input=false -no-color"' \
+                "$PROCESS_PREPARATION_BUNDLE_DIR/manifest.json" >/dev/null \
+                || fail "init failure did not record the actual non-upgrade command"
+            continue
+        fi
+        assert_silent_success "init upgrade $mode" "$PROCESS_TMP_ROOT/init.stdout" \
+            "$PROCESS_TMP_ROOT/init.stderr" run_processing_prepare
+        grep -F "version     = \"$expected_version\"" "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" >/dev/null \
+            || fail "init upgrade $mode did not select provider $expected_version"
+        "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" reset --hard HEAD >/dev/null
+        assert_silent_success "validate init upgrade $mode" "$PROCESS_TMP_ROOT/validate.stdout" \
+            "$PROCESS_TMP_ROOT/validate.stderr" run_processing_validate
+    done
+}
+
+test_processing_rejects_invalid_init_upgrade_input() {
+    # Production break caught: a malformed upgrade request is silently treated as a boolean.
+    local value
+    for value in '' TRUE 1; do
+        setup_processing_workspace
+        PROCESS_TERRAFORM_INIT_UPGRADE=$value
+        assert_processing_failure 'processing setup error: Terraform init upgrade must be true or false' \
+            'invalid Terraform init upgrade input'
+        [[ -z "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" status --porcelain=v1)" ]] \
+            || fail "invalid upgrade request changed target files"
+        [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR" ]] \
+            || fail "invalid upgrade request produced a preparation bundle"
+    done
 }
 
 test_processing_formatting_disabled() {
@@ -3441,6 +3526,8 @@ test_processing_validation() {
 }
 
 test_processing_preparation() {
+    test_processing_init_upgrade_is_opt_in
+    test_processing_rejects_invalid_init_upgrade_input
     test_processing_rejects_mismatched_control_head_before_target_write
     test_processing_rejects_mismatched_target_head_before_target_write
     test_processing_rejects_mismatched_ref_hash_before_target_write

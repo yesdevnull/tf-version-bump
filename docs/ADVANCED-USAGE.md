@@ -32,10 +32,17 @@ The reusable workflow maps it to `TF_TOKEN_app_terraform_io` only for the prepar
 helpers; publication does not receive the registry token in its environment.
 
 `terraform_fmt` defaults to `false`; both callers opt in with `terraform_fmt: true`. For every
-configured root, preparation runs the updater and `terraform init -upgrade` before formatting is
+configured root, preparation runs the updater and `terraform init` before formatting is
 eligible, then an eligible changed candidate runs `terraform fmt -recursive` in every configured
 root. The callers pin `tf-version-bump` to `v1.0.0-rc.11` and archive SHA-256
 `5560b45e220650e8b18d5836eff05d471f602a6ac970aeeb9628781797f54c85`.
+
+`terraform_init_upgrade` defaults to `false`. Enable the manual input, or set it to `true` in
+the caller's `with` block for scheduled runs, to add `-upgrade` during preparation. Direct script
+callers use `PROCESS_TERRAFORM_INIT_UPGRADE=true`. Ordinary initialisation preserves compatible
+locked provider versions and fails if updated constraints exclude them; it does not automatically
+retry with upgrade enabled. Upgrade can update all eligible providers within their constraints.
+Validation continues to use ordinary initialisation and preserves the candidate lock file.
 
 The reusable workflow installs the pinned Terraform CLI with `hashicorp/setup-terraform` in both
 Terraform jobs and invokes it directly. Docker is neither a production workflow requirement nor a
