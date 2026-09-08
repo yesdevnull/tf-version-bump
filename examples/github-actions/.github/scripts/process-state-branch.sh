@@ -174,10 +174,16 @@ process_roots() {
     for root in "${TERRAFORM_ROOTS[@]}"; do
         index=$((index + 1))
         relative=$(jq -r --argjson i "$((index - 1))" '.[$i]' <<<"$ROOTS_JSON")
-        data=${TF_DATA_DIRECTORIES[$((index - 1))]}
         # The updater resolves its glob relative to its working directory.
         (cd "$root" && branch_command branch-update tf-version-bump "$relative" "update-$index.log" \
             "$DATA_ROOT/tf-version-bump" -pattern '*.tf' -config "$CONFIG_PATH")
+    done
+    # Local module references must see every root's final dependency constraints during init.
+    index=0
+    for root in "${TERRAFORM_ROOTS[@]}"; do
+        index=$((index + 1))
+        relative=$(jq -r --argjson i "$((index - 1))" '.[$i]' <<<"$ROOTS_JSON")
+        data=${TF_DATA_DIRECTORIES[$((index - 1))]}
         TF_DATA_DIR="$data" TF_IN_AUTOMATION=1 CHECKPOINT_DISABLE=1 \
             branch_command branch-init 'terraform init' "$relative" "init-$index.log" terraform -chdir="$root" "${init_args[@]}"
         validate_lock_file "$TARGET_CHECKOUT" "$root"
