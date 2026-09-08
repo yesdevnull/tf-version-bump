@@ -94,7 +94,7 @@ Pull requests and failure issues carry this stable marker:
 | Update, init, fmt or validation failure | Close the marked PR first, then create or refresh the failure issue |
 | Automation failure or missing/invalid result | Stop without changing managed PRs, issues or refs |
 
-Unchanged candidates still run validation. Cleanup matches the policy/branch marker and the expected PR head and base. Update refs are retained. GitHub lookup and closure errors stop reconciliation.
+Unchanged candidates still run validation. Before any PR or issue reconciliation, the publisher checks that the remote state branch still matches the discovered commit; a moved or missing branch or failed lookup stops reconciliation. Cleanup matches the policy/branch marker and the expected PR head and base. Update refs are retained. GitHub lookup and closure errors stop reconciliation.
 
 Publication uses the built-in `GITHUB_TOKEN`. The helper respects Git's signing configuration; the example does not provision a signing key. If signing is enabled, the runner must have a working key. Do not assume token-created branches and PRs will automatically run your downstream checks; review GitHub's [GITHUB_TOKEN workflow behaviour](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow#triggering-a-workflow-from-a-workflow) when configuring required checks.
 

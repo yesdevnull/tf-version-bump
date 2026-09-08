@@ -219,6 +219,8 @@ test_reconciles_supplied_processing_failure() {
     FIXTURE_REMOTE="$FIXTURE_ROOT/origin.git"
     FIXTURE_CHECKOUT="$FIXTURE_ROOT/checkout"
     "$TEST_GIT" clone --quiet "$PROCESSING_TARGET_FIXTURE" "$FIXTURE_CHECKOUT"
+    "$TEST_GIT" init --bare --initial-branch=main "$FIXTURE_REMOTE" >/dev/null
+    "$TEST_GIT" -C "$FIXTURE_CHECKOUT" push --quiet "$FIXTURE_REMOTE" "HEAD:refs/heads/$FIXTURE_STATE_BRANCH"
     setup_gh_capture
     if [[ "$TEST_GIT" != git ]]; then ln -s "$TEST_GIT" "$FIXTURE_BIN/git"; fi
     existing_records
@@ -303,6 +305,33 @@ test_publication_refuses_moved_base_and_foreign_update() {
     done
 }
 
+test_stale_results_do_not_reconcile_lifecycle() {
+    local classification mode expected
+    for classification in no-change branch-update branch-init branch-format branch-validation; do
+        for mode in moved missing unavailable; do
+            setup_success_fixture
+            existing_records
+            case "$classification" in
+                branch-update) configure_result "$classification" tf-version-bump ;;
+                branch-init) configure_result "$classification" 'terraform init' ;;
+                branch-format) configure_result "$classification" 'terraform fmt' ;;
+                *) configure_result "$classification" ;;
+            esac
+            expected='state ref moved after discovery'
+            case "$mode" in
+                moved)
+                    fixture_commit "$FIXTURE_SOURCE" 'test: advance state branch' --allow-empty
+                    "$TEST_GIT" -C "$FIXTURE_SOURCE" push --quiet "$FIXTURE_REMOTE" "HEAD:refs/heads/$FIXTURE_STATE_BRANCH"
+                    ;;
+                missing) "$TEST_GIT" --git-dir "$FIXTURE_REMOTE" update-ref -d "refs/heads/$FIXTURE_STATE_BRANCH" ;;
+                unavailable) FIXTURE_REMOTE="$FIXTURE_ROOT/unavailable.git"; expected='could not inspect remote state ref' ;;
+            esac
+            assert_publish_failure "$expected"
+            [[ ! -f "$FIXTURE_GH_CAPTURE/calls" ]] || fail "$classification/$mode reached GitHub lifecycle"
+        done
+    done
+}
+
 test_reconciles_no_change_and_failure_in_order() {
     local classification
     for classification in no-change branch-update branch-init branch-format branch-validation; do
@@ -341,13 +370,18 @@ test_api_failures_stop_followup_actions() {
 }
 
 test_dry_run_and_automation_do_not_mutate() {
-    local classification
+    local classification remote dry_run
     for classification in success no-change branch-validation automation; do
         setup_success_fixture
         [[ "$classification" == success ]] || configure_result "$classification"
-        assert_silent_success 'dry run' "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" run_publish
+        remote=$FIXTURE_REMOTE
+        FIXTURE_REMOTE="$FIXTURE_ROOT/unavailable.git"
+        dry_run=true
+        [[ "$classification" != automation ]] || dry_run=false
+        RECONCILE_DRY_RUN=$dry_run \
+            assert_silent_success 'dry run or automation' "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" run_publish
         [[ ! -f "$FIXTURE_GH_CAPTURE/calls" ]] || fail 'dry run called GitHub'
-        [[ -z "$("$TEST_GIT" --git-dir "$FIXTURE_REMOTE" for-each-ref --format='%(refname)' refs/heads/update_)" ]] || fail 'dry run pushed update ref'
+        [[ -z "$("$TEST_GIT" --git-dir "$remote" for-each-ref --format='%(refname)' refs/heads/update_)" ]] || fail 'dry run pushed update ref'
     done
 }
 
@@ -407,6 +441,7 @@ test_failure_issue_create_reopen_and_invalid_status() {
 if [[ $# -eq 0 ]]; then
     tests=(test_publishes_one_owned_commit_from_exact_base test_result_validation_prevents_mutation
         test_rejects_unsafe_candidate_paths_and_modes test_publication_refuses_moved_base_and_foreign_update
+        test_stale_results_do_not_reconcile_lifecycle
         test_reconciles_no_change_and_failure_in_order test_api_failures_stop_followup_actions
         test_dry_run_and_automation_do_not_mutate test_exact_lease_rejects_racing_update_ref
         test_failure_issue_create_reopen_and_invalid_status)
