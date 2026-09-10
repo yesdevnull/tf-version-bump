@@ -81,11 +81,12 @@ The reserved prefixes are `PROCESS_`, `RECONCILE_`, `DISCOVERY_`, `RUNNER_`, `AC
 `PATH`, `IFS`, `ENV`, `BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `TF_DATA_DIR`, `TF_IN_AUTOMATION`,
 `CHECKPOINT_DISABLE`, `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG`, `TF_WORKSPACE`, `HOME`, `TMPDIR`,
 `SSL_CERT_FILE`, `SSL_CERT_DIR`, `GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_OUTPUT`,
-`GITHUB_STEP_SUMMARY` and `TF_TOKEN_app_terraform_io`. The last of those is reserved because it
-would silently shadow the registry token the workflow injects from the `TF_API_TOKEN` secret;
-`TF_TOKEN_*` names for other registries remain allowed. The four `GITHUB_*` names are the runner's
-own command channels rather than provider configuration, which is why `GITHUB_APP_ID` and the
-provider's other `GITHUB_` variables are accepted while `GITHUB_ENV` is not. Treat the list as best
+`GITHUB_STEP_SUMMARY`, `GITHUB_STATE` and `TF_TOKEN_app_terraform_io`. The last of those is
+reserved in any letter case or other spelling Terraform maps to the `app.terraform.io` host,
+because it would silently shadow the registry token the workflow injects from the `TF_API_TOKEN`
+secret; `TF_TOKEN_*` names for other registries remain allowed. The five `GITHUB_*` names are the
+runner's own command channels rather than provider configuration, which is why `GITHUB_APP_ID` and
+the provider's other `GITHUB_` variables are accepted while `GITHUB_ENV` is not. Treat the list as best
 effort rather than exhaustive. The structural protection is a separate rule: a file newly created
 during a run is only ever publishable if it is a `.terraform.lock.hcl` directly inside a configured
 Terraform root. A rejected entry never prints its value, and is rejected before any Terraform

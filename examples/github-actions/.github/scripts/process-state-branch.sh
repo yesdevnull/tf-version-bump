@@ -49,14 +49,17 @@ UNESCAPED_VALUE=''
 # Names the automation itself relies on; a supplied entry must never shadow them.
 RESERVED_ENVIRONMENT_PREFIXES=(PROCESS_ RECONCILE_ DISCOVERY_ RUNNER_ ACTIONS_ LD_ DYLD_
     TF_CLI_ARGS TF_LOG TF_PLUGIN_CACHE GIT_)
-# TF_TOKEN_app_terraform_io alone is reserved: it would shadow the registry token the
-# workflow injects, while other registries' TF_TOKEN_ names remain a legitimate use.
+# TF_TOKEN_app_terraform_io is reserved, and parse_terraform_environment also rejects
+# every other TF_TOKEN_ name Terraform maps to the same host: each would shadow the
+# registry token the workflow injects, while other registries' TF_TOKEN_ names remain a
+# legitimate use.
 # GITHUB_ is not a reserved prefix, because the GitHub provider reads its credentials
 # from GITHUB_ names and a supplied entry reaches only the terraform process. The
 # GITHUB_ names reserved here are the runner's command channels, not provider settings.
 RESERVED_ENVIRONMENT_NAMES=(PATH IFS ENV BASH_ENV SHELLOPTS BASHOPTS TF_DATA_DIR TF_IN_AUTOMATION
     CHECKPOINT_DISABLE TF_CLI_CONFIG_FILE TERRAFORM_CONFIG TF_WORKSPACE HOME TMPDIR SSL_CERT_FILE
-    SSL_CERT_DIR TF_TOKEN_app_terraform_io GITHUB_ENV GITHUB_PATH GITHUB_OUTPUT GITHUB_STEP_SUMMARY)
+    SSL_CERT_DIR TF_TOKEN_app_terraform_io GITHUB_ENV GITHUB_PATH GITHUB_OUTPUT GITHUB_STEP_SUMMARY
+    GITHUB_STATE)
 
 processing_path_error() { echo "processing path error: $*" >&2; exit 1; }
 processing_status_error() { echo "processing status error: $*" >&2; exit 1; }
@@ -102,12 +105,12 @@ unescape_environment_value() {
 
 # Diagnostics name the offending variable only; a supplied value is never printed.
 parse_terraform_environment() {
-    local entry name candidate
+    local entry name candidate host
     for entry in "$@"; do
         [[ -n "$entry" ]] || continue
         name=${entry%%=*}
         [[ "$entry" == *=* && "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
-            || processing_setup_error 'Terraform environment entries must be one NAME=VALUE per line; values must not contain a newline'
+            || processing_setup_error 'Terraform environment entries must be one NAME=VALUE per line; write a newline inside a value as \n'
         [[ "$entry" != *$'\r'* ]] \
             || processing_setup_error "Terraform environment value for $name must not contain a carriage return"
         for candidate in "${RESERVED_ENVIRONMENT_PREFIXES[@]}"; do
@@ -118,6 +121,13 @@ parse_terraform_environment() {
             [[ "$name" != "$candidate" ]] \
                 || processing_setup_error "Terraform environment name $name is reserved"
         done
+        # Terraform reads a TF_TOKEN_ name's host by turning __ into - and then _ into .,
+        # and compares hosts in lower case.
+        host=${name#TF_TOKEN_}
+        host=${host//__/-}
+        host=${host//_/.}
+        [[ "$name" != TF_TOKEN_* || "${host,,}" != app.terraform.io ]] \
+            || processing_setup_error "Terraform environment name $name is reserved"
         for candidate in "${TERRAFORM_ENVIRONMENT[@]}"; do
             [[ "${candidate%%=*}" != "$name" ]] \
                 || processing_setup_error "Terraform environment name $name is set twice"
