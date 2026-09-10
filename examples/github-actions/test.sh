@@ -1246,8 +1246,9 @@ EOF
 test_processing_rejects_invalid_terraform_environment() {
     local mode expected
     for mode in syntax name reserved-prefix reserved-name reserved-log-path reserved-plugin-cache \
-        reserved-registry-token reserved-runner-env reserved-runner-path reserved-runner-output \
-        reserved-runner-summary carriage-return duplicate cross-source; do
+        reserved-registry-token reserved-registry-token-upper-case reserved-registry-token-mixed-case \
+        reserved-runner-env reserved-runner-path reserved-runner-output reserved-runner-summary \
+        reserved-runner-state carriage-return duplicate cross-source; do
         setup_processing_workspace
         # A valid secret precedes every rejected entry, so masking one would show below,
         # and every rejected entry carries the same value, so the leak checks below
@@ -1257,7 +1258,7 @@ test_processing_rejects_invalid_terraform_environment() {
             # A PEM pasted without escapes leaves a continuation line with no '='.
             syntax)
                 PROCESS_TERRAFORM_SECRET_ENV+=$'\nundisclosed-value'
-                expected='Terraform environment entries must be one NAME=VALUE per line'
+                expected='Terraform environment entries must be one NAME=VALUE per line; write a newline inside a value as \n'
                 ;;
             name) PROCESS_TERRAFORM_ENV='2BAD=undisclosed-value'; expected='Terraform environment entries must be one NAME=VALUE per line' ;;
             reserved-prefix) PROCESS_TERRAFORM_ENV='PROCESS_RESULT_DIR=undisclosed-value'; expected='Terraform environment name PROCESS_RESULT_DIR is reserved' ;;
@@ -1265,10 +1266,15 @@ test_processing_rejects_invalid_terraform_environment() {
             reserved-log-path) PROCESS_TERRAFORM_ENV='TF_LOG_PATH=undisclosed-value'; expected='Terraform environment name TF_LOG_PATH is reserved' ;;
             reserved-plugin-cache) PROCESS_TERRAFORM_ENV='TF_PLUGIN_CACHE_DIR=undisclosed-value'; expected='Terraform environment name TF_PLUGIN_CACHE_DIR is reserved' ;;
             reserved-registry-token) PROCESS_TERRAFORM_ENV='TF_TOKEN_app_terraform_io=undisclosed-value'; expected='Terraform environment name TF_TOKEN_app_terraform_io is reserved' ;;
+            # Terraform lowercases the host a TF_TOKEN_ name encodes, so every letter case
+            # of the reserved name would shadow the injected registry token as well.
+            reserved-registry-token-upper-case) PROCESS_TERRAFORM_ENV='TF_TOKEN_APP_TERRAFORM_IO=undisclosed-value'; expected='Terraform environment name TF_TOKEN_APP_TERRAFORM_IO is reserved' ;;
+            reserved-registry-token-mixed-case) PROCESS_TERRAFORM_ENV='TF_TOKEN_App_Terraform_Io=undisclosed-value'; expected='Terraform environment name TF_TOKEN_App_Terraform_Io is reserved' ;;
             reserved-runner-env) PROCESS_TERRAFORM_ENV='GITHUB_ENV=undisclosed-value'; expected='Terraform environment name GITHUB_ENV is reserved' ;;
             reserved-runner-path) PROCESS_TERRAFORM_ENV='GITHUB_PATH=undisclosed-value'; expected='Terraform environment name GITHUB_PATH is reserved' ;;
             reserved-runner-output) PROCESS_TERRAFORM_ENV='GITHUB_OUTPUT=undisclosed-value'; expected='Terraform environment name GITHUB_OUTPUT is reserved' ;;
             reserved-runner-summary) PROCESS_TERRAFORM_ENV='GITHUB_STEP_SUMMARY=undisclosed-value'; expected='Terraform environment name GITHUB_STEP_SUMMARY is reserved' ;;
+            reserved-runner-state) PROCESS_TERRAFORM_ENV='GITHUB_STATE=undisclosed-value'; expected='Terraform environment name GITHUB_STATE is reserved' ;;
             carriage-return)
                 PROCESS_TERRAFORM_SECRET_ENV=$'TF_VAR_secret=undisclosed-value\r'
                 expected='Terraform environment value for TF_VAR_secret must not contain a carriage return'
