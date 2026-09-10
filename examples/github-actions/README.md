@@ -49,14 +49,35 @@ terraform_env: |
 
 Input values are not masked in logs. Put anything sensitive in the optional `TERRAFORM_ENV`
 Actions secret instead, in the same `NAME=VALUE` shape; both supplied callers already pass it
-through. Each of its values is registered for log redaction before Terraform runs, so an
-individual credential stays masked even if a provider echoes it.
+through. Each of its values is registered with `::add-mask::`, which redacts it from the workflow
+console only. Every command's output is captured to log files inside the processing artefact, and
+those files are not redacted: the artefact is retained for seven days and can be downloaded by
+anyone with read access to the repository, so a credential a provider echoes into Terraform's
+output appears there in plaintext. Supplied variables at least cannot turn on Terraform's trace
+logging, because `TF_LOG` and `TF_LOG_PATH` are reserved.
 
-A value cannot contain a newline, a name may appear only once across both sources, and names the
-automation relies on are rejected: the `PROCESS_`, `RECONCILE_`, `DISCOVERY_`, `GITHUB_`,
-`RUNNER_`, `ACTIONS_`, `LD_`, `DYLD_` and `TF_CLI_ARGS` prefixes, and `PATH`, `IFS`, `ENV`,
-`BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `TF_DATA_DIR`, `TF_IN_AUTOMATION` and `CHECKPOINT_DISABLE`.
-A rejected entry stops the run before any file is touched and never prints its value.
+A value cannot contain a newline, because the format is one `NAME=VALUE` per line. Base64-encode a
+multi-line credential such as a PEM key or a service-account JSON document in the secret, and
+decode it in your Terraform configuration.
+
+A name may appear only once across both sources, and names the automation relies on are rejected.
+The reserved prefixes are `PROCESS_`, `RECONCILE_`, `DISCOVERY_`, `GITHUB_`, `RUNNER_`, `ACTIONS_`,
+`LD_`, `DYLD_`, `TF_CLI_ARGS`, `TF_LOG`, `TF_PLUGIN_CACHE` and `GIT_`. The reserved exact names are
+`PATH`, `IFS`, `ENV`, `BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `TF_DATA_DIR`, `TF_IN_AUTOMATION`,
+`CHECKPOINT_DISABLE`, `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG`, `TF_WORKSPACE`, `HOME`, `TMPDIR`,
+`SSL_CERT_FILE`, `SSL_CERT_DIR` and `TF_TOKEN_app_terraform_io`. The last of those is reserved
+because it would silently shadow the registry token the workflow injects from the `TF_API_TOKEN`
+secret; `TF_TOKEN_*` names for other registries remain allowed. Treat the list as best effort
+rather than exhaustive. The structural protection is a separate rule: a file newly created during a
+run is only ever publishable if it is a `.terraform.lock.hcl` directly inside a configured
+Terraform root. A rejected entry never prints its value, and is rejected before any Terraform
+command runs and before any file in the checkout is modified.
+
+Both supplied callers forward the same repository `TERRAFORM_ENV` secret, so production
+credentials are also available to non-production state-branch jobs. To separate them, either give
+each policy its own secret name — mapping, say, `TERRAFORM_ENV_PRODUCTION` and
+`TERRAFORM_ENV_NONPRODUCTION` onto the reusable workflow's `TERRAFORM_ENV` secret in each caller —
+or hold the secret in a GitHub Environment named for the caller's `automation_policy_id`.
 
 ## Configure updates
 
@@ -117,8 +138,9 @@ Pull requests and failure issues carry this stable marker:
 | Automation failure or missing/invalid result | Stop without changing managed PRs, issues or refs |
 
 A failed candidate fails its `process` job, so the jobs list shows which branches broke; the
-run summary names the branch, its classification and the stage that failed. Publication runs
-either way, so the table above still applies.
+run summary names the branch and its classification, and for an update, initialisation,
+formatting or validation failure the stage and root that failed. Publication runs either way, so
+the table above still applies.
 
 Unchanged candidates still run validation. Before any PR or issue reconciliation, the publisher checks that the remote state branch still matches the discovered commit; a moved or missing branch or failed lookup stops reconciliation. Cleanup matches the policy/branch marker and the expected PR head and base. Update refs are retained. GitHub lookup and closure errors stop reconciliation.
 
