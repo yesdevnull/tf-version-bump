@@ -49,27 +49,45 @@ terraform_env: |
 
 Input values are not masked in logs. Put anything sensitive in the optional `TERRAFORM_ENV`
 Actions secret instead, in the same `NAME=VALUE` shape; both supplied callers already pass it
-through. Each of its values is registered with `::add-mask::`, which redacts it from the workflow
-console only. Every command's output is captured to log files inside the processing artefact, and
+through.
+
+Both sources take one `NAME=VALUE` per line, so a multi-line value is written on one line with
+escapes: `\n` becomes a real newline and `\\` becomes a single literal backslash. Any other
+backslash sequence is passed through unchanged, so `\t` stays as a backslash followed by `t`. A
+literal carriage return in an entry is rejected.
+
+GitHub App authentication for the `integrations/github` provider is the usual case. The provider
+reads `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID` and `GITHUB_APP_PEM_FILE`, and the last holds
+the private key's PEM contents rather than a path, so the `TERRAFORM_ENV` secret looks like this
+(key body abbreviated) and Terraform receives the key with real newlines:
+
+```text
+GITHUB_APP_ID=12332432
+GITHUB_APP_INSTALLATION_ID=12435523
+GITHUB_APP_PEM_FILE=-----BEGIN RSA PRIVATE KEY-----\nMIIEow...\n-----END RSA PRIVATE KEY-----\n
+```
+
+Each of the secret's values is registered with `::add-mask::`, which redacts it from the workflow
+console only. A multi-line value is registered as a single mask, so the console may not redact it
+line by line. Every command's output is captured to log files inside the processing artefact, and
 those files are not redacted: the artefact is retained for seven days and can be downloaded by
 anyone with read access to the repository, so a credential a provider echoes into Terraform's
 output appears there in plaintext. Supplied variables at least cannot turn on Terraform's trace
 logging, because `TF_LOG` and `TF_LOG_PATH` are reserved.
 
-A value cannot contain a newline, because the format is one `NAME=VALUE` per line. Base64-encode a
-multi-line credential such as a PEM key or a service-account JSON document in the secret, and
-decode it in your Terraform configuration.
-
 A name may appear only once across both sources, and names the automation relies on are rejected.
-The reserved prefixes are `PROCESS_`, `RECONCILE_`, `DISCOVERY_`, `GITHUB_`, `RUNNER_`, `ACTIONS_`,
-`LD_`, `DYLD_`, `TF_CLI_ARGS`, `TF_LOG`, `TF_PLUGIN_CACHE` and `GIT_`. The reserved exact names are
+The reserved prefixes are `PROCESS_`, `RECONCILE_`, `DISCOVERY_`, `RUNNER_`, `ACTIONS_`, `LD_`,
+`DYLD_`, `TF_CLI_ARGS`, `TF_LOG`, `TF_PLUGIN_CACHE` and `GIT_`. The reserved exact names are
 `PATH`, `IFS`, `ENV`, `BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `TF_DATA_DIR`, `TF_IN_AUTOMATION`,
 `CHECKPOINT_DISABLE`, `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG`, `TF_WORKSPACE`, `HOME`, `TMPDIR`,
-`SSL_CERT_FILE`, `SSL_CERT_DIR` and `TF_TOKEN_app_terraform_io`. The last of those is reserved
-because it would silently shadow the registry token the workflow injects from the `TF_API_TOKEN`
-secret; `TF_TOKEN_*` names for other registries remain allowed. Treat the list as best effort
-rather than exhaustive. The structural protection is a separate rule: a file newly created during a
-run is only ever publishable if it is a `.terraform.lock.hcl` directly inside a configured
+`SSL_CERT_FILE`, `SSL_CERT_DIR`, `GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_OUTPUT`,
+`GITHUB_STEP_SUMMARY` and `TF_TOKEN_app_terraform_io`. The last of those is reserved because it
+would silently shadow the registry token the workflow injects from the `TF_API_TOKEN` secret;
+`TF_TOKEN_*` names for other registries remain allowed. The four `GITHUB_*` names are the runner's
+own command channels rather than provider configuration, which is why `GITHUB_APP_ID` and the
+provider's other `GITHUB_` variables are accepted while `GITHUB_ENV` is not. Treat the list as best
+effort rather than exhaustive. The structural protection is a separate rule: a file newly created
+during a run is only ever publishable if it is a `.terraform.lock.hcl` directly inside a configured
 Terraform root. A rejected entry never prints its value, and is rejected before any Terraform
 command runs and before any file in the checkout is modified.
 

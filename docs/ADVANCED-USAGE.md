@@ -28,14 +28,19 @@ Publication runs separately with repository write permissions and no registry to
 
 Terraform commands can take extra environment variables, which validation usually needs. Put
 non-sensitive entries in the `terraform_env` input and sensitive ones in the optional
-`TERRAFORM_ENV` secret, one `NAME=VALUE` per line, with no newline inside a value. Both reach
-`terraform init`, `fmt` and `validate` only. Secret values are registered with `::add-mask::`,
-which redacts them from the workflow console but not from the captured command logs inside the
-processing artefact; that artefact is retained for seven days and is downloadable by anyone with
-read access to the repository, so a credential a provider echoes into Terraform's output appears
-there in plaintext. Names the automation relies on, such as `PATH`, any `PROCESS_` variable, or
-`TF_LOG`, are rejected before any Terraform command runs and before any file in the checkout is
-modified; the [example's README](../examples/github-actions/README.md) lists the full set.
+`TERRAFORM_ENV` secret, one `NAME=VALUE` per line; both reach `terraform init`, `fmt` and
+`validate` only. Within a value, `\n` becomes a real newline and `\\` a literal backslash, so a
+multi-line credential such as a GitHub App private key fits on one line; any other backslash
+sequence passes through unchanged, and a literal carriage return is rejected. Secret values are
+registered with `::add-mask::`, which redacts them from the workflow console but not from the
+captured command logs inside the processing artefact; that artefact is retained for seven days
+and is downloadable by anyone with read access to the repository, so a credential a provider
+echoes into Terraform's output appears there in plaintext. A multi-line value is registered as a
+single mask, so the console may not redact it line by line. Names the automation relies on, such
+as `PATH`, any `PROCESS_` variable, or `TF_LOG`, are rejected before any Terraform command runs
+and before any file in the checkout is modified; the
+[example's README](../examples/github-actions/README.md) lists the full set and shows a GitHub
+App example.
 
 Each configured root runs the updater and `terraform init`. If the candidate changes and
 `terraform_fmt` is enabled, formatting runs recursively below every configured root. All roots

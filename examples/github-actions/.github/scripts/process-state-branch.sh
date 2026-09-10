@@ -45,14 +45,18 @@ TF_DATA_DIRECTORIES=()
 ROOTS_JSON='[]'
 TERRAFORM_ENVIRONMENT=()
 SECRET_ENVIRONMENT_COUNT=0
+UNESCAPED_VALUE=''
 # Names the automation itself relies on; a supplied entry must never shadow them.
-RESERVED_ENVIRONMENT_PREFIXES=(PROCESS_ RECONCILE_ DISCOVERY_ GITHUB_ RUNNER_ ACTIONS_ LD_ DYLD_
+RESERVED_ENVIRONMENT_PREFIXES=(PROCESS_ RECONCILE_ DISCOVERY_ RUNNER_ ACTIONS_ LD_ DYLD_
     TF_CLI_ARGS TF_LOG TF_PLUGIN_CACHE GIT_)
 # TF_TOKEN_app_terraform_io alone is reserved: it would shadow the registry token the
 # workflow injects, while other registries' TF_TOKEN_ names remain a legitimate use.
+# GITHUB_ is not a reserved prefix, because the GitHub provider reads its credentials
+# from GITHUB_ names and a supplied entry reaches only the terraform process. The
+# GITHUB_ names reserved here are the runner's command channels, not provider settings.
 RESERVED_ENVIRONMENT_NAMES=(PATH IFS ENV BASH_ENV SHELLOPTS BASHOPTS TF_DATA_DIR TF_IN_AUTOMATION
     CHECKPOINT_DISABLE TF_CLI_CONFIG_FILE TERRAFORM_CONFIG TF_WORKSPACE HOME TMPDIR SSL_CERT_FILE
-    SSL_CERT_DIR TF_TOKEN_app_terraform_io)
+    SSL_CERT_DIR TF_TOKEN_app_terraform_io GITHUB_ENV GITHUB_PATH GITHUB_OUTPUT GITHUB_STEP_SUMMARY)
 
 processing_path_error() { echo "processing path error: $*" >&2; exit 1; }
 processing_status_error() { echo "processing status error: $*" >&2; exit 1; }
@@ -74,6 +78,26 @@ run_bounded() {
     remaining=$((PROCESS_PREPARATION_DEADLINE_EPOCH - $(date +%s)))
     [[ "$remaining" -gt 0 ]] || return 124
     timeout --signal=TERM --kill-after=1s "${remaining}s" "$@" >"$log" 2>&1
+}
+
+# Translates \n to a newline and \\ to one backslash in a single left-to-right pass,
+# leaving any other backslash sequence as it is, so a multi-line credential fits on
+# one line. The result goes to UNESCAPED_VALUE because command substitution would
+# strip the trailing newline a PEM ends with.
+unescape_environment_value() {
+    local remaining=$1 prefix
+    UNESCAPED_VALUE=''
+    while [[ "$remaining" == *\\* ]]; do
+        prefix=${remaining%%\\*}
+        UNESCAPED_VALUE+=$prefix
+        remaining=${remaining#"$prefix"\\}
+        case "$remaining" in
+            n*) UNESCAPED_VALUE+=$'\n'; remaining=${remaining#n} ;;
+            \\*) UNESCAPED_VALUE+="\\"; remaining=${remaining#\\} ;;
+            *) UNESCAPED_VALUE+="\\" ;;
+        esac
+    done
+    UNESCAPED_VALUE+=$remaining
 }
 
 # Diagnostics name the offending variable only; a supplied value is never printed.
@@ -98,7 +122,8 @@ parse_terraform_environment() {
             [[ "${candidate%%=*}" != "$name" ]] \
                 || processing_setup_error "Terraform environment name $name is set twice"
         done
-        TERRAFORM_ENVIRONMENT+=("$entry")
+        unescape_environment_value "${entry#*=}"
+        TERRAFORM_ENVIRONMENT+=("$name=$UNESCAPED_VALUE")
     done
 }
 
@@ -111,13 +136,17 @@ prepare_environment() {
     parse_terraform_environment "${entries[@]}"
 }
 
+# Registers one mask per value, never one per line: a short line would redact every
+# occurrence of itself throughout the log. Workflow command data encodes per cent,
+# carriage return and line feed, and per cent must go first or the others double-encode.
 print_secret_masks() {
     local index=0 value
     while [[ "$index" -lt "$SECRET_ENVIRONMENT_COUNT" ]]; do
         value=${TERRAFORM_ENVIRONMENT[index]#*=}
         index=$((index + 1))
         [[ -n "$value" ]] || continue
-        printf '::add-mask::%s\n' "${value//%/%25}"
+        value=${value//%/%25}
+        printf '::add-mask::%s\n' "${value//$'\n'/%0A}"
     done
 }
 
