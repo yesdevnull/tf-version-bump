@@ -1153,6 +1153,25 @@ input=input-delivered secret=secret-delivered
 EOF
 }
 
+# The GitHub provider reads its App credentials from GITHUB_ names, and its PEM is
+# multi-line, so a supplied credential exercises the prefix and the escapes together.
+# GITHUB_APP_ID rides along unobserved: the run succeeding proves it is accepted.
+test_processing_delivers_escaped_github_app_credentials() {
+    setup_processing_workspace
+    configure_validation_provider_base
+    local observation="$PROCESS_RUNNER_TEMP/observed-environment"
+    PROCESS_TERRAFORM_ENV="TEST_OBSERVATION_PATH=$observation"$'\nTEST_EXACT_NAME=GITHUB_APP_PEM_FILE\nGITHUB_APP_ID=123456'
+    PROCESS_TERRAFORM_SECRET_ENV='GITHUB_APP_PEM_FILE=-----BEGIN TEST KEY-----\nkey-material\\nnot-a-newline\tnot-a-tab\n-----END TEST KEY-----\n'
+    assert_silent_success 'GitHub App credentials' "$PROCESS_TMP_ROOT/stdout" "$PROCESS_TMP_ROOT/stderr" run_processing
+    # The quoted heredoc keeps its backslashes literal and diff reports a missing final
+    # newline, so this compares the exact bytes, including the trailing newline.
+    diff - "$observation.exact" >/dev/null <<'EOF' || fail "the GitHub App credential did not reach Terraform intact: $(od -c "$observation.exact" 2>&1)"
+-----BEGIN TEST KEY-----
+key-material\nnot-a-newline\tnot-a-tab
+-----END TEST KEY-----
+EOF
+}
+
 # The updater runs from an absolute path, so no PATH entry can intercept it; the
 # timeout that run_bounded wraps every command with can be. timeout execs its command
 # without altering the environment, and an env wrapper's assignments are visible in its
@@ -1208,8 +1227,10 @@ test_processing_masks_only_secret_environment_values() {
     setup_processing_workspace
     PROCESS_TERRAFORM_ENV='TF_VAR_region=ap-southeast-2'
     # Another registry's token stays a legitimate secret, and a per cent sign must
-    # be encoded, because the runner unescapes workflow command data.
-    PROCESS_TERRAFORM_SECRET_ENV=$'AWS_ACCESS_KEY_ID=AKIAEXAMPLE\nAWS_SECRET_ACCESS_KEY=example-secret\nTF_TOKEN_other_example_com=other-registry-token\nTF_VAR_discount=100%off'
+    # be encoded, because the runner unescapes workflow command data. A multi-line
+    # value registers one encoded mask, never one per line: a short line would
+    # redact every occurrence of itself throughout the log.
+    PROCESS_TERRAFORM_SECRET_ENV=$'AWS_ACCESS_KEY_ID=AKIAEXAMPLE\nAWS_SECRET_ACCESS_KEY=example-secret\nTF_TOKEN_other_example_com=other-registry-token\nTF_VAR_discount=100%off\nGITHUB_APP_PEM_FILE=first-line\\nsecond-line\\n'
     run_processing_mask >"$PROCESS_TMP_ROOT/mask.stdout" 2>"$PROCESS_TMP_ROOT/mask.stderr"
     [[ ! -s "$PROCESS_TMP_ROOT/mask.stderr" ]] \
         || fail "masking emitted diagnostics: $(<"$PROCESS_TMP_ROOT/mask.stderr")"
@@ -1218,13 +1239,15 @@ test_processing_masks_only_secret_environment_values() {
 ::add-mask::example-secret
 ::add-mask::other-registry-token
 ::add-mask::100%25off
+::add-mask::first-line%0Asecond-line%0A
 EOF
 }
 
 test_processing_rejects_invalid_terraform_environment() {
     local mode expected
     for mode in syntax name reserved-prefix reserved-name reserved-log-path reserved-plugin-cache \
-        reserved-registry-token carriage-return duplicate cross-source; do
+        reserved-registry-token reserved-runner-env reserved-runner-path reserved-runner-output \
+        reserved-runner-summary carriage-return duplicate cross-source; do
         setup_processing_workspace
         # Every mode supplies a secret, so the leak checks below are never vacuous.
         PROCESS_TERRAFORM_SECRET_ENV='TF_VAR_secret=undisclosed-value'
@@ -1236,6 +1259,10 @@ test_processing_rejects_invalid_terraform_environment() {
             reserved-log-path) PROCESS_TERRAFORM_ENV='TF_LOG_PATH=/tmp/log'; expected='Terraform environment name TF_LOG_PATH is reserved' ;;
             reserved-plugin-cache) PROCESS_TERRAFORM_ENV='TF_PLUGIN_CACHE_DIR=/tmp/cache'; expected='Terraform environment name TF_PLUGIN_CACHE_DIR is reserved' ;;
             reserved-registry-token) PROCESS_TERRAFORM_ENV='TF_TOKEN_app_terraform_io=token'; expected='Terraform environment name TF_TOKEN_app_terraform_io is reserved' ;;
+            reserved-runner-env) PROCESS_TERRAFORM_ENV='GITHUB_ENV=/tmp/env'; expected='Terraform environment name GITHUB_ENV is reserved' ;;
+            reserved-runner-path) PROCESS_TERRAFORM_ENV='GITHUB_PATH=/tmp/path'; expected='Terraform environment name GITHUB_PATH is reserved' ;;
+            reserved-runner-output) PROCESS_TERRAFORM_ENV='GITHUB_OUTPUT=/tmp/output'; expected='Terraform environment name GITHUB_OUTPUT is reserved' ;;
+            reserved-runner-summary) PROCESS_TERRAFORM_ENV='GITHUB_STEP_SUMMARY=/tmp/summary'; expected='Terraform environment name GITHUB_STEP_SUMMARY is reserved' ;;
             carriage-return)
                 PROCESS_TERRAFORM_SECRET_ENV=$'TF_VAR_secret=undisclosed-value\r'
                 expected='Terraform environment value for TF_VAR_secret must not contain a carriage return'
@@ -1456,6 +1483,7 @@ if [[ $# -eq 0 ]]; then
         test_processing_rejects_ignored_generated_lock test_processing_rejects_formatter_changes_outside_patch_policy
         test_processing_rejects_files_created_during_the_run
         test_processing_supplies_terraform_environment_to_commands
+        test_processing_delivers_escaped_github_app_credentials
         test_processing_withholds_supplied_environment_from_the_updater
         test_processing_masks_only_secret_environment_values
         test_processing_rejects_invalid_terraform_environment

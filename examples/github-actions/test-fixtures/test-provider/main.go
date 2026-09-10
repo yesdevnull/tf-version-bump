@@ -23,6 +23,15 @@ func recordObservedEnvironment() {
 	if err := os.WriteFile(path, []byte(observation), 0o600); err != nil {
 		log.Fatalf("could not record the observed environment: %v", err)
 	}
+	// The variable TEST_EXACT_NAME names is recorded byte for byte beside the
+	// summary, so a test can observe a value that one summary line cannot hold.
+	name := os.Getenv("TEST_EXACT_NAME")
+	if name == "" {
+		return
+	}
+	if err := os.WriteFile(path+".exact", []byte(os.Getenv(name)), 0o600); err != nil {
+		log.Fatalf("could not record the observed value: %v", err)
+	}
 }
 
 func main() {
