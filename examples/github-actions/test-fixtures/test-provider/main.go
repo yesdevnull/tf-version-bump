@@ -9,8 +9,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/plugin"
 )
 
-// recordObservedEnvironment writes the environment Terraform handed to the
-// plugin process, so a test can observe what reached a Terraform command.
+// recordObservedEnvironment writes the two channel variables Terraform handed
+// to the plugin process, so a test can observe what reached a Terraform command.
 // Terraform launches this provider during validate but not during init, and
 // recording stays inert unless TEST_OBSERVATION_PATH is supplied.
 func recordObservedEnvironment() {
@@ -23,8 +23,9 @@ func recordObservedEnvironment() {
 	if err := os.WriteFile(path, []byte(observation), 0o600); err != nil {
 		log.Fatalf("could not record the observed environment: %v", err)
 	}
-	// The variable TEST_EXACT_NAME names is recorded byte for byte beside the
-	// summary, so a test can observe a value that one summary line cannot hold.
+	// When TEST_EXACT_NAME names a variable, that variable's value is also written
+	// byte for byte to a second file, because the summary line cannot hold a
+	// multi-line value.
 	name := os.Getenv("TEST_EXACT_NAME")
 	if name == "" {
 		return
