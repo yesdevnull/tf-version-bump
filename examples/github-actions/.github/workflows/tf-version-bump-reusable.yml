@@ -171,7 +171,11 @@ jobs:
             exit 1
           fi
           jq -r '"### \(.state_branch)\n\n- Classification: `\(.classification)`"
-            + (if .failure then "\n- Failed stage: `\(.failure.stage)` in root `\(.failure.root)` (status \(.failure.status))" else "" end)' \
+            + (if .failure == null then ""
+               elif (.classification | startswith("branch-"))
+               then "\n- Failed stage: `\(.failure.stage)` in root `\(.failure.root)` (status \(.failure.status))"
+               else "\n- Automation failed with status \(.failure.status); read the uploaded processing logs"
+               end)' \
             "$RESULT_MANIFEST" >>"$GITHUB_STEP_SUMMARY"
           classification=$(jq -er '.classification' "$RESULT_MANIFEST")
           if [[ "$PROCESS_OUTCOME" == success \

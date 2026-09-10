@@ -28,9 +28,14 @@ Publication runs separately with repository write permissions and no registry to
 
 Terraform commands can take extra environment variables, which validation usually needs. Put
 non-sensitive entries in the `terraform_env` input and sensitive ones in the optional
-`TERRAFORM_ENV` secret, one `NAME=VALUE` per line. Both reach `terraform init`, `fmt` and
-`validate` only; every secret value is registered for log masking first. Names the automation
-relies on, such as `PATH` or any `PROCESS_` variable, are rejected before any file is touched.
+`TERRAFORM_ENV` secret, one `NAME=VALUE` per line, with no newline inside a value. Both reach
+`terraform init`, `fmt` and `validate` only. Secret values are registered with `::add-mask::`,
+which redacts them from the workflow console but not from the captured command logs inside the
+processing artefact; that artefact is retained for seven days and is downloadable by anyone with
+read access to the repository, so a credential a provider echoes into Terraform's output appears
+there in plaintext. Names the automation relies on, such as `PATH`, any `PROCESS_` variable, or
+`TF_LOG`, are rejected before any Terraform command runs and before any file in the checkout is
+modified; the [example's README](../examples/github-actions/README.md) lists the full set.
 
 Each configured root runs the updater and `terraform init`. If the candidate changes and
 `terraform_fmt` is enabled, formatting runs recursively below every configured root. All roots
@@ -48,8 +53,11 @@ Upgrade can update all eligible providers within their constraints. Generated lo
 included in the candidate. Modules are resolved from their configured constraints on each fresh run.
 
 Any processing failure fails its `process` job, so the jobs list shows which branches broke,
-and the run summary names the branch, classification and failed stage. Publication still runs
-and reconciles the pull request and failure issue.
+and the run summary names the branch and classification, adding the failed stage and root for an
+update, initialisation, formatting or validation failure. Update, initialisation,
+formatting and validation failures still publish, closing the marked pull request and then
+creating or refreshing the failure issue. An automation failure, or a missing result, stops
+without changing managed pull requests, issues or refs.
 
 The processing result contains `result.json`, logs and, for a changed valid candidate,
 `candidate.patch`. Publication checks the result identity, patch checksum, configured roots and

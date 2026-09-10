@@ -27,6 +27,7 @@ newline separated NAME=VALUE entries supplied to every Terraform command).
 
 The mask subcommand parses both environment sources and prints one ::add-mask::
 workflow command per PROCESS_TERRAFORM_SECRET_ENV value; run it before process.
+An invalid environment emits no masks and still succeeds, so process reports it.
 
 Emits result.json and logs/, plus candidate.patch only for changed, validated
 success. Plain init uses -backend=false -input=false; explicit upgrade adds
@@ -45,8 +46,13 @@ ROOTS_JSON='[]'
 TERRAFORM_ENVIRONMENT=()
 SECRET_ENVIRONMENT_COUNT=0
 # Names the automation itself relies on; a supplied entry must never shadow them.
-RESERVED_ENVIRONMENT_PREFIXES=(PROCESS_ RECONCILE_ DISCOVERY_ GITHUB_ RUNNER_ ACTIONS_ LD_ DYLD_ TF_CLI_ARGS)
-RESERVED_ENVIRONMENT_NAMES=(PATH IFS ENV BASH_ENV SHELLOPTS BASHOPTS TF_DATA_DIR TF_IN_AUTOMATION CHECKPOINT_DISABLE)
+RESERVED_ENVIRONMENT_PREFIXES=(PROCESS_ RECONCILE_ DISCOVERY_ GITHUB_ RUNNER_ ACTIONS_ LD_ DYLD_
+    TF_CLI_ARGS TF_LOG TF_PLUGIN_CACHE GIT_)
+# TF_TOKEN_app_terraform_io alone is reserved: it would shadow the registry token the
+# workflow injects, while other registries' TF_TOKEN_ names remain a legitimate use.
+RESERVED_ENVIRONMENT_NAMES=(PATH IFS ENV BASH_ENV SHELLOPTS BASHOPTS TF_DATA_DIR TF_IN_AUTOMATION
+    CHECKPOINT_DISABLE TF_CLI_CONFIG_FILE TERRAFORM_CONFIG TF_WORKSPACE HOME TMPDIR SSL_CERT_FILE
+    SSL_CERT_DIR TF_TOKEN_app_terraform_io)
 
 processing_path_error() { echo "processing path error: $*" >&2; exit 1; }
 processing_status_error() { echo "processing status error: $*" >&2; exit 1; }
@@ -77,7 +83,9 @@ parse_terraform_environment() {
         [[ -n "$entry" ]] || continue
         name=${entry%%=*}
         [[ "$entry" == *=* && "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
-            || processing_setup_error 'Terraform environment entries must be NAME=VALUE'
+            || processing_setup_error 'Terraform environment entries must be one NAME=VALUE per line; values must not contain a newline'
+        [[ "$entry" != *$'\r'* ]] \
+            || processing_setup_error "Terraform environment value for $name must not contain a carriage return"
         for candidate in "${RESERVED_ENVIRONMENT_PREFIXES[@]}"; do
             [[ "$name" != "$candidate"* ]] \
                 || processing_setup_error "Terraform environment name $name is reserved"
@@ -109,7 +117,7 @@ print_secret_masks() {
         value=${TERRAFORM_ENVIRONMENT[index]#*=}
         index=$((index + 1))
         [[ -n "$value" ]] || continue
-        printf '::add-mask::%s\n' "$value"
+        printf '::add-mask::%s\n' "${value//%/%25}"
     done
 }
 
@@ -281,6 +289,7 @@ write_candidate() {
         read -r old_mode new_mode _ <<<"$raw"
         [[ "$old_mode" == :000000 || "$old_mode" == ":$new_mode" ]] \
             || processing_status_error 'candidate deletion or type change is forbidden'
+        [[ "$old_mode" != :000000 ]] || validate_created_changed_path "$path"
         validate_changed_tree_identity "$path" "$new_mode"
         validate_changed_tree_entry "$TARGET_CHECKOUT" "$path"
         validate_final_changed_path "$TARGET_CHECKOUT" "$path" "${TERRAFORM_ROOTS[@]}"
@@ -293,6 +302,17 @@ path_is_within() {
     local path=$1
     local root=$2
     [[ "$path" == "$root" || "$path" == "$root/"* ]]
+}
+
+
+# prepare_workspace leaves the checkout clean of tracked, untracked and ignored
+# content, so a path with no previous mode was created during this run. Only
+# terraform init creates a file: the updater and the formatter rewrite existing
+# ones. validate_final_changed_path then confirms the declared root.
+validate_created_changed_path() {
+    local relative_path=$1
+    [[ "${relative_path##*/}" == ".terraform.lock.hcl" ]] \
+        || processing_status_error "candidate created a path that is not a provider lock file"
 }
 
 
@@ -570,7 +590,16 @@ prepare_workspace() {
 
 
 if [[ "${1-}" == --help && $# -eq 1 ]]; then usage; exit 0; fi
-if [[ "${1-}" == mask && $# -eq 1 ]]; then prepare_environment; print_secret_masks; exit 0; fi
+# Masking runs immediately before process in one workflow run block. An invalid
+# environment must fail there, not here: process re-parses the same input and
+# reports it before any Terraform command runs, so nothing unmasked is printed
+# in between, and its result file keeps the artefact and publish steps honest.
+# The parser's diagnostic still reaches the step log; it names the offending
+# variable only, so it carries no supplied value.
+if [[ "${1-}" == mask && $# -eq 1 ]]; then
+    (prepare_environment && print_secret_masks) || true
+    exit 0
+fi
 if [[ "${1-}" != process || $# -ne 1 ]]; then usage >&2; exit 2; fi
 trap cleanup EXIT
 trap 'exit 129' HUP
