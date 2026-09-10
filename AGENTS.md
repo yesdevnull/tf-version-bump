@@ -66,6 +66,8 @@ make test-coverage                                        # With coverage report
 ```bash
 golangci-lint run --timeout=5m                           # Run linter
 golangci-lint run --fix                                   # Auto-fix issues
+make actionlint                                           # Workflows, including the Actions example
+make shellcheck                                           # Every tracked shell script
 ```
 
 ### Running the Tool
