@@ -44,6 +44,8 @@ make coverage-html  # writes coverage.html
 make coverage-func  # re-print coverage from an existing coverage.out
 make build          # go build -v -o tf-version-bump .
 make clean          # remove binary + coverage artefacts
+make actionlint     # this repo's workflows, then the example's from a temporary repo copy
+make shellcheck     # every tracked *.sh
 ```
 
 Full validation before committing (mirrors CI):
@@ -52,6 +54,7 @@ Full validation before committing (mirrors CI):
 go mod download && go mod verify
 go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 golangci-lint run --timeout=5m
+make actionlint && make shellcheck
 go build -o tf-version-bump .
 ```
 
@@ -63,6 +66,11 @@ when the workflow pins a new one.
 ```bash
 curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.12
 ```
+
+**shellcheck must match CI's pinned version, currently 0.11.0** (see `.github/workflows/lint.yml`,
+which verifies the release archive's SHA-256). actionlint also runs shellcheck over workflow
+`run:` blocks using the first shellcheck on PATH, so a different local version can disagree with
+CI in either direction. Bump the version and digest together.
 
 ## Gotchas
 
@@ -247,14 +255,14 @@ required status checks are always reported.
   version-independent steps (branch automation, GitHub Actions POC checks, Codecov upload) run
   once, on the 1.26.8 leg flagged `primary` in the matrix.
 - **Build** — needs Test; cross-compiles 6 targets (linux/darwin/windows × amd64/arm64)
-- **Lint** — golangci-lint
+- **Lint** — golangci-lint, then `make actionlint` and `make shellcheck` with pinned shellcheck
 - **Documentation** — a separate path-filtered workflow runs `make docs-check` for Markdown,
   schema, maintained example, and documentation-test changes
 - **CodeQL** and **Release** (GoReleaser + SLSA, tag-triggered) run separately
 
 ## Conventions
 
-CLI flags and the YAML config format are user-facing contracts — don't break them. Version
+CLI flags and the YAML config format are user-facing contracts — don't break them.
 The JSON Schema accepts common Terraform constraint syntax (`1.0.0`, `~> 3.0`,
 `>= 1.5, < 2.0`, pre-release, build metadata), but the runtime YAML loader does not execute that
 schema. Keep the dependency list minimal.

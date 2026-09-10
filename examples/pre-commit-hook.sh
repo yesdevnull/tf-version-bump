@@ -52,6 +52,7 @@ if ! repository_root=$(git rev-parse --show-toplevel 2>/dev/null); then
     exit 1
 fi
 staged_root=$(mktemp -d "${TMPDIR:-/tmp}/tf-version-bump-pre-commit.XXXXXX")
+# shellcheck disable=SC2329 # Called by the EXIT trap.
 cleanup() {
     rm -rf -- "$staged_root"
 }
