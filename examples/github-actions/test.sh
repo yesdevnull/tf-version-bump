@@ -1249,34 +1249,45 @@ test_processing_rejects_invalid_terraform_environment() {
         reserved-registry-token reserved-runner-env reserved-runner-path reserved-runner-output \
         reserved-runner-summary carriage-return duplicate cross-source; do
         setup_processing_workspace
-        # Every mode supplies a secret, so the leak checks below are never vacuous.
+        # A valid secret precedes every rejected entry, so masking one would show below,
+        # and every rejected entry carries the same value, so the leak checks below
+        # would observe a diagnostic that printed the entry it rejects.
         PROCESS_TERRAFORM_SECRET_ENV='TF_VAR_secret=undisclosed-value'
         case "$mode" in
-            syntax) PROCESS_TERRAFORM_ENV='TF_VAR_region'; expected='Terraform environment entries must be one NAME=VALUE per line' ;;
-            name) PROCESS_TERRAFORM_ENV='2BAD=x'; expected='Terraform environment entries must be one NAME=VALUE per line' ;;
-            reserved-prefix) PROCESS_TERRAFORM_ENV='PROCESS_RESULT_DIR=/tmp'; expected='Terraform environment name PROCESS_RESULT_DIR is reserved' ;;
-            reserved-name) PROCESS_TERRAFORM_ENV='TF_DATA_DIR=/tmp'; expected='Terraform environment name TF_DATA_DIR is reserved' ;;
-            reserved-log-path) PROCESS_TERRAFORM_ENV='TF_LOG_PATH=/tmp/log'; expected='Terraform environment name TF_LOG_PATH is reserved' ;;
-            reserved-plugin-cache) PROCESS_TERRAFORM_ENV='TF_PLUGIN_CACHE_DIR=/tmp/cache'; expected='Terraform environment name TF_PLUGIN_CACHE_DIR is reserved' ;;
-            reserved-registry-token) PROCESS_TERRAFORM_ENV='TF_TOKEN_app_terraform_io=token'; expected='Terraform environment name TF_TOKEN_app_terraform_io is reserved' ;;
-            reserved-runner-env) PROCESS_TERRAFORM_ENV='GITHUB_ENV=/tmp/env'; expected='Terraform environment name GITHUB_ENV is reserved' ;;
-            reserved-runner-path) PROCESS_TERRAFORM_ENV='GITHUB_PATH=/tmp/path'; expected='Terraform environment name GITHUB_PATH is reserved' ;;
-            reserved-runner-output) PROCESS_TERRAFORM_ENV='GITHUB_OUTPUT=/tmp/output'; expected='Terraform environment name GITHUB_OUTPUT is reserved' ;;
-            reserved-runner-summary) PROCESS_TERRAFORM_ENV='GITHUB_STEP_SUMMARY=/tmp/summary'; expected='Terraform environment name GITHUB_STEP_SUMMARY is reserved' ;;
+            # A PEM pasted without escapes leaves a continuation line with no '='.
+            syntax)
+                PROCESS_TERRAFORM_SECRET_ENV+=$'\nundisclosed-value'
+                expected='Terraform environment entries must be one NAME=VALUE per line'
+                ;;
+            name) PROCESS_TERRAFORM_ENV='2BAD=undisclosed-value'; expected='Terraform environment entries must be one NAME=VALUE per line' ;;
+            reserved-prefix) PROCESS_TERRAFORM_ENV='PROCESS_RESULT_DIR=undisclosed-value'; expected='Terraform environment name PROCESS_RESULT_DIR is reserved' ;;
+            reserved-name) PROCESS_TERRAFORM_ENV='TF_DATA_DIR=undisclosed-value'; expected='Terraform environment name TF_DATA_DIR is reserved' ;;
+            reserved-log-path) PROCESS_TERRAFORM_ENV='TF_LOG_PATH=undisclosed-value'; expected='Terraform environment name TF_LOG_PATH is reserved' ;;
+            reserved-plugin-cache) PROCESS_TERRAFORM_ENV='TF_PLUGIN_CACHE_DIR=undisclosed-value'; expected='Terraform environment name TF_PLUGIN_CACHE_DIR is reserved' ;;
+            reserved-registry-token) PROCESS_TERRAFORM_ENV='TF_TOKEN_app_terraform_io=undisclosed-value'; expected='Terraform environment name TF_TOKEN_app_terraform_io is reserved' ;;
+            reserved-runner-env) PROCESS_TERRAFORM_ENV='GITHUB_ENV=undisclosed-value'; expected='Terraform environment name GITHUB_ENV is reserved' ;;
+            reserved-runner-path) PROCESS_TERRAFORM_ENV='GITHUB_PATH=undisclosed-value'; expected='Terraform environment name GITHUB_PATH is reserved' ;;
+            reserved-runner-output) PROCESS_TERRAFORM_ENV='GITHUB_OUTPUT=undisclosed-value'; expected='Terraform environment name GITHUB_OUTPUT is reserved' ;;
+            reserved-runner-summary) PROCESS_TERRAFORM_ENV='GITHUB_STEP_SUMMARY=undisclosed-value'; expected='Terraform environment name GITHUB_STEP_SUMMARY is reserved' ;;
             carriage-return)
                 PROCESS_TERRAFORM_SECRET_ENV=$'TF_VAR_secret=undisclosed-value\r'
                 expected='Terraform environment value for TF_VAR_secret must not contain a carriage return'
                 ;;
-            duplicate) PROCESS_TERRAFORM_ENV=$'TF_VAR_a=1\nTF_VAR_a=2'; expected='Terraform environment name TF_VAR_a is set twice' ;;
+            duplicate) PROCESS_TERRAFORM_ENV=$'TF_VAR_a=1\nTF_VAR_a=undisclosed-value'; expected='Terraform environment name TF_VAR_a is set twice' ;;
+            # The secret source is parsed first, so the input entry is the one rejected.
             cross-source)
-                PROCESS_TERRAFORM_ENV='TF_VAR_a=1'
-                PROCESS_TERRAFORM_SECRET_ENV='TF_VAR_a=undisclosed-value'
+                PROCESS_TERRAFORM_SECRET_ENV+=$'\nTF_VAR_a=1'
+                PROCESS_TERRAFORM_ENV='TF_VAR_a=undisclosed-value'
                 expected='Terraform environment name TF_VAR_a is set twice'
                 ;;
         esac
         assert_processing_failure "$expected" "$mode environment entry"
         ! grep -qF 'undisclosed-value' "$PROCESS_TMP_ROOT/failure.stderr" \
             || fail 'processing diagnostics leaked a secret value'
+        [[ -z "$("$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" status --porcelain)" ]] \
+            || fail "$mode environment entry was rejected only after the checkout changed"
+        [[ ! -e "$PROCESS_RESULT_DIR/logs/download.log" ]] \
+            || fail "$mode environment entry was rejected only after the release download"
         # The result file is what the artefact upload and publish job depend on.
         jq -e '.classification == "automation"' "$PROCESS_RESULT_DIR/result.json" >/dev/null \
             || fail "$mode environment entry left no automation result"
