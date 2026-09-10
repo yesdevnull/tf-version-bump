@@ -23,11 +23,13 @@ Options: PROCESS_TERRAFORM_FMT (true/false), PROCESS_TERRAFORM_INIT_UPGRADE
 (optional true/false, default false), PROCESS_PREPARATION_DEADLINE_EPOCH (absolute
 deadline shared by setup and all commands), PROCESS_RESULT_DIR (absent destination
 below RUNNER_TEMP), PROCESS_TERRAFORM_ENV and PROCESS_TERRAFORM_SECRET_ENV (optional
-newline separated NAME=VALUE entries supplied to every Terraform command).
+newline separated NAME=VALUE entries supplied to terraform init, fmt and validate;
+within a value \n is a newline and \\ a backslash, and reserved names are rejected).
 
 The mask subcommand parses both environment sources and prints one ::add-mask::
-workflow command per PROCESS_TERRAFORM_SECRET_ENV value; run it before process.
-An invalid environment emits no masks and still succeeds, so process reports it.
+workflow command per non-empty PROCESS_TERRAFORM_SECRET_ENV value; run it before
+process. For an invalid environment it prints the name-only diagnostic, emits no
+masks and exits 0, so process reports the failure.
 
 Emits result.json and logs/, plus candidate.patch only for changed, validated
 success. Plain init uses -backend=false -input=false; explicit upgrade adds
@@ -147,8 +149,9 @@ prepare_environment() {
 }
 
 # Registers one mask per value, never one per line: a short line would redact every
-# occurrence of itself throughout the log. Workflow command data encodes per cent,
-# carriage return and line feed, and per cent must go first or the others double-encode.
+# occurrence of itself throughout the log. Workflow command data encodes per cent and
+# line feed, and per cent must go first or the line feed's encoding would be encoded
+# again. No carriage return needs encoding, because the parser rejects them.
 print_secret_masks() {
     local index=0 value
     while [[ "$index" -lt "$SECRET_ENVIRONMENT_COUNT" ]]; do
@@ -634,9 +637,14 @@ if [[ "${1-}" == --help && $# -eq 1 ]]; then usage; exit 0; fi
 # reports it before any Terraform command runs, so nothing unmasked is printed
 # in between, and its result file keeps the artefact and publish steps honest.
 # The parser's diagnostic still reaches the step log; it names the offending
-# variable only, so it carries no supplied value.
+# variable only, so it carries no supplied value. The subshell only decides
+# whether the environment is valid, because errexit is off inside a || list: a
+# valid environment is parsed again and its masks are written under errexit, so a
+# mask that cannot be written fails the step rather than leaving a value unmasked.
 if [[ "${1-}" == mask && $# -eq 1 ]]; then
-    (prepare_environment && print_secret_masks) || true
+    (prepare_environment) || exit 0
+    prepare_environment
+    print_secret_masks
     exit 0
 fi
 if [[ "${1-}" != process || $# -ne 1 ]]; then usage >&2; exit 2; fi

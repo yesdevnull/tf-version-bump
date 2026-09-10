@@ -305,14 +305,17 @@ run_processing() {
 }
 
 
+# close-stdout runs the script with its standard output closed, so writing a mask fails.
 run_processing_mask() {
     ensure_processing_container
+    local -a command=(/bin/bash "$PROCESS_SCRIPT" mask)
+    [[ "${1-}" != close-stdout ]] || command=(/bin/bash -c 'exec "$@" >&-' bash "${command[@]}")
     docker exec \
         --user "$(id -u):$(id -g)" \
         --env "PROCESS_TERRAFORM_ENV=${PROCESS_TERRAFORM_ENV-}" \
         --env "PROCESS_TERRAFORM_SECRET_ENV=${PROCESS_TERRAFORM_SECRET_ENV-}" \
         "$PROCESS_CONTAINER_ID" \
-        /bin/bash "$PROCESS_SCRIPT" mask
+        "${command[@]}"
 }
 
 
@@ -1241,6 +1244,13 @@ test_processing_masks_only_secret_environment_values() {
 ::add-mask::100%25off
 ::add-mask::first-line%0Asecond-line%0A
 EOF
+    # A mask that cannot be written must fail the step: processing would otherwise
+    # succeed while the value it guards reached the console unredacted.
+    ! run_processing_mask close-stdout >"$PROCESS_TMP_ROOT/closed-mask.stdout" \
+        2>"$PROCESS_TMP_ROOT/closed-mask.stderr" \
+        || fail 'masking succeeded without writing its masks'
+    grep -qF 'write error' "$PROCESS_TMP_ROOT/closed-mask.stderr" \
+        || fail "masking did not report its failed write: $(<"$PROCESS_TMP_ROOT/closed-mask.stderr")"
 }
 
 test_processing_rejects_invalid_terraform_environment() {
