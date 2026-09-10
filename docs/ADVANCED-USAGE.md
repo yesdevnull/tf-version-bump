@@ -59,8 +59,10 @@ included in the candidate. Modules are resolved from their configured constraint
 
 Any processing failure fails its `process` job, so the jobs list shows which branches broke,
 and the run summary names the branch and classification, adding the failed stage and root for an
-update, initialisation, formatting or validation failure. Update, initialisation,
-formatting and validation failures still publish, closing the marked pull request and then
+update, initialisation, formatting or validation failure. It also shows the updater's log for
+each root, while Terraform's logs stay in the artefact, and in a dry run each publish summary
+states what a live run would have done. Update, initialisation, formatting and validation
+failures still publish, closing the marked pull request and then
 creating or refreshing the failure issue. An automation failure, or a missing result, stops
 without changing managed pull requests, issues or refs.
 

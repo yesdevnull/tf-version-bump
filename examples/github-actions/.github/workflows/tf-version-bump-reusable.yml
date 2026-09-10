@@ -177,6 +177,24 @@ jobs:
                else "\n- Automation failed with status \(.failure.status); read the uploaded processing logs"
                end)' \
             "$RESULT_MANIFEST" >>"$GITHUB_STEP_SUMMARY"
+          # Only the updater's log is shown: Terraform's logs can carry a credential a provider echoed.
+          index=0
+          while IFS= read -r root; do
+            index=$((index + 1))
+            log="${RESULT_MANIFEST%/*}/logs/update-$index.log"
+            [[ -f "$log" ]] || continue
+            fence='```'
+            longest=$({ grep -oE '`+' "$log" || true; } | awk '{ if (length > max) max = length } END { print max + 0 }')
+            while [[ ${#fence} -le $longest ]]; do fence+='`'; done
+            printf '\n#### Updates in %s\n\n%s\n' "\`$root\`" "$fence" >>"$GITHUB_STEP_SUMMARY"
+            if [[ $(wc -c <"$log") -gt 65536 ]]; then
+              head -c 65536 "$log" | sed '$d' >>"$GITHUB_STEP_SUMMARY"
+              printf '%s\n\nThis log was truncated; the processing artefact holds it in full.\n' "$fence" >>"$GITHUB_STEP_SUMMARY"
+            else
+              awk 1 "$log" >>"$GITHUB_STEP_SUMMARY"
+              printf '%s\n' "$fence" >>"$GITHUB_STEP_SUMMARY"
+            fi
+          done < <(jq -r '(.roots // [])[]' "$RESULT_MANIFEST")
           classification=$(jq -er '.classification' "$RESULT_MANIFEST")
           if [[ "$PROCESS_OUTCOME" == success \
             && "$classification" != success && "$classification" != no-change ]]; then
@@ -248,3 +266,14 @@ jobs:
           RECONCILE_COMMIT_AUTHOR_EMAIL: ${{ inputs.commit_author_email || '41898282+github-actions[bot]@users.noreply.github.com' }}
           GH_TOKEN: ${{ github.token }}
         run: '"$CONTROL_CHECKOUT/.github/scripts/reconcile-state-branch.sh" publish'
+      - name: Report dry-run outcome
+        if: ${{ inputs.dry_run }}
+        env:
+          RESULT_MANIFEST: ${{ runner.temp }}/result/result.json
+        run: |
+          jq -r '"### \(.state_branch)\n\nDry run: a live run " + (
+              if .classification == "success" then "would create or refresh the pull request and close any failure issue."
+              elif .classification == "no-change" then "would close any open update pull request and failure issue."
+              elif (.classification | startswith("branch-")) then "would close the update pull request and create or refresh the failure issue."
+              else "would not change any pull request, issue or ref." end)' \
+            "$RESULT_MANIFEST" >>"$GITHUB_STEP_SUMMARY"
