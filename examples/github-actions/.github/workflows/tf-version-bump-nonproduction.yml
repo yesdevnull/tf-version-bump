@@ -38,6 +38,7 @@ jobs:
     uses: ./.github/workflows/tf-version-bump-reusable.yml
     secrets:
       TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
+      TERRAFORM_ENV: ${{ secrets.TERRAFORM_ENV }}
     with:
       automation_policy_id: nonproduction
       allowed_branch_prefixes: |

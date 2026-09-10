@@ -130,6 +130,7 @@ setup_processing_workspace() {
     unset PROCESS_TF_VERSION_BUMP_VERSION PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256
     unset PROCESS_TERRAFORM_FMT PROCESS_TERRAFORM_VERSION
     unset PROCESS_TERRAFORM_INIT_UPGRADE
+    unset PROCESS_TERRAFORM_ENV PROCESS_TERRAFORM_SECRET_ENV
     unset TF_CLI_CONFIG_FILE
     PROCESS_PATH_PREFIX=""
     PROCESS_TEST_CALL_LOG=""
@@ -292,6 +293,8 @@ run_processing() {
         --env "PROCESS_TF_VERSION_BUMP_VERSION=${PROCESS_TF_VERSION_BUMP_VERSION-$TF_VERSION_BUMP_VERSION}" \
         --env "PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256=${PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256-$TF_VERSION_BUMP_ARCHIVE_SHA256}" \
         --env "PROCESS_TERRAFORM_FMT=${PROCESS_TERRAFORM_FMT-false}" \
+        --env "PROCESS_TERRAFORM_ENV=${PROCESS_TERRAFORM_ENV-}" \
+        --env "PROCESS_TERRAFORM_SECRET_ENV=${PROCESS_TERRAFORM_SECRET_ENV-}" \
         "${upgrade_environment[@]}" \
         --env "TF_CLI_CONFIG_FILE=${TF_CLI_CONFIG_FILE-}" \
         --env "PROCESS_PREPARATION_DEADLINE_EPOCH=${PROCESS_PREPARATION_DEADLINE_EPOCH-$(($(date +%s) + 1200))}" \
@@ -299,6 +302,17 @@ run_processing() {
         --env "PROCESS_TEST_CALL_LOG=${PROCESS_TEST_CALL_LOG-}" \
         "$PROCESS_CONTAINER_ID" \
         /bin/bash "$PROCESS_SCRIPT" process
+}
+
+
+run_processing_mask() {
+    ensure_processing_container
+    docker exec \
+        --user "$(id -u):$(id -g)" \
+        --env "PROCESS_TERRAFORM_ENV=${PROCESS_TERRAFORM_ENV-}" \
+        --env "PROCESS_TERRAFORM_SECRET_ENV=${PROCESS_TERRAFORM_SECRET_ENV-}" \
+        "$PROCESS_CONTAINER_ID" \
+        /bin/bash "$PROCESS_SCRIPT" mask
 }
 
 
@@ -1112,6 +1126,83 @@ test_processing_rejects_formatter_changes_outside_patch_policy() {
     [[ ! -e "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'unexpected path became publishable'
 }
 
+test_processing_supplies_terraform_environment_to_commands() {
+    setup_processing_workspace
+    PROCESS_TERRAFORM_ENV='TF_LOG=trace'
+    PROCESS_TERRAFORM_SECRET_ENV="TF_LOG_PATH=$PROCESS_RUNNER_TEMP/terraform.log"
+    assert_silent_success 'supplied environment' "$PROCESS_TMP_ROOT/stdout" "$PROCESS_TMP_ROOT/stderr" run_processing
+    # Logging needs the input's TF_LOG; the file needs the secret's TF_LOG_PATH.
+    grep -qF '[TRACE]' "$PROCESS_RUNNER_TEMP/terraform.log" \
+        || fail 'supplied environment did not reach Terraform'
+}
+
+test_processing_masks_only_secret_environment_values() {
+    setup_processing_workspace
+    PROCESS_TERRAFORM_ENV='TF_VAR_region=ap-southeast-2'
+    PROCESS_TERRAFORM_SECRET_ENV=$'AWS_ACCESS_KEY_ID=AKIAEXAMPLE\nAWS_SECRET_ACCESS_KEY=example-secret'
+    run_processing_mask >"$PROCESS_TMP_ROOT/mask.stdout" 2>"$PROCESS_TMP_ROOT/mask.stderr"
+    [[ ! -s "$PROCESS_TMP_ROOT/mask.stderr" ]] \
+        || fail "masking emitted diagnostics: $(<"$PROCESS_TMP_ROOT/mask.stderr")"
+    diff - "$PROCESS_TMP_ROOT/mask.stdout" >/dev/null <<'EOF' || fail 'masking did not register exactly the secret values'
+::add-mask::AKIAEXAMPLE
+::add-mask::example-secret
+EOF
+}
+
+test_processing_rejects_invalid_terraform_environment() {
+    local mode expected
+    for mode in syntax name reserved-prefix reserved-name duplicate cross-source; do
+        setup_processing_workspace
+        case "$mode" in
+            syntax) PROCESS_TERRAFORM_ENV='TF_VAR_region'; expected='Terraform environment entries must be NAME=VALUE' ;;
+            name) PROCESS_TERRAFORM_ENV='2BAD=x'; expected='Terraform environment entries must be NAME=VALUE' ;;
+            reserved-prefix) PROCESS_TERRAFORM_ENV='PROCESS_RESULT_DIR=/tmp'; expected='Terraform environment name PROCESS_RESULT_DIR is reserved' ;;
+            reserved-name) PROCESS_TERRAFORM_ENV='TF_DATA_DIR=/tmp'; expected='Terraform environment name TF_DATA_DIR is reserved' ;;
+            duplicate) PROCESS_TERRAFORM_ENV=$'TF_VAR_a=1\nTF_VAR_a=2'; expected='Terraform environment name TF_VAR_a is set twice' ;;
+            cross-source)
+                PROCESS_TERRAFORM_ENV='TF_VAR_a=1'
+                PROCESS_TERRAFORM_SECRET_ENV='TF_VAR_a=undisclosed-value'
+                expected='Terraform environment name TF_VAR_a is set twice'
+                ;;
+        esac
+        assert_processing_failure "$expected" "$mode environment entry"
+        ! grep -qF 'undisclosed-value' "$PROCESS_TMP_ROOT/failure.stderr" \
+            || fail 'processing diagnostics leaked a secret value'
+        assert_command_failure run_processing_mask "$PROCESS_TMP_ROOT" \
+            'emitted masks' "$expected" "$mode environment entry masking"
+        ! grep -qF 'undisclosed-value' "$PROCESS_TMP_ROOT/failure.stderr" \
+            || fail 'masking diagnostics leaked a secret value'
+    done
+}
+
+test_workflow_fails_the_process_job_on_processing_failure() {
+    yq -o=json '.jobs.process.steps' "$REUSABLE_WORKFLOW" | jq -e '
+        ([.[] | select(.env.PROCESS_RESULT_DIR) | select(has("continue-on-error"))] | length == 0) and
+        ([.[] | select(.uses != null and (.uses | startswith("actions/upload-artifact")))
+              | select(.if == "${{ always() }}")] | length == 1)
+    ' >/dev/null || fail 'workflow still suppresses processing failures'
+}
+
+test_workflow_offers_input_and_secret_terraform_environment() {
+    yq -o=json '.on.workflow_call' "$REUSABLE_WORKFLOW" | jq -e '
+        .inputs.terraform_env.type == "string" and
+        .secrets.TERRAFORM_ENV.required == false
+    ' >/dev/null || fail 'workflow does not offer both Terraform environment channels'
+    # Masking only redacts what Terraform has yet to print, so it must precede processing.
+    yq -o=json '.jobs.process.steps' "$REUSABLE_WORKFLOW" | jq -e '
+        [.[] | select(.env.PROCESS_TERRAFORM_ENV != null and .env.PROCESS_TERRAFORM_SECRET_ENV != null)
+             | .run | split("\n") | map(select(. != ""))
+             | (.[0] | endswith("mask")) and (.[1] | endswith("process"))] == [true]
+    ' >/dev/null || fail 'workflow does not mask supplied secrets before processing'
+    local caller
+    for caller in production nonproduction; do
+        yq -o=json '.jobs.automation.secrets.TERRAFORM_ENV' \
+            "$SCRIPT_DIR/.github/workflows/tf-version-bump-$caller.yml" \
+            | grep -qF 'secrets.TERRAFORM_ENV' \
+            || fail "$caller caller does not forward the Terraform environment secret"
+    done
+}
+
 cleanup_test_repositories() {
     cleanup_discovery_repository
     cleanup_processing_workspace
@@ -1135,7 +1226,12 @@ if [[ $# -eq 0 ]]; then
         test_processing_records_real_update_and_format_failures test_processing_rejects_invalid_inputs_before_updates
         test_processing_invalid_config_reconciles_branch_failure
         test_processing_formats_only_after_dependency_or_lock_changes
-        test_processing_rejects_ignored_generated_lock test_processing_rejects_formatter_changes_outside_patch_policy)
+        test_processing_rejects_ignored_generated_lock test_processing_rejects_formatter_changes_outside_patch_policy
+        test_processing_supplies_terraform_environment_to_commands
+        test_processing_masks_only_secret_environment_values
+        test_processing_rejects_invalid_terraform_environment
+        test_workflow_fails_the_process_job_on_processing_failure
+        test_workflow_offers_input_and_secret_terraform_environment)
     while IFS= read -r test_name; do tests+=("$test_name"); done < <(compgen -A function test_discovery_)
     for test_name in "${tests[@]}"; do
         "$test_name"
