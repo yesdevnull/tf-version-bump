@@ -903,6 +903,17 @@ test_processing_combines_update_init_format_validate() {
     done
     grep -F '>= 1.15.0' "$PROCESS_TMP_ROOT/applied/second/main.tf" >/dev/null || fail 'second root was not updated'
     grep -F 'value = { a = "b" }' "$PROCESS_TMP_ROOT/applied/root/nested/child.tf" >/dev/null || fail 'recursive formatting missing from patch'
+    # The report step summarises the result directory processing really wrote.
+    assert_silent_success 'reporting the combined result' "$PROCESS_TMP_ROOT/report.stdout" \
+        "$PROCESS_TMP_ROOT/report.stderr" \
+        run_report_step "$PROCESS_RESULT_DIR/result.json" success "$PROCESS_TMP_ROOT/summary.md"
+    local root
+    for root in root second; do
+        grep -qxF "#### Updates in \`$root\`" "$PROCESS_TMP_ROOT/summary.md" \
+            || fail "the summary of a real result omits root $root: $(<"$PROCESS_TMP_ROOT/summary.md")"
+    done
+    grep -qF "Updated Terraform required_version to '>= 1.15.0' in main.tf" "$PROCESS_TMP_ROOT/summary.md" \
+        || fail "the summary of a real result omits the updater's output: $(<"$PROCESS_TMP_ROOT/summary.md")"
 }
 
 test_processing_updates_dependent_roots_before_init() {
@@ -1189,18 +1200,29 @@ set -euo pipefail
 index=1
 while [[ "${!index}" == -* ]]; do index=$((index + 1)); done
 index=$((index + 1))
-supplied=${TEST_INPUT_CHANNEL+delivered}
+input=${TEST_INPUT_CHANNEL+delivered}
+secret=${TEST_SECRET_CHANNEL+delivered}
 # terraform_command runs `env -- NAME=VALUE ... terraform`, so read past the wrapper to
 # the command it launches and count its assignments as part of that command's environment.
 if [[ "${!index##*/}" == env ]]; then
     index=$((index + 1))
     [[ "${!index}" != -- ]] || index=$((index + 1))
     while [[ "${!index}" == *=* ]]; do
-        [[ "${!index}" != TEST_INPUT_CHANNEL=* ]] || supplied=delivered
+        case "${!index}" in
+            TEST_INPUT_CHANNEL=*) input=delivered ;;
+            TEST_SECRET_CHANNEL=*) secret=delivered ;;
+        esac
         index=$((index + 1))
     done
 fi
-printf '%s supplied=%s\n' "${!index##*/}" "$supplied" >>"${PROCESS_TEST_CALL_LOG:?}"
+command=${!index##*/}
+# A Terraform command is named by its first argument that is not an option such as -chdir.
+if [[ "$command" == terraform ]]; then
+    index=$((index + 1))
+    while [[ "${!index}" == -* ]]; do index=$((index + 1)); done
+    command+=" ${!index}"
+fi
+printf '%s input=%s secret=%s\n' "$command" "$input" "$secret" >>"${PROCESS_TEST_CALL_LOG:?}"
 PATH=${PATH#*:}
 exec timeout "$@"
 EOF
@@ -1211,29 +1233,38 @@ EOF
 }
 
 
-test_processing_withholds_supplied_environment_from_the_updater() {
+test_processing_scopes_supplied_environment_to_init_fmt_and_validate() {
     setup_processing_workspace
     configure_command_environment_recorder
+    # The updater changes the fixture's required_version, so formatting runs as well.
+    PROCESS_TERRAFORM_FMT=true
     PROCESS_TERRAFORM_ENV='TEST_INPUT_CHANNEL=input-delivered'
+    PROCESS_TERRAFORM_SECRET_ENV='TEST_SECRET_CHANNEL=secret-delivered'
     assert_silent_success 'scoped environment' "$PROCESS_TMP_ROOT/stdout" "$PROCESS_TMP_ROOT/stderr" run_processing
-    # Terraform receiving the variable proves the recorder observes delivery at all, so
-    # the updater's empty field is absence rather than a recorder that sees nothing.
-    grep -qxF 'terraform supplied=delivered' "$PROCESS_TEST_CALL_LOG" \
-        || fail "the recorder observed no supplied environment: $(<"$PROCESS_TEST_CALL_LOG")"
-    grep -qxF 'tf-version-bump supplied=' "$PROCESS_TEST_CALL_LOG" \
-        || fail "the updater did not run under the environment recorder: $(<"$PROCESS_TEST_CALL_LOG")"
-    ! grep -E '^tf-version-bump supplied=.' "$PROCESS_TEST_CALL_LOG" >/dev/null \
-        || fail 'the updater received the supplied Terraform environment'
+    # Every bounded command is listed, so a missing line is a command that did not run,
+    # and the delivered lines prove the recorder observes delivery through each channel.
+    LC_ALL=C sort -u "$PROCESS_TEST_CALL_LOG" >"$PROCESS_TMP_ROOT/command-environments.sorted"
+    diff - "$PROCESS_TMP_ROOT/command-environments.sorted" >/dev/null <<'EOF' \
+        || fail "the supplied variables did not reach exactly terraform init, fmt and validate: $(<"$PROCESS_TMP_ROOT/command-environments.sorted")"
+curl input= secret=
+terraform fmt input=delivered secret=delivered
+terraform init input=delivered secret=delivered
+terraform validate input=delivered secret=delivered
+terraform version input= secret=
+tf-version-bump input= secret=
+EOF
 }
 
 test_processing_masks_only_secret_environment_values() {
     setup_processing_workspace
-    PROCESS_TERRAFORM_ENV='TF_VAR_region=ap-southeast-2'
+    # Exact reserved names such as ENV and GITHUB_ENV must not block longer names.
+    PROCESS_TERRAFORM_ENV=$'TF_VAR_region=ap-southeast-2\nENVIRONMENT=prod\nGITHUB_ENVIRONMENT=x'
     # Another registry's token stays a legitimate secret, and a per cent sign must
     # be encoded, because the runner unescapes workflow command data. A multi-line
     # value registers one encoded mask, never one per line: a short line would
-    # redact every occurrence of itself throughout the log.
-    PROCESS_TERRAFORM_SECRET_ENV=$'AWS_ACCESS_KEY_ID=AKIAEXAMPLE\nAWS_SECRET_ACCESS_KEY=example-secret\nTF_TOKEN_other_example_com=other-registry-token\nTF_VAR_discount=100%off\nGITHUB_APP_PEM_FILE=first-line\\nsecond-line\\n'
+    # redact every occurrence of itself throughout the log. A value keeps every '='
+    # after the one that ends its name, as base64 padding needs.
+    PROCESS_TERRAFORM_SECRET_ENV=$'AWS_ACCESS_KEY_ID=AKIAEXAMPLE\nAWS_SECRET_ACCESS_KEY=example-secret\nTF_TOKEN_other_example_com=other-registry-token\nTF_VAR_discount=100%off\nGITHUB_APP_PEM_FILE=first-line\\nsecond-line\\n\nTF_VAR_padded=YWJjZA=='
     run_processing_mask >"$PROCESS_TMP_ROOT/mask.stdout" 2>"$PROCESS_TMP_ROOT/mask.stderr"
     [[ ! -s "$PROCESS_TMP_ROOT/mask.stderr" ]] \
         || fail "masking emitted diagnostics: $(<"$PROCESS_TMP_ROOT/mask.stderr")"
@@ -1243,6 +1274,7 @@ test_processing_masks_only_secret_environment_values() {
 ::add-mask::other-registry-token
 ::add-mask::100%25off
 ::add-mask::first-line%0Asecond-line%0A
+::add-mask::YWJjZA==
 EOF
     # A mask that cannot be written must fail the step: processing would otherwise
     # succeed while the value it guards reached the console unredacted.
@@ -1410,8 +1442,8 @@ test_workflow_reports_the_processing_result() {
 
     write_report_manifest "$manifest" branch-init \
         '{"stage": "terraform init", "root": "environments/production", "status": 1}'
-    run_report_step "$manifest" failure "$summary" 2>"$diagnostics" \
-        || fail "reporting a branch failure failed: $(<"$diagnostics")"
+    assert_silent_success 'reporting a branch failure' "$work/stdout" "$diagnostics" \
+        run_report_step "$manifest" failure "$summary"
     report=$(<"$summary")
     [[ "$report" == *'state/nonproduction/example-thing'* && "$report" == *"\`branch-init\`"* \
         && "$report" == *'terraform init'* && "$report" == *'environments/production'* ]] \
@@ -1423,8 +1455,8 @@ test_workflow_reports_the_processing_result() {
     # the processing step's log, so the summary names neither and points there instead.
     write_report_manifest "$manifest" automation \
         '{"stage": "processing", "root": "environments/production", "status": 1}'
-    run_report_step "$manifest" failure "$summary" 2>"$diagnostics" \
-        || fail "reporting an automation failure failed: $(<"$diagnostics")"
+    assert_silent_success 'reporting an automation failure' "$work/stdout" "$diagnostics" \
+        run_report_step "$manifest" failure "$summary"
     report=$(<"$summary")
     [[ "$report" == *"\`automation\`"* ]] \
         || fail "the automation summary omits the classification: $report"
@@ -1438,8 +1470,8 @@ test_workflow_reports_the_processing_result() {
     local classification
     for classification in success no-change; do
         write_report_manifest "$manifest" "$classification"
-        run_report_step "$manifest" success "$summary" 2>"$diagnostics" \
-            || fail "reporting a $classification result failed: $(<"$diagnostics")"
+        assert_silent_success "reporting a $classification result" "$work/stdout" "$diagnostics" \
+            run_report_step "$manifest" success "$summary"
         report=$(<"$summary")
         [[ "$report" == *"\`$classification\`"* ]] \
             || fail "the $classification summary omits the classification: $report"
@@ -1475,8 +1507,8 @@ test_workflow_summarises_update_logs() {
         >"$work/logs/update-2.log"
     printf 'INIT-SENTINEL\n' >"$work/logs/init-1.log"
     printf 'VALIDATE-SENTINEL\n' >"$work/logs/validate-1.log"
-    run_report_step "$manifest" success "$summary" 2>"$diagnostics" \
-        || fail "summarising update logs failed: $(<"$diagnostics")"
+    assert_silent_success 'summarising update logs' "$work/stdout" "$diagnostics" \
+        run_report_step "$manifest" success "$summary"
     report=$(<"$summary")
     [[ "$report" == *'environments/production'* && "$report" == *'environments/staging'* ]] \
         || fail "the summary does not name each root that has an update log: $report"
@@ -1503,8 +1535,8 @@ test_workflow_summarises_update_logs() {
     # run (GNU grep) or a "Binary file matches" line (BSD grep) instead of the longest.
     write_report_manifest "$manifest" success null '["environments/binary"]'
     printf 'before\0after\n````\n' >"$work/logs/update-1.log"
-    run_report_step "$manifest" success "$summary" 2>"$diagnostics" \
-        || fail "summarising an update log containing a NUL byte failed: $(<"$diagnostics")"
+    assert_silent_success 'summarising an update log containing a NUL byte' "$work/stdout" "$diagnostics" \
+        run_report_step "$manifest" success "$summary"
     [[ $(grep -acx '`````' "$summary") -eq 2 ]] \
         || fail 'a NUL byte hid the backticks inside an update log from its fence'
 }
@@ -1541,8 +1573,8 @@ test_workflow_reports_the_dry_run_outcome() {
             automation) expected='would not change any pull request, issue or ref.' ;;
         esac
         write_report_manifest "$manifest" "$classification"
-        run_dry_run_report_step "$manifest" "$summary" 2>"$diagnostics" \
-            || fail "reporting a $classification dry run failed: $(<"$diagnostics")"
+        assert_silent_success "reporting a $classification dry run" "$work/stdout" "$diagnostics" \
+            run_dry_run_report_step "$manifest" "$summary"
         grep -qF "$expected" "$summary" \
             || fail "the $classification dry run does not say what a live run would do: $(<"$summary")"
         grep -qF 'state/nonproduction/example-thing' "$summary" \
@@ -1566,16 +1598,47 @@ process_job_reports_processing_failures() {
 
 test_workflow_fails_the_process_job_on_processing_failure() {
     process_job_reports_processing_failures "$REUSABLE_WORKFLOW" \
-        || fail 'workflow still suppresses processing failures'
+        || fail 'the process job suppresses processing failures'
     local mutant="$TEST_TMP_ROOT/process-continue-on-error.yml"
     yq '(.jobs.process.steps[] | select(.id == "process"))."continue-on-error" = true' \
         "$REUSABLE_WORKFLOW" >"$mutant"
     ! process_job_reports_processing_failures "$mutant" \
-        || fail 'the guard still passes with continue-on-error reinstated on the processing step'
+        || fail 'the guard passes with continue-on-error on the processing step'
     local job_mutant="$TEST_TMP_ROOT/process-job-continue-on-error.yml"
     yq '.jobs.process."continue-on-error" = true' "$REUSABLE_WORKFLOW" >"$job_mutant"
     ! process_job_reports_processing_failures "$job_mutant" \
-        || fail 'the guard still passes with continue-on-error on the processing job'
+        || fail 'the guard passes with continue-on-error on the processing job'
+}
+
+
+# A failed process leg must neither cancel its sibling legs nor skip publication:
+# every other branch still processes, and publish reconciles each discovered branch.
+workflow_publishes_after_processing_failures() {
+    local workflow=$1
+    yq -o=json '.jobs' "$workflow" \
+        | jq -e --arg condition "\${{ always() && needs.discover.result == 'success' }}" '
+            .process.strategy["fail-fast"] == false and
+            .publish.strategy["fail-fast"] == false and
+            .publish.if == $condition
+        ' >/dev/null
+}
+
+
+test_workflow_publishes_every_branch_after_processing_failures() {
+    workflow_publishes_after_processing_failures "$REUSABLE_WORKFLOW" \
+        || fail 'a processing failure cancels other branches or skips their publication'
+    local mutant="$TEST_TMP_ROOT/process-fail-fast.yml"
+    yq 'del(.jobs.process.strategy."fail-fast")' "$REUSABLE_WORKFLOW" >"$mutant"
+    ! workflow_publishes_after_processing_failures "$mutant" \
+        || fail 'the guard passes when a failed process leg cancels its siblings'
+    mutant="$TEST_TMP_ROOT/publish-fail-fast.yml"
+    yq 'del(.jobs.publish.strategy."fail-fast")' "$REUSABLE_WORKFLOW" >"$mutant"
+    ! workflow_publishes_after_processing_failures "$mutant" \
+        || fail 'the guard passes when a failed publish leg cancels its siblings'
+    mutant="$TEST_TMP_ROOT/publish-condition.yml"
+    yq 'del(.jobs.publish.if)' "$REUSABLE_WORKFLOW" >"$mutant"
+    ! workflow_publishes_after_processing_failures "$mutant" \
+        || fail 'the guard passes when publication runs only after every process leg succeeds'
 }
 
 test_workflow_offers_input_and_secret_terraform_environment() {
@@ -1583,12 +1646,15 @@ test_workflow_offers_input_and_secret_terraform_environment() {
         .inputs.terraform_env.type == "string" and
         .secrets.TERRAFORM_ENV.required == false
     ' >/dev/null || fail 'workflow does not offer both Terraform environment channels'
-    # Masking only redacts what Terraform has yet to print, so it must precede processing.
+    # Masking redacts only console output written after it is registered, so it must
+    # precede processing. Each channel carries its own source, never the other's.
     yq -o=json '.jobs.process.steps' "$REUSABLE_WORKFLOW" | jq -e '
         [.[] | select(.env.PROCESS_TERRAFORM_ENV != null and .env.PROCESS_TERRAFORM_SECRET_ENV != null)
-             | .run | split("\n") | map(select(. != ""))
-             | (.[0] | endswith("mask")) and (.[1] | endswith("process"))] == [true]
-    ' >/dev/null || fail 'workflow does not mask supplied secrets before processing'
+             | (.env.PROCESS_TERRAFORM_ENV == "${{ inputs.terraform_env }}")
+               and (.env.PROCESS_TERRAFORM_SECRET_ENV == "${{ secrets.TERRAFORM_ENV }}")
+               and (.run | split("\n") | map(select(. != ""))
+                    | (.[0] | endswith("mask")) and (.[1] | endswith("process")))] == [true]
+    ' >/dev/null || fail 'the process job does not mask each supplied channel before processing'
     local caller
     for caller in production nonproduction; do
         yq -o=json '.jobs.automation.secrets.TERRAFORM_ENV' \
@@ -1625,12 +1691,13 @@ if [[ $# -eq 0 ]]; then
         test_processing_rejects_files_created_during_the_run
         test_processing_supplies_terraform_environment_to_commands
         test_processing_delivers_escaped_github_app_credentials
-        test_processing_withholds_supplied_environment_from_the_updater
+        test_processing_scopes_supplied_environment_to_init_fmt_and_validate
         test_processing_masks_only_secret_environment_values
         test_processing_rejects_invalid_terraform_environment
         test_readme_documents_the_reserved_environment_names
         test_workflow_reports_the_processing_result
         test_workflow_fails_the_process_job_on_processing_failure
+        test_workflow_publishes_every_branch_after_processing_failures
         test_workflow_offers_input_and_secret_terraform_environment
         test_workflow_summarises_update_logs test_workflow_reports_the_dry_run_outcome)
     while IFS= read -r test_name; do tests+=("$test_name"); done < <(compgen -A function test_discovery_)
