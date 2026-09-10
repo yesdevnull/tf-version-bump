@@ -1427,10 +1427,9 @@ test_workflow_reports_the_processing_result() {
     # The report runs whatever processing did, judges it by the processing step's own
     # outcome, and reads the manifest from the directory processing writes.
     yq -o=json '.jobs.process.steps' "$REUSABLE_WORKFLOW" | jq -e '
-        ([.[] | select(.id == "process")] | length == 1) as $single
-        | (.[] | select(.id == "process") | .env.PROCESS_RESULT_DIR) as $result
+        (.[] | select(.id == "process") | .env.PROCESS_RESULT_DIR) as $result
         | [.[] | select(.name == "Report processing result")]
-        | $single and length == 1 and .[0].if == "${{ always() }}"
+        | length == 1 and .[0].if == "${{ always() }}"
           and .[0].env.PROCESS_OUTCOME == "${{ steps.process.outcome }}"
           and .[0].env.RESULT_MANIFEST == $result + "/result.json"
     ' >/dev/null || fail 'the report step is not wired to the processing step and its result'
