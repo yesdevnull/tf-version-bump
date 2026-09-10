@@ -1392,6 +1392,16 @@ run_report_step() {
 
 
 test_workflow_reports_the_processing_result() {
+    # The report runs whatever processing did, judges it by the processing step's own
+    # outcome, and reads the manifest from the directory processing writes.
+    yq -o=json '.jobs.process.steps' "$REUSABLE_WORKFLOW" | jq -e '
+        ([.[] | select(.id == "process")] | length == 1) as $single
+        | (.[] | select(.id == "process") | .env.PROCESS_RESULT_DIR) as $result
+        | [.[] | select(.name == "Report processing result")]
+        | $single and length == 1 and .[0].if == "${{ always() }}"
+          and .[0].env.PROCESS_OUTCOME == "${{ steps.process.outcome }}"
+          and .[0].env.RESULT_MANIFEST == $result + "/result.json"
+    ' >/dev/null || fail 'the report step is not wired to the processing step and its result'
     local work="$TEST_TMP_ROOT/report-step"
     rm -rf -- "$work"
     mkdir "$work"
@@ -1407,8 +1417,10 @@ test_workflow_reports_the_processing_result() {
         && "$report" == *'terraform init'* && "$report" == *'environments/production'* ]] \
         || fail "the branch failure summary omits the branch, classification, stage or root: $report"
 
-    # An automation failure records a literal stage and the first configured root, so
-    # naming them would misdirect whoever triages the run; only the logs know the truth.
+    # An automation failure's stage and root are unreliable: the EXIT trap records the
+    # literal stage `processing` and the first configured root whatever failed, and only
+    # the provider lock policy records its real ones. Every processing diagnostic goes to
+    # the processing step's log, so the summary names neither and points there instead.
     write_report_manifest "$manifest" automation \
         '{"stage": "processing", "root": "environments/production", "status": 1}'
     run_report_step "$manifest" failure "$summary" 2>"$diagnostics" \
@@ -1418,8 +1430,10 @@ test_workflow_reports_the_processing_result() {
         || fail "the automation summary omits the classification: $report"
     [[ "$report" != *'environments/production'* && "$report" != *'Failed stage'* ]] \
         || fail "the automation summary claims a stage and root it cannot know: $report"
-    [[ "$report" == *logs* ]] \
-        || fail "the automation summary does not point at the uploaded logs: $report"
+    local process_step
+    process_step=$(yq -r '.jobs.process.steps[] | select(.id == "process") | .name' "$REUSABLE_WORKFLOW")
+    [[ -n "$process_step" && "$report" == *"the \`$process_step\` step log names the cause"* ]] \
+        || fail "the automation summary does not point at the processing step's log: $report"
 
     local classification
     for classification in success no-change; do
@@ -1473,6 +1487,10 @@ test_workflow_summarises_update_logs() {
     # A fence one backtick longer than any run in the log keeps a stray fence line inside it.
     [[ $(grep -cx '````' "$summary") -eq 2 ]] \
         || fail "the update log's fence does not outlast the backticks inside it: $report"
+    # The truncated log ends mid-line, so dropping that partial line keeps its closing
+    # fence on a line of its own.
+    [[ "$report" == *$'\n```\n\nThis log was truncated'* ]] \
+        || fail "the truncated update log's closing fence is not on a line of its own: $report"
     # Terraform's logs can carry a credential a provider echoed, so they stay in the artefact.
     [[ "$report" != *SENTINEL* ]] \
         || fail 'the summary exposes a Terraform log'
@@ -1480,6 +1498,15 @@ test_workflow_summarises_update_logs() {
         || fail 'an oversized update log was not marked as truncated'
     [[ $(wc -c <"$summary") -lt 80000 ]] \
         || fail 'an oversized update log was not truncated'
+
+    # A NUL byte must not make grep treat the log as binary, which reports no backtick
+    # run (GNU grep) or a "Binary file matches" line (BSD grep) instead of the longest.
+    write_report_manifest "$manifest" success null '["environments/binary"]'
+    printf 'before\0after\n````\n' >"$work/logs/update-1.log"
+    run_report_step "$manifest" success "$summary" 2>"$diagnostics" \
+        || fail "summarising an update log containing a NUL byte failed: $(<"$diagnostics")"
+    [[ $(grep -acx '`````' "$summary") -eq 2 ]] \
+        || fail 'a NUL byte hid the backticks inside an update log from its fence'
 }
 
 
@@ -1490,22 +1517,28 @@ run_dry_run_report_step() {
 
 test_workflow_reports_the_dry_run_outcome() {
     # Without a status function GitHub adds success(), so a failed dry-run preflight
-    # reports nothing rather than a publication it would never have made.
+    # reports nothing rather than a publication it would never have made. Following the
+    # publish step, it reads the manifest from the directory publication checked.
     yq -o=json '.jobs.publish.steps' "$REUSABLE_WORKFLOW" | jq -e '
-        [.[] | select(.name == "Report dry-run outcome")]
+        (map(.name) | index("Publish processing result")) as $publish
+        | (map(.name) | index("Report dry-run outcome")) as $report
+        | (.[] | select(.name == "Publish processing result") | .env.RECONCILE_RESULT_DIR) as $result
+        | [.[] | select(.name == "Report dry-run outcome")]
         | length == 1 and .[0].if == "${{ inputs.dry_run }}"
-    ' >/dev/null || fail 'the dry-run outcome is not reported only for successful dry runs'
+          and $publish != null and $report > $publish
+          and .[0].env.RESULT_MANIFEST == $result + "/result.json"
+    ' >/dev/null || fail 'the dry-run outcome is not reported only after a successful dry-run publication'
     local work="$TEST_TMP_ROOT/dry-run-report"
     rm -rf -- "$work"
     mkdir "$work"
     local manifest="$work/result.json" summary="$work/summary.md" diagnostics="$work/stderr"
     local classification expected
-    for classification in success no-change branch-validation automation; do
+    for classification in success no-change branch-update branch-init branch-format branch-validation automation; do
         case "$classification" in
-            success) expected='would create or refresh the pull request' ;;
-            no-change) expected='would close any open update pull request and failure issue' ;;
-            branch-validation) expected='would close the update pull request and create or refresh the failure issue' ;;
-            automation) expected='would not change any pull request, issue or ref' ;;
+            success) expected='would push the update branch, create or refresh the pull request and close any failure issue, provided the state branch has not moved since discovery and any existing update branch belongs to this automation policy.' ;;
+            no-change) expected='would close any open update pull request and failure issue, provided the state branch has not moved since discovery.' ;;
+            branch-*) expected='would close any open update pull request and create or refresh the failure issue, provided the state branch has not moved since discovery.' ;;
+            automation) expected='would not change any pull request, issue or ref.' ;;
         esac
         write_report_manifest "$manifest" "$classification"
         run_dry_run_report_step "$manifest" "$summary" 2>"$diagnostics" \
