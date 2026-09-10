@@ -167,14 +167,14 @@ jobs:
           RESULT_MANIFEST: ${{ runner.temp }}/result/result.json
         run: |
           if [[ ! -f "$RESULT_MANIFEST" ]]; then
-            echo "Processing wrote no result manifest; publication will not change managed refs." >&2
+            echo "Processing wrote no result manifest; publication will not change managed refs, pull requests or issues." >&2
             exit 1
           fi
           jq -r '"### \(.state_branch)\n\n- Classification: `\(.classification)`"
             + (if .failure == null then ""
                elif (.classification | startswith("branch-"))
                then "\n- Failed stage: `\(.failure.stage)` in root `\(.failure.root)` (status \(.failure.status))"
-               else "\n- Automation failed with status \(.failure.status); read the uploaded processing logs"
+               else "\n- Automation failed with status \(.failure.status); the `Process candidate` step log names the cause, and `logs/` in the processing artefact holds any command output"
                end)' \
             "$RESULT_MANIFEST" >>"$GITHUB_STEP_SUMMARY"
           # Only the updater's log is shown: Terraform's logs can carry a credential a provider echoed.
@@ -184,7 +184,7 @@ jobs:
             log="${RESULT_MANIFEST%/*}/logs/update-$index.log"
             [[ -f "$log" ]] || continue
             fence='```'
-            longest=$({ grep -oE '`+' "$log" || true; } | awk '{ if (length > max) max = length } END { print max + 0 }')
+            longest=$({ grep -aoE '`+' "$log" || true; } | awk '{ if (length > max) max = length } END { print max + 0 }')
             while [[ ${#fence} -le $longest ]]; do fence+='`'; done
             printf '\n#### Updates in %s\n\n%s\n' "\`$root\`" "$fence" >>"$GITHUB_STEP_SUMMARY"
             if [[ $(wc -c <"$log") -gt 65536 ]]; then
@@ -272,8 +272,8 @@ jobs:
           RESULT_MANIFEST: ${{ runner.temp }}/result/result.json
         run: |
           jq -r '"### \(.state_branch)\n\nDry run: a live run " + (
-              if .classification == "success" then "would create or refresh the pull request and close any failure issue."
-              elif .classification == "no-change" then "would close any open update pull request and failure issue."
-              elif (.classification | startswith("branch-")) then "would close the update pull request and create or refresh the failure issue."
+              if .classification == "success" then "would push the update branch, create or refresh the pull request and close any failure issue, provided the state branch has not moved since discovery and any existing update branch belongs to this automation policy."
+              elif .classification == "no-change" then "would close any open update pull request and failure issue, provided the state branch has not moved since discovery."
+              elif (.classification | startswith("branch-")) then "would close any open update pull request and create or refresh the failure issue, provided the state branch has not moved since discovery."
               else "would not change any pull request, issue or ref." end)' \
             "$RESULT_MANIFEST" >>"$GITHUB_STEP_SUMMARY"
