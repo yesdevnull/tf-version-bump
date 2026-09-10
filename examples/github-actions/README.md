@@ -56,10 +56,12 @@ escapes: `\n` becomes a real newline and `\\` becomes a single literal backslash
 backslash sequence is passed through unchanged, so `\t` stays as a backslash followed by `t`. A
 literal carriage return in an entry is rejected.
 
-GitHub App authentication for the `integrations/github` provider is the usual case. The provider
-reads `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID` and `GITHUB_APP_PEM_FILE`, and the last holds
-the private key's PEM contents rather than a path, so the `TERRAFORM_ENV` secret looks like this
-(key body abbreviated) and Terraform receives the key with real newlines:
+Terraform commands can need extra variables, such as a token for another private registry or
+credentials for a module source during `terraform init`. As an example of a multi-line value,
+GitHub App authentication for the `integrations/github` provider reads `GITHUB_APP_ID`,
+`GITHUB_APP_INSTALLATION_ID` and `GITHUB_APP_PEM_FILE`, and the last holds the private key's PEM
+contents rather than a path, so the `TERRAFORM_ENV` secret looks like this (key body abbreviated)
+and Terraform receives the key with real newlines:
 
 ```text
 GITHUB_APP_ID=12332432
@@ -75,7 +77,9 @@ anyone with read access to the repository, so a credential a provider echoes int
 output appears there in plaintext. Supplied variables at least cannot turn on Terraform's trace
 logging, because `TF_LOG` and `TF_LOG_PATH` are reserved.
 
-A name may appear only once across both sources, and names the automation relies on are rejected.
+A name may appear only once across both sources. Names the automation or the runner sets are
+rejected, as are names that would redirect the programs Terraform runs or its configuration,
+credentials, logging or plug-in sources.
 The reserved prefixes are `PROCESS_`, `RECONCILE_`, `DISCOVERY_`, `RUNNER_`, `ACTIONS_`, `LD_`,
 `DYLD_`, `TF_CLI_ARGS`, `TF_LOG`, `TF_PLUGIN_CACHE` and `GIT_`. The reserved exact names are
 `PATH`, `IFS`, `ENV`, `BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `TF_DATA_DIR`, `TF_IN_AUTOMATION`,
@@ -96,7 +100,10 @@ Both supplied callers forward the same repository `TERRAFORM_ENV` secret, so pro
 credentials are also available to non-production state-branch jobs. To separate them, either give
 each policy its own secret name — mapping, say, `TERRAFORM_ENV_PRODUCTION` and
 `TERRAFORM_ENV_NONPRODUCTION` onto the reusable workflow's `TERRAFORM_ENV` secret in each caller —
-or hold the secret in a GitHub Environment named for the caller's `automation_policy_id`.
+or hold the secret in a GitHub Environment named for the caller's `automation_policy_id`. A caller
+cannot pass an environment's secrets to a reusable workflow, so the reusable workflow's `process`
+job must then also declare that environment with its job-level `environment` key; GitHub then
+gives the job the environment's secret rather than the one the caller passes.
 
 ## Configure updates
 
@@ -156,10 +163,11 @@ Pull requests and failure issues carry this stable marker:
 | Update, init, fmt or validation failure | Close the marked PR first, then create or refresh the failure issue |
 | Automation failure or missing/invalid result | Stop without changing managed PRs, issues or refs |
 
-A failed candidate fails its `process` job, so the jobs list shows which branches broke; the
-run summary names the branch and its classification, and for an update, initialisation,
-formatting or validation failure the stage and root that failed. Publication runs either way, so
-the table above still applies.
+A failed candidate fails its `process` job, so the jobs list shows which branches broke. When
+processing wrote a result, the run summary names the branch and its classification, and for an
+update, initialisation, formatting or validation failure the stage and root that failed; a
+failure before the result exists writes no summary. Publication runs either way, so the table
+above still applies.
 
 Unchanged candidates still run validation. Before any PR or issue reconciliation, the publisher checks that the remote state branch still matches the discovered commit; a moved or missing branch or failed lookup stops reconciliation. Cleanup matches the policy/branch marker and the expected PR head and base. Update refs are retained. GitHub lookup and closure errors stop reconciliation.
 

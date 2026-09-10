@@ -48,7 +48,9 @@ ROOTS_JSON='[]'
 TERRAFORM_ENVIRONMENT=()
 SECRET_ENVIRONMENT_COUNT=0
 UNESCAPED_VALUE=''
-# Names the automation itself relies on; a supplied entry must never shadow them.
+# Names the automation or the runner sets, and names that would redirect the programs
+# Terraform runs or its configuration, credentials, logging or plug-in sources; a
+# supplied entry must never shadow them.
 RESERVED_ENVIRONMENT_PREFIXES=(PROCESS_ RECONCILE_ DISCOVERY_ RUNNER_ ACTIONS_ LD_ DYLD_
     TF_CLI_ARGS TF_LOG TF_PLUGIN_CACHE GIT_)
 # TF_TOKEN_app_terraform_io is reserved, and parse_terraform_environment also rejects
@@ -347,10 +349,11 @@ path_is_within() {
 }
 
 
-# prepare_workspace leaves the checkout clean of tracked, untracked and ignored
-# content, so a path with no previous mode was created during this run. Only
-# terraform init creates a file: the updater and the formatter rewrite existing
-# ones. validate_final_changed_path then confirms the declared root.
+# prepare_workspace requires the checkout to be free of tracked changes, untracked
+# and ignored files, so a path with no previous mode was created during this run.
+# Only terraform init is expected to create one, its provider lock file; the updater
+# and formatter rewrite existing files. validate_final_changed_path then confirms
+# the declared root.
 validate_created_changed_path() {
     local relative_path=$1
     [[ "${relative_path##*/}" == ".terraform.lock.hcl" ]] \

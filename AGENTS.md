@@ -169,7 +169,7 @@ func TestExample(t *testing.T) {
 4. Update `schema/config-schema.json` for YAML validation
 5. Add tests in `*_test.go`
 6. Update the appropriate user guide under `docs/` and keep the README quick start concise
-7. Run full validation: `make test-coverage && golangci-lint run`
+7. Run full validation: `make test-coverage && golangci-lint run && make actionlint && make shellcheck`
 
 ### Debugging
 ```bash
@@ -184,7 +184,7 @@ make test-coverage                            # Coverage with report
 GitHub Actions runs on every push/PR:
 - **Test**: matrix of Go 1.25.14 (go.mod floor) and 1.26.8, race detection, coverage upload
 - **Build**: 6 platforms (Linux/macOS/Windows × amd64/arm64)
-- **Lint**: golangci-lint with 11 enabled linters
+- **Lint**: golangci-lint, then `make actionlint` and `make shellcheck` with pinned shellcheck
 - **Documentation**: `make docs-check` for Markdown, schema, maintained example, and
   documentation-test changes
 

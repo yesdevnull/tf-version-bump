@@ -26,7 +26,8 @@ Create a repository Actions secret named `TF_API_TOKEN` with read access to your
 registry modules and providers. The processing job receives it as `TF_TOKEN_app_terraform_io`.
 Publication runs separately with repository write permissions and no registry token.
 
-Terraform commands can take extra environment variables, which validation usually needs. Put
+Terraform commands can need extra environment variables, such as a token for another private
+registry or credentials for a module source during `terraform init`. Put
 non-sensitive entries in the `terraform_env` input and sensitive ones in the optional
 `TERRAFORM_ENV` secret, one `NAME=VALUE` per line; both reach `terraform init`, `fmt` and
 `validate` only. Within a value, `\n` becomes a real newline and `\\` a literal backslash, so a
@@ -36,8 +37,10 @@ registered with `::add-mask::`, which redacts them from the workflow console but
 captured command logs inside the processing artefact; that artefact is retained for seven days
 and is downloadable by anyone with read access to the repository, so a credential a provider
 echoes into Terraform's output appears there in plaintext. A multi-line value is registered as a
-single mask, so the console may not redact it line by line. Names the automation relies on, such
-as `PATH`, any `PROCESS_` variable, or `TF_LOG`, are rejected before any Terraform command runs
+single mask, so the console may not redact it line by line. Names the automation or the runner
+sets, and names that would redirect the programs Terraform runs or its configuration,
+credentials, logging or plug-in sources, such as `PATH`, any `PROCESS_` variable, or
+`TF_LOG`, are rejected before any Terraform command runs
 and before any file in the checkout is modified; the
 [example's README](../examples/github-actions/README.md) lists the full set and shows a GitHub
 App example.
@@ -57,9 +60,10 @@ provider versions and fails if updated constraints exclude them; it does not ret
 Upgrade can update all eligible providers within their constraints. Generated lock files are
 included in the candidate. Modules are resolved from their configured constraints on each fresh run.
 
-Any processing failure fails its `process` job, so the jobs list shows which branches broke,
-and the run summary names the branch and classification, adding the failed stage and root for an
-update, initialisation, formatting or validation failure. It also shows the updater's log for
+Any processing failure fails its `process` job, so the jobs list shows which branches broke.
+When processing wrote a result, the run summary names the branch and classification, adding the
+failed stage and root for an update, initialisation, formatting or validation failure; a failure
+before the result exists writes no summary. The summary also shows the updater's log for
 each root, while Terraform's logs stay in the artefact, and in a dry run each publish summary
 states what a live run would have done. Update, initialisation, formatting and validation
 failures still publish, closing the marked pull request and then

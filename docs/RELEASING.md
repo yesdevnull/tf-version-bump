@@ -130,6 +130,7 @@ scripts/update-actions-release-pin.sh v<version> <linux-x86-64-sha256>
 git diff -- examples/github-actions docs/ADVANCED-USAGE.md
 make docs-check
 make test-github-actions
+make actionlint
 ```
 
 The updater is deliberately offline: it accepts the already verified digest rather than trusting a
