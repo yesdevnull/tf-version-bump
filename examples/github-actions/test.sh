@@ -1333,24 +1333,34 @@ test_readme_documents_the_reserved_environment_names() {
 
 
 write_report_manifest() {
-    local path=$1 classification=$2 failure=${3-null}
+    local path=$1 classification=$2 failure=${3-null} roots=${4-[]}
     jq -n --arg branch 'state/nonproduction/example-thing' \
         --arg classification "$classification" --argjson failure "$failure" \
-        '{schema_version: 3, state_branch: $branch, classification: $classification}
+        --argjson roots "$roots" \
+        '{schema_version: 3, state_branch: $branch, classification: $classification, roots: $roots}
          + (if $failure == null then {} else {failure: $failure} end)' >"$path"
 }
 
 
-run_report_step() {
-    local manifest=$1 outcome=$2 summary=$3
-    local body="$TEST_TMP_ROOT/report-processing-result.sh"
-    yq -r '.jobs.process.steps[] | select(.name == "Report processing result") | .run' \
+# Runs one reusable-workflow step's run: body with the given NAME=VALUE environment.
+# A step that cannot be found fails loudly instead of running an empty script.
+run_workflow_step() {
+    local job=$1 step=$2 summary=$3
+    shift 3
+    local body="$TEST_TMP_ROOT/workflow-step.sh"
+    STEP_JOB="$job" STEP_NAME="$step" \
+        yq -r '.jobs[strenv(STEP_JOB)].steps[] | select(.name == strenv(STEP_NAME)) | .run' \
         "$REUSABLE_WORKFLOW" >"$body"
+    [[ -s "$body" ]] || fail "the $job job has no step named '$step' with a run body"
     : >"$summary"
     # GitHub Actions runs a run: body without a shell key under its documented default,
     # `bash -e {0}`; the runner's own semantics cannot be reproduced here beyond that.
-    PROCESS_OUTCOME="$outcome" RESULT_MANIFEST="$manifest" GITHUB_STEP_SUMMARY="$summary" \
-        bash -e "$body"
+    env "$@" GITHUB_STEP_SUMMARY="$summary" bash -e "$body"
+}
+
+
+run_report_step() {
+    run_workflow_step process 'Report processing result' "$3" PROCESS_OUTCOME="$2" RESULT_MANIFEST="$1"
 }
 
 
@@ -1407,6 +1417,77 @@ test_workflow_reports_the_processing_result() {
         || fail 'reporting accepted a missing result manifest'
     grep -qF 'no result manifest' "$diagnostics" \
         || fail "reporting did not report the missing manifest: $(<"$diagnostics")"
+}
+
+
+test_workflow_summarises_update_logs() {
+    local work="$TEST_TMP_ROOT/report-logs"
+    rm -rf -- "$work"
+    mkdir -p "$work/logs"
+    local manifest="$work/result.json" summary="$work/summary.md" diagnostics="$work/stderr"
+    local report
+    write_report_manifest "$manifest" success null \
+        '["environments/production", "environments/staging", "environments/missing"]'
+    printf '%s\n' "Updated module source 'a/b/c' to version '1.2.3' in main.tf" '```' 'after the fence' \
+        >"$work/logs/update-1.log"
+    awk 'BEGIN { for (i = 1; i <= 1200; i++) printf "line %04d %060d\n", i, 0 }' \
+        >"$work/logs/update-2.log"
+    printf 'INIT-SENTINEL\n' >"$work/logs/init-1.log"
+    printf 'VALIDATE-SENTINEL\n' >"$work/logs/validate-1.log"
+    run_report_step "$manifest" success "$summary" 2>"$diagnostics" \
+        || fail "summarising update logs failed: $(<"$diagnostics")"
+    report=$(<"$summary")
+    [[ "$report" == *'environments/production'* && "$report" == *'environments/staging'* ]] \
+        || fail "the summary does not name each root that has an update log: $report"
+    [[ "$report" != *'environments/missing'* ]] \
+        || fail 'the summary names a root that has no update log'
+    [[ "$report" == *"to version '1.2.3' in main.tf"* && "$report" == *'after the fence'* ]] \
+        || fail "the summary omits the updater's output: $report"
+    # A fence one backtick longer than any run in the log keeps a stray fence line inside it.
+    [[ $(grep -cx '````' "$summary") -eq 2 ]] \
+        || fail "the update log's fence does not outlast the backticks inside it: $report"
+    # Terraform's logs can carry a credential a provider echoed, so they stay in the artefact.
+    [[ "$report" != *SENTINEL* ]] \
+        || fail 'the summary exposes a Terraform log'
+    grep -qF 'truncated' "$summary" \
+        || fail 'an oversized update log was not marked as truncated'
+    [[ $(wc -c <"$summary") -lt 80000 ]] \
+        || fail 'an oversized update log was not truncated'
+}
+
+
+run_dry_run_report_step() {
+    run_workflow_step publish 'Report dry-run outcome' "$2" RESULT_MANIFEST="$1"
+}
+
+
+test_workflow_reports_the_dry_run_outcome() {
+    # Without a status function GitHub adds success(), so a failed dry-run preflight
+    # reports nothing rather than a publication it would never have made.
+    yq -o=json '.jobs.publish.steps' "$REUSABLE_WORKFLOW" | jq -e '
+        [.[] | select(.name == "Report dry-run outcome")]
+        | length == 1 and .[0].if == "${{ inputs.dry_run }}"
+    ' >/dev/null || fail 'the dry-run outcome is not reported only for successful dry runs'
+    local work="$TEST_TMP_ROOT/dry-run-report"
+    rm -rf -- "$work"
+    mkdir "$work"
+    local manifest="$work/result.json" summary="$work/summary.md" diagnostics="$work/stderr"
+    local classification expected
+    for classification in success no-change branch-validation automation; do
+        case "$classification" in
+            success) expected='would create or refresh the pull request' ;;
+            no-change) expected='would close any open update pull request and failure issue' ;;
+            branch-validation) expected='would close the update pull request and create or refresh the failure issue' ;;
+            automation) expected='would not change any pull request, issue or ref' ;;
+        esac
+        write_report_manifest "$manifest" "$classification"
+        run_dry_run_report_step "$manifest" "$summary" 2>"$diagnostics" \
+            || fail "reporting a $classification dry run failed: $(<"$diagnostics")"
+        grep -qF "$expected" "$summary" \
+            || fail "the $classification dry run does not say what a live run would do: $(<"$summary")"
+        grep -qF 'state/nonproduction/example-thing' "$summary" \
+            || fail "the $classification dry run does not name its branch: $(<"$summary")"
+    done
 }
 
 
@@ -1490,7 +1571,8 @@ if [[ $# -eq 0 ]]; then
         test_readme_documents_the_reserved_environment_names
         test_workflow_reports_the_processing_result
         test_workflow_fails_the_process_job_on_processing_failure
-        test_workflow_offers_input_and_secret_terraform_environment)
+        test_workflow_offers_input_and_secret_terraform_environment
+        test_workflow_summarises_update_logs test_workflow_reports_the_dry_run_outcome)
     while IFS= read -r test_name; do tests+=("$test_name"); done < <(compgen -A function test_discovery_)
     for test_name in "${tests[@]}"; do
         "$test_name"
