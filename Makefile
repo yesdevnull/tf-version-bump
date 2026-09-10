@@ -63,19 +63,20 @@ install:
 docs-check:
 	go test -count=1 -v -run 'Test(ConfigSchema|Documentation|ExampleConfigs)' ./...
 
-# Alias kept for muscle memory: identical to test-github-actions.
+# Alias of test-github-actions.
 branch-automation-test: test-github-actions
 
 # The primary example harness uses Docker only as local Terraform test infrastructure.
 test-github-actions:
 	TEST_GIT="$(TEST_GIT)" examples/github-actions/test.sh
 
-# Lint this repository's workflows, then the example's with the pinned launcher. The example's
+# Lint this repository's workflows, then the example's, both with the pinned launcher. The example's
 # callers use ./.github/workflows/tf-version-bump-reusable.yml, which resolves only from a
 # repository root, so its workflow tree is linted from a temporary repository copy.
 actionlint:
 	scripts/run-actionlint.sh
-	@temporary_directory=$$(mktemp -d); \
+	@set -e; \
+	temporary_directory=$$(mktemp -d); \
 	trap 'rm -rf "$$temporary_directory"' EXIT; \
 	cp -R examples/github-actions/.github "$$temporary_directory/.github"; \
 	"$(TEST_GIT)" -C "$$temporary_directory" init --quiet; \
@@ -84,4 +85,4 @@ actionlint:
 
 # Lint every tracked shell script. CI pins the shellcheck version; see .github/workflows/lint.yml.
 shellcheck:
-	git ls-files -z '*.sh' | xargs -0 shellcheck
+	scripts/run-shellcheck.sh
