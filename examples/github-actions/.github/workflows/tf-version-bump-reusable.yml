@@ -24,6 +24,9 @@ on:
       terraform_init_upgrade:
         type: boolean
         default: false
+      terraform_env:
+        type: string
+        default: ""
       terraform_version:
         type: string
         required: true
@@ -48,6 +51,8 @@ on:
     secrets:
       TF_API_TOKEN:
         required: true
+      TERRAFORM_ENV:
+        required: false
 
 jobs:
   discover:
@@ -80,6 +85,7 @@ jobs:
           printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
 
   process:
+    name: process (${{ matrix.branch }})
     needs: discover
     strategy:
       fail-fast: false
@@ -120,7 +126,6 @@ jobs:
           terraform_wrapper: false
       - name: Process candidate
         id: process
-        continue-on-error: true
         env:
           CONTROL_CHECKOUT: ${{ github.workspace }}/control
           PROCESS_CONTROL_CHECKOUT: ${{ github.workspace }}/control
@@ -129,6 +134,8 @@ jobs:
           PROCESS_TERRAFORM_ROOTS: ${{ inputs.terraform_directories }}
           PROCESS_TERRAFORM_FMT: ${{ inputs.terraform_fmt }}
           PROCESS_TERRAFORM_INIT_UPGRADE: ${{ inputs.terraform_init_upgrade }}
+          PROCESS_TERRAFORM_ENV: ${{ inputs.terraform_env }}
+          PROCESS_TERRAFORM_SECRET_ENV: ${{ secrets.TERRAFORM_ENV }}
           PROCESS_RUN_ID: ${{ matrix.run_id }}
           PROCESS_RUN_ATTEMPT: ${{ matrix.run_attempt }}
           PROCESS_AUTOMATION_POLICY_ID: ${{ matrix.automation_policy_id }}
@@ -141,7 +148,9 @@ jobs:
           PROCESS_TERRAFORM_VERSION: ${{ inputs.terraform_version }}
           PROCESS_RESULT_DIR: ${{ runner.temp }}/result
           TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
-        run: '"$CONTROL_CHECKOUT/.github/scripts/process-state-branch.sh" process'
+        run: |
+          "$CONTROL_CHECKOUT/.github/scripts/process-state-branch.sh" mask
+          "$CONTROL_CHECKOUT/.github/scripts/process-state-branch.sh" process
       - name: Upload processing result
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -151,16 +160,28 @@ jobs:
           path: ${{ runner.temp }}/result
           if-no-files-found: error
           retention-days: 7
-      - name: Confirm processing classification
+      - name: Report processing result
         if: ${{ always() }}
         env:
+          PROCESS_OUTCOME: ${{ steps.process.outcome }}
           RESULT_MANIFEST: ${{ runner.temp }}/result/result.json
         run: |
-          [[ -f "$RESULT_MANIFEST" ]] || exit 1
+          if [[ ! -f "$RESULT_MANIFEST" ]]; then
+            echo "Processing wrote no result manifest; publication will not change managed refs." >&2
+            exit 1
+          fi
+          jq -r '"### \(.state_branch)\n\n- Classification: `\(.classification)`"
+            + (if .failure then "\n- Failed stage: `\(.failure.stage)` in root `\(.failure.root)` (status \(.failure.status))" else "" end)' \
+            "$RESULT_MANIFEST" >>"$GITHUB_STEP_SUMMARY"
           classification=$(jq -er '.classification' "$RESULT_MANIFEST")
-          [[ "$classification" == "success" || "$classification" == "no-change" || "$classification" == "branch-update" || "$classification" == "branch-init" || "$classification" == "branch-format" || "$classification" == "branch-validation" ]]
+          if [[ "$PROCESS_OUTCOME" == success \
+            && "$classification" != success && "$classification" != no-change ]]; then
+            echo "Processing reported $classification without failing; the result contract is broken." >&2
+            exit 1
+          fi
 
   publish:
+    name: publish (${{ matrix.branch }})
     needs: [discover, process]
     if: ${{ always() && needs.discover.result == 'success' }}
     strategy:

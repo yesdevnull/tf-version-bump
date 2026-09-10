@@ -36,6 +36,28 @@ Allow the workflow's `contents`, `pull-requests` and `issues` write permissions.
 
 Create an Actions secret named `TF_API_TOKEN` with read access to your HCP Terraform registry modules and providers. The workflow exposes it as `TF_TOKEN_app_terraform_io` only during processing. The processing checkouts disable persisted Git credentials.
 
+## Supply environment variables
+
+`terraform init`, `fmt` and `validate` receive whatever you supply here; nothing else in the
+workflow does. Non-sensitive entries go in the `terraform_env` input, one `NAME=VALUE` per line:
+
+```yaml
+terraform_env: |
+  TF_VAR_region=ap-southeast-2
+  TF_VAR_environment=production
+```
+
+Input values are not masked in logs. Put anything sensitive in the optional `TERRAFORM_ENV`
+Actions secret instead, in the same `NAME=VALUE` shape; both supplied callers already pass it
+through. Each of its values is registered for log redaction before Terraform runs, so an
+individual credential stays masked even if a provider echoes it.
+
+A value cannot contain a newline, a name may appear only once across both sources, and names the
+automation relies on are rejected: the `PROCESS_`, `RECONCILE_`, `DISCOVERY_`, `GITHUB_`,
+`RUNNER_`, `ACTIONS_`, `LD_`, `DYLD_` and `TF_CLI_ARGS` prefixes, and `PATH`, `IFS`, `ENV`,
+`BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `TF_DATA_DIR`, `TF_IN_AUTOMATION` and `CHECKPOINT_DISABLE`.
+A rejected entry stops the run before any file is touched and never prints its value.
+
 ## Configure updates
 
 Edit the control configurations on the default branch:
@@ -93,6 +115,10 @@ Pull requests and failure issues carry this stable marker:
 | Unchanged and valid | Close the obsolete marked PR and failure issue |
 | Update, init, fmt or validation failure | Close the marked PR first, then create or refresh the failure issue |
 | Automation failure or missing/invalid result | Stop without changing managed PRs, issues or refs |
+
+A failed candidate fails its `process` job, so the jobs list shows which branches broke; the
+run summary names the branch, its classification and the stage that failed. Publication runs
+either way, so the table above still applies.
 
 Unchanged candidates still run validation. Before any PR or issue reconciliation, the publisher checks that the remote state branch still matches the discovered commit; a moved or missing branch or failed lookup stops reconciliation. Cleanup matches the policy/branch marker and the expected PR head and base. Update refs are retained. GitHub lookup and closure errors stop reconciliation.
 

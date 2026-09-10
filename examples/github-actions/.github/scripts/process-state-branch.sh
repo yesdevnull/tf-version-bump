@@ -7,6 +7,7 @@ export LC_ALL=C
 usage() {
     cat <<'EOF'
 Usage: process-state-branch.sh process
+       process-state-branch.sh mask
        process-state-branch.sh --help
 
 Update, initialise, optionally format, then validate every configured Terraform root.
@@ -21,7 +22,11 @@ PROCESS_TF_VERSION_BUMP_ARCHIVE_SHA256, PROCESS_TERRAFORM_VERSION (exact version
 Options: PROCESS_TERRAFORM_FMT (true/false), PROCESS_TERRAFORM_INIT_UPGRADE
 (optional true/false, default false), PROCESS_PREPARATION_DEADLINE_EPOCH (absolute
 deadline shared by setup and all commands), PROCESS_RESULT_DIR (absent destination
-below RUNNER_TEMP).
+below RUNNER_TEMP), PROCESS_TERRAFORM_ENV and PROCESS_TERRAFORM_SECRET_ENV (optional
+newline separated NAME=VALUE entries supplied to every Terraform command).
+
+The mask subcommand parses both environment sources and prints one ::add-mask::
+workflow command per PROCESS_TERRAFORM_SECRET_ENV value; run it before process.
 
 Emits result.json and logs/, plus candidate.patch only for changed, validated
 success. Plain init uses -backend=false -input=false; explicit upgrade adds
@@ -37,6 +42,11 @@ CONFIG_PATH=""
 TERRAFORM_ROOTS=()
 TF_DATA_DIRECTORIES=()
 ROOTS_JSON='[]'
+TERRAFORM_ENVIRONMENT=()
+SECRET_ENVIRONMENT_COUNT=0
+# Names the automation itself relies on; a supplied entry must never shadow them.
+RESERVED_ENVIRONMENT_PREFIXES=(PROCESS_ RECONCILE_ DISCOVERY_ GITHUB_ RUNNER_ ACTIONS_ LD_ DYLD_ TF_CLI_ARGS)
+RESERVED_ENVIRONMENT_NAMES=(PATH IFS ENV BASH_ENV SHELLOPTS BASHOPTS TF_DATA_DIR TF_IN_AUTOMATION CHECKPOINT_DISABLE)
 
 processing_path_error() { echo "processing path error: $*" >&2; exit 1; }
 processing_status_error() { echo "processing status error: $*" >&2; exit 1; }
@@ -58,6 +68,49 @@ run_bounded() {
     remaining=$((PROCESS_PREPARATION_DEADLINE_EPOCH - $(date +%s)))
     [[ "$remaining" -gt 0 ]] || return 124
     timeout --signal=TERM --kill-after=1s "${remaining}s" "$@" >"$log" 2>&1
+}
+
+# Diagnostics name the offending variable only; a supplied value is never printed.
+parse_terraform_environment() {
+    local entry name candidate
+    for entry in "$@"; do
+        [[ -n "$entry" ]] || continue
+        name=${entry%%=*}
+        [[ "$entry" == *=* && "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
+            || processing_setup_error 'Terraform environment entries must be NAME=VALUE'
+        for candidate in "${RESERVED_ENVIRONMENT_PREFIXES[@]}"; do
+            [[ "$name" != "$candidate"* ]] \
+                || processing_setup_error "Terraform environment name $name is reserved"
+        done
+        for candidate in "${RESERVED_ENVIRONMENT_NAMES[@]}"; do
+            [[ "$name" != "$candidate" ]] \
+                || processing_setup_error "Terraform environment name $name is reserved"
+        done
+        for candidate in "${TERRAFORM_ENVIRONMENT[@]}"; do
+            [[ "${candidate%%=*}" != "$name" ]] \
+                || processing_setup_error "Terraform environment name $name is set twice"
+        done
+        TERRAFORM_ENVIRONMENT+=("$entry")
+    done
+}
+
+prepare_environment() {
+    local -a entries=()
+    readarray -t entries <<<"${PROCESS_TERRAFORM_SECRET_ENV-}"
+    parse_terraform_environment "${entries[@]}"
+    SECRET_ENVIRONMENT_COUNT=${#TERRAFORM_ENVIRONMENT[@]}
+    readarray -t entries <<<"${PROCESS_TERRAFORM_ENV-}"
+    parse_terraform_environment "${entries[@]}"
+}
+
+print_secret_masks() {
+    local index=0 value
+    while [[ "$index" -lt "$SECRET_ENVIRONMENT_COUNT" ]]; do
+        value=${TERRAFORM_ENVIRONMENT[index]#*=}
+        index=$((index + 1))
+        [[ -n "$value" ]] || continue
+        printf '::add-mask::%s\n' "$value"
+    done
 }
 
 prepare_contract() {
@@ -143,6 +196,13 @@ branch_command() {
     fi
 }
 
+terraform_command() {
+    local classification=$1 stage=$2 root=$3 log=$4
+    shift 4
+    branch_command "$classification" "$stage" "$root" "$log" \
+        env -- "${TERRAFORM_ENVIRONMENT[@]}" terraform "$@"
+}
+
 install_tools() {
     [[ "$PROCESS_TF_VERSION_BUMP_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
         || processing_setup_error 'tf-version-bump version must be a v-prefixed semantic version'
@@ -185,7 +245,7 @@ process_roots() {
         relative=$(jq -r --argjson i "$((index - 1))" '.[$i]' <<<"$ROOTS_JSON")
         data=${TF_DATA_DIRECTORIES[$((index - 1))]}
         TF_DATA_DIR="$data" TF_IN_AUTOMATION=1 CHECKPOINT_DISABLE=1 \
-            branch_command branch-init 'terraform init' "$relative" "init-$index.log" terraform -chdir="$root" "${init_args[@]}"
+            terraform_command branch-init 'terraform init' "$relative" "init-$index.log" -chdir="$root" "${init_args[@]}"
         validate_lock_file "$TARGET_CHECKOUT" "$root"
         if [[ -f "$root/.terraform.lock.hcl" ]] && git -C "$TARGET_CHECKOUT" check-ignore -q -- "$root/.terraform.lock.hcl"; then
             write_result automation 'provider lock policy' "$relative" 1
@@ -199,7 +259,7 @@ process_roots() {
         for root in "${TERRAFORM_ROOTS[@]}"; do
             index=$((index + 1))
             relative=$(jq -r --argjson i "$((index - 1))" '.[$i]' <<<"$ROOTS_JSON")
-            branch_command branch-format 'terraform fmt' "$relative" "fmt-$index.log" terraform -chdir="$root" fmt -recursive -no-color
+            terraform_command branch-format 'terraform fmt' "$relative" "fmt-$index.log" -chdir="$root" fmt -recursive -no-color
         done
     fi
     index=0
@@ -208,7 +268,7 @@ process_roots() {
         relative=$(jq -r --argjson i "$((index - 1))" '.[$i]' <<<"$ROOTS_JSON")
         data=${TF_DATA_DIRECTORIES[$((index - 1))]}
         TF_DATA_DIR="$data" TF_IN_AUTOMATION=1 CHECKPOINT_DISABLE=1 \
-            branch_command branch-validation 'terraform validate' "$relative" "validate-$index.log" terraform -chdir="$root" validate -no-color
+            terraform_command branch-validation 'terraform validate' "$relative" "validate-$index.log" -chdir="$root" validate -no-color
     done
 }
 
@@ -510,6 +570,7 @@ prepare_workspace() {
 
 
 if [[ "${1-}" == --help && $# -eq 1 ]]; then usage; exit 0; fi
+if [[ "${1-}" == mask && $# -eq 1 ]]; then prepare_environment; print_secret_masks; exit 0; fi
 if [[ "${1-}" != process || $# -ne 1 ]]; then usage >&2; exit 2; fi
 trap cleanup EXIT
 trap 'exit 129' HUP
@@ -521,6 +582,7 @@ trap 'exit 143' TERM
     || processing_setup_error 'processing deadline expired before workspace setup'
 prepare_workspace
 prepare_contract
+prepare_environment
 install_tools
 process_roots
 write_candidate

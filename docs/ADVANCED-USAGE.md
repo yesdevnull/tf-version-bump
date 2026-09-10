@@ -26,6 +26,12 @@ Create a repository Actions secret named `TF_API_TOKEN` with read access to your
 registry modules and providers. The processing job receives it as `TF_TOKEN_app_terraform_io`.
 Publication runs separately with repository write permissions and no registry token.
 
+Terraform commands can take extra environment variables, which validation usually needs. Put
+non-sensitive entries in the `terraform_env` input and sensitive ones in the optional
+`TERRAFORM_ENV` secret, one `NAME=VALUE` per line. Both reach `terraform init`, `fmt` and
+`validate` only; every secret value is registered for log masking first. Names the automation
+relies on, such as `PATH` or any `PROCESS_` variable, are rejected before any file is touched.
+
 Each configured root runs the updater and `terraform init`. If the candidate changes and
 `terraform_fmt` is enabled, formatting runs recursively below every configured root. All roots
 then run `terraform validate` in the same initialised checkout, including unchanged candidates.
@@ -40,6 +46,10 @@ the caller's `with` block for scheduled runs, to add `-upgrade`. Direct script c
 provider versions and fails if updated constraints exclude them; it does not retry with upgrade.
 Upgrade can update all eligible providers within their constraints. Generated lock files are
 included in the candidate. Modules are resolved from their configured constraints on each fresh run.
+
+Any processing failure fails its `process` job, so the jobs list shows which branches broke,
+and the run summary names the branch, classification and failed stage. Publication still runs
+and reconciles the pull request and failure issue.
 
 The processing result contains `result.json`, logs and, for a changed valid candidate,
 `candidate.patch`. Publication checks the result identity, patch checksum, configured roots and
