@@ -407,6 +407,44 @@ func TestUpdateActionsReleasePinIsIdempotent(t *testing.T) {
 	}
 }
 
+// The root build-output rules in .gitignore must stay anchored to the repository root: an
+// unanchored tf-version-bump* pattern would also hide new example files whose name happens to
+// share the project's prefix, such as a new report workflow or a new tf-version-bump config.
+func TestGitIgnoreHidesOnlyRootBuildOutput(t *testing.T) {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is required to check .gitignore behaviour")
+	}
+
+	testCases := []struct {
+		path    string
+		ignored bool
+	}{
+		{path: "examples/github-actions/.github/workflows/tf-version-bump-new.yml", ignored: false},
+		{path: "examples/github-actions/.github/tf-version-bump/new.yml", ignored: false},
+		{path: "tf-version-bump", ignored: true},
+		{path: "tf-version-bump-linux-amd64", ignored: true},
+	}
+	for _, testCase := range testCases {
+		command := exec.Command(git, "check-ignore", "--no-index", "-q", testCase.path)
+		command.Dir = "."
+		runErr := command.Run()
+		var exitError *exec.ExitError
+		switch {
+		case runErr == nil:
+			if !testCase.ignored {
+				t.Errorf("%s is ignored, want it tracked", testCase.path)
+			}
+		case errors.As(runErr, &exitError) && exitError.ExitCode() == 1:
+			if testCase.ignored {
+				t.Errorf("%s is not ignored, want it ignored", testCase.path)
+			}
+		default:
+			t.Fatalf("git check-ignore --no-index -q %s: %v", testCase.path, runErr)
+		}
+	}
+}
+
 func TestUpdateActionsReleasePinRejectsInvalidInputWithoutChanges(t *testing.T) {
 	testCases := []struct {
 		name string
