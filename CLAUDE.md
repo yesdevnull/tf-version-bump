@@ -208,12 +208,14 @@ listing each configured Terraform, provider and module version value the selecte
 its current and expected values, whether they already match and, for modules, the first filter that
 would skip an update. The audit and the updater share `moduleVersionFilter` and the
 `attributeHasStringValue` comparison; keep the audit in step with any change to update filtering.
+Unlike the update modes, a selected file that cannot be read or parsed stops the audit: the command
+exits 1 and writes nothing, leaving any existing audit untouched.
 
 `-check` uses the existing dry-run update paths but has a separate automation exit contract. The
-mode runners return their update-operation total to `main`: a processing error exits 1, a successful
-check with a positive total exits 2, and a successful check with no eligible update returns normally
-with status 0. Check mode rejects `-dry-run` and `-report-file`, so it never writes Terraform or
-report files.
+mode runners' update-operation total reaches `main` through `runUpdateMode`: a processing error
+exits 1, a successful check with a positive total exits 2, and a successful check with no eligible
+update returns normally with status 0. Check mode rejects `-dry-run` and `-report-file`, so it never
+writes Terraform or report files.
 
 ## Testing
 
