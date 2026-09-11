@@ -52,7 +52,10 @@ def table_row: "| " + (map(cell) | join(" | ")) + " |";
 # then every audited value. A matching value passes even when a filter would skip it.
 # shellcheck disable=SC2016 # jq, not the shell, expands these.
 VERSION_ROWS_JQ='
-def root_file($root; $name): if $root == "." then $name else "\($root)/\($name)" end;
+def root_file($root; $name):
+  ($root | sub("/$"; "") | sub("^\\./"; "")) as $clean
+  | (if $clean == "" then "." else $clean end) as $r
+  | if $r == "." then $name else "\($r)/\($name)" end;
 def found_row($kind; $subject; $file; $found):
   {status: (if $found then "PASS" else "FAIL" end), kind: $kind, subject: $subject, block: "",
    file: $file, actual: "", expected: "", detail: (if $found then "found" else "not found" end)};
