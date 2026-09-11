@@ -7,6 +7,7 @@ export LC_ALL=C
 usage() {
     cat <<'EOF'
 Usage: report-state-branches.sh collect
+       report-state-branches.sh report
        report-state-branches.sh --help
 
 Compare each discovered state branch with its policy's control configuration, without
@@ -21,6 +22,10 @@ REPORT_TF_VERSION_BUMP_VERSION after checking REPORT_TF_VERSION_BUMP_ARCHIVE_SHA
 writes records.json for REPORT_POLICY_ID into REPORT_OUTPUT_DIR, which must be absent.
 A branch it cannot read is recorded with an error; collect still exits 0. Temporary
 files live below RUNNER_TEMP.
+
+report appends the version report to GITHUB_STEP_SUMMARY and writes version-report.csv
+into REPORT_OUTPUT_DIR from its records.json. It exits 1 after writing both when any
+branch could not be read; version mismatches alone never fail it.
 EOF
 }
 
@@ -29,6 +34,89 @@ CONTROL_CHECKOUT=""
 TOOL=""
 
 report_error() { echo "report error: $*" >&2; exit 1; }
+
+# Escapes a value for a Markdown table cell: HTML special characters, then the characters
+# Markdown would read as structure or emphasis, as numeric entities, then newlines as <br> so a
+# multi-line expression stays on its row.
+REPORT_JQ_DEFINITIONS='
+def cell: tostring | @html | gsub("(?<c>[|*_`~\\[\\]\\\\])"; "&#\(.c | explode[0]);") | gsub("\r?\n"; "<br>");
+def table_row: "| " + (map(cell) | join(" | ")) + " |";
+'
+
+# The improved report's rows for one branch record: each root's own check, its file checks,
+# then every audited value. A matching value passes even when a filter would skip it.
+# shellcheck disable=SC2016 # jq, not the shell, expands these.
+VERSION_ROWS_JQ='
+def root_file($root; $name): if $root == "." then $name else "\($root)/\($name)" end;
+def found_row($kind; $subject; $file; $found):
+  {status: (if $found then "PASS" else "FAIL" end), kind: $kind, subject: $subject, block: "",
+   file: $file, actual: "", expected: "", detail: (if $found then "found" else "not found" end)};
+def value_row($kind; $subject; $block; $missing):
+  {kind: $kind, subject: $subject, block: $block, file: .file, actual: (.actual // ""), expected: .expected}
+  + (if .matches then {status: "PASS", detail: ""}
+     elif .skip != null and .skip.filter == "local_source" then {status: "SKIP", detail: "skipped: local module source"}
+     elif .skip != null then {status: "SKIP", detail: "skipped by \(.skip.filter) (\(.skip.values | join(", ")))"}
+     elif .actual == null then {status: "FAIL", detail: $missing}
+     else {status: "FAIL", detail: "version differs"} end);
+def branch_rows:
+  .branch as $branch
+  | (if .error != null then
+       {status: "ERROR", kind: "branch", subject: "", block: "", file: "", actual: "", expected: "", detail: .error}
+     else
+       .roots[] as $root
+       | found_row("root"; $root.root; ""; $root.exists),
+         (("main.tf", "providers.tf") as $name
+          | found_row("file"; $name; root_file($root.root; $name); $root.files[$name])),
+         (($root.audit // {terraform: [], providers: [], modules: []})
+          | (.terraform[] | value_row("terraform"; "required_version"; ""; "no required_version")),
+            (.providers[] | value_row("provider"; .name; ""; "no version attribute")),
+            (.modules[] | value_row("module"; .source; .name; "no version attribute")))
+     end)
+  | {status: .status, branch: $branch, kind: .kind, subject: .subject, block: .block,
+     file: .file, actual: .actual, expected: .expected, detail: .detail};
+'
+
+# shellcheck disable=SC2016 # jq, not the shell, expands these.
+VERSION_SUMMARY_JQ='
+def counts:
+  "\(map(select(.status == "FAIL")) | length) FAIL, \(map(select(.status == "PASS")) | length) PASS, "
+  + "\(map(select(.status == "SKIP")) | length) SKIP, \(map(select(.status == "ERROR")) | length) ERROR";
+[.branches[] | {branch: .branch, rows: [branch_rows]}] as $branches
+| "## Version report (\(.policy | cell))\n\nChecked \($branches | length) branch(es): \([$branches[].rows[]] | counts)\n"
+  + ($branches
+     | map(select(any(.rows[]; .status != "PASS"))
+           | "\n### \(.branch | cell): \(.rows | counts)\n\n"
+             + "| Status | Kind | Subject | Block | File | Actual | Expected | Detail |\n"
+             + "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
+             + (.rows | map(select(.status != "PASS")
+                            | [.status, .kind, .subject, .block, .file, .actual, .expected, .detail]
+                            | table_row + "\n") | join("")))
+     | join(""))
+  + ([$branches[] | select(all(.rows[]; .status == "PASS"))]
+     | if . == [] then ""
+       else "\nBranches where every check passed:\n\n" + (map("- \(.branch | cell) (\(.rows | length) checks)\n") | join(""))
+       end)
+'
+
+records_file() {
+    : "${REPORT_OUTPUT_DIR:?REPORT_OUTPUT_DIR must be set}"
+    : "${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY must be set}"
+    [[ -f "$REPORT_OUTPUT_DIR/records.json" ]] || report_error 'collect wrote no records.json'
+    printf '%s\n' "$REPORT_OUTPUT_DIR/records.json"
+}
+
+report() {
+    local records unreadable
+    records=$(records_file)
+    jq -r "$REPORT_JQ_DEFINITIONS$VERSION_ROWS_JQ"'
+        (["status", "branch", "kind", "subject", "block", "file", "actual", "expected", "detail"] | @csv),
+        (.branches[] | branch_rows | [.status, .branch, .kind, .subject, .block, .file, .actual, .expected, .detail] | @csv)
+    ' "$records" >"$REPORT_OUTPUT_DIR/version-report.csv"
+    jq -j "$REPORT_JQ_DEFINITIONS$VERSION_ROWS_JQ$VERSION_SUMMARY_JQ" "$records" >>"$GITHUB_STEP_SUMMARY"
+    unreadable=$(jq '[.branches[] | select(.error != null)] | length' "$records")
+    [[ "$unreadable" -eq 0 ]] \
+        || report_error "$unreadable branch(es) could not be read; the version report lists them"
+}
 
 # shellcheck disable=SC2329 # Called by the EXIT trap.
 cleanup() {
@@ -183,5 +271,6 @@ fi
 case "$1" in
     --help) usage ;;
     collect) collect ;;
+    report) report ;;
     *) usage >&2; exit 2 ;;
 esac
