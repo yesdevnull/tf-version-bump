@@ -30,6 +30,9 @@ Review and commit the copied files. The example supplies separate callers for:
 - **Non-production:** `state/nonproduction/`, `state/staging/`, `aws-state/nonproduction/` and `aws-state/staging/`.
 - **Production:** `state/production/` and `aws-state/production/`.
 
+The same copy adds `tf-version-bump-report.yml`, a read-only version report described
+[below](#version-report).
+
 Both callers run only from the default branch. Their schedules are Monday 04:17 and Sunday 04:43 respectively in `Australia/Melbourne`. They also run when their control configuration changes, and can be started manually. A manual `branch_prefix` can narrow the configured prefixes but cannot select another branch family.
 
 Allow the workflow's `contents`, `pull-requests` and `issues` write permissions. Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** before live publication.
@@ -174,6 +177,44 @@ above still applies.
 Unchanged candidates still run validation. Before any PR or issue reconciliation, the publisher checks that the remote state branch still matches the discovered commit; a moved or missing branch or failed lookup stops reconciliation. Cleanup matches the policy/branch marker and the expected PR head and base. Update refs are retained. GitHub lookup and closure errors stop reconciliation.
 
 Publication uses the built-in `GITHUB_TOKEN`. The helper respects Git's signing configuration; the example does not provision a signing key. If signing is enabled, the runner must have a working key. Do not assume token-created branches and PRs will automatically run your downstream checks; review GitHub's [GITHUB_TOKEN workflow behaviour](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow#triggering-a-workflow-from-a-workflow) when configuring required checks.
+
+## Version report
+
+`tf-version-bump-report.yml` compares every state branch with its policy's control configuration
+without changing anything. It runs on Mondays at 06:17 `Australia/Melbourne`, after both scheduled
+update runs, and can be started manually from the default branch. It has read-only repository
+access, runs no Terraform and receives no secrets.
+
+One job per policy discovers the policy's branches exactly as the update workflow does, then audits
+each branch's discovered commit with `tf-version-bump -audit-file`. Its matrix repeats each caller's
+branch prefixes, config path and Terraform directories; the example's harness fails if they differ,
+so change both together.
+
+A configured module, provider or `required_version` that a branch does not declare produces no row for that branch.
+
+Each job writes two reports to its summary and uploads both as CSV files, with the collected
+`records.json`, in an artefact retained for seven days:
+
+- **Version report** (`version-report.csv`): one row per check with `status`, `branch`, `kind`,
+  `subject`, `block`, `file`, `actual`, `expected` and `detail` columns. It checks each root's
+  presence, whether `main.tf` and `providers.tf` exist, `required_version`, providers and modules.
+  A value that already matches passes; a module the config's `ignore_modules`, `ignore_versions` or
+  `from` excludes is `SKIP`, naming the filter; a branch that cannot be fetched or parsed is
+  `ERROR`. The summary counts every status and lists each branch's non-passing rows.
+- **Legacy version report** (`legacy-report.csv`): the columns `Result`, `Test`, `Comment` and
+  `State Branch` in an existing report's format, with only FAIL rows in the summary. It checks
+  modules and the two files only, ignores the config's filters, names each module by its source
+  (so blocks sharing a source produce identical rows), writes `none` for a missing version, and
+  supports a single Terraform root.
+
+Version mismatches never fail the job. A branch that cannot be read fails it after both reports are
+written, so the gap is visible. Discovery runs exactly as in the update workflow, so a policy whose
+prefixes match no branch, or more than 256, fails its report job before any report is written, as it
+fails the update run.
+
+Both CSVs keep values exactly as written. A value beginning with `=`, `+`, `-` or `@`, such as the
+valid Terraform pin `= 5.0.0`, may be evaluated as a formula by a spreadsheet that opens the file
+directly, so import the CSVs as text instead.
 
 ## Run and inspect
 
