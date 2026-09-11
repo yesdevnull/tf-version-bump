@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,10 +13,10 @@ import (
 )
 
 func TestParseFlagsContract(t *testing.T) {
-	args := []string{"tf-version-bump", "-pattern", "**/*.tf", "-module", "example/module", "-to", "2.0.0", "-from", "1.0.0", "-from", "1.5.0", "-ignore-version", "3.0.0", "-ignore-modules", "vpc, legacy-*", "-config", "config.yml", "-validate-config", "validate.yml", "-force-add", "-dry-run", "-check", "-verbose", "-version", "-output", "md", "-terraform-version", ">= 1.5", "-provider", "aws"}
+	args := []string{"tf-version-bump", "-pattern", "**/*.tf", "-module", "example/module", "-to", "2.0.0", "-from", "1.0.0", "-from", "1.5.0", "-ignore-version", "3.0.0", "-ignore-modules", "vpc, legacy-*", "-config", "config.yml", "-validate-config", "validate.yml", "-force-add", "-dry-run", "-check", "-verbose", "-version", "-output", "md", "-terraform-version", ">= 1.5", "-provider", "aws", "-audit-file", "audit.json"}
 	withFlagArgs(t, args, func() {
 		got := parseFlags()
-		want := &cliFlags{pattern: "**/*.tf", moduleSource: "example/module", toVersion: "2.0.0", fromVersions: stringSliceFlag{"1.0.0", "1.5.0"}, ignoreVersions: stringSliceFlag{"3.0.0"}, ignoreModules: "vpc, legacy-*", configFile: "config.yml", validationConfigFile: "validate.yml", forceAdd: true, dryRun: true, check: true, verbose: true, showVersion: true, output: "md", terraformVersion: ">= 1.5", providerName: "aws"}
+		want := &cliFlags{pattern: "**/*.tf", moduleSource: "example/module", toVersion: "2.0.0", fromVersions: stringSliceFlag{"1.0.0", "1.5.0"}, ignoreVersions: stringSliceFlag{"3.0.0"}, ignoreModules: "vpc, legacy-*", configFile: "config.yml", validationConfigFile: "validate.yml", forceAdd: true, dryRun: true, check: true, verbose: true, showVersion: true, output: "md", terraformVersion: ">= 1.5", providerName: "aws", auditFile: "audit.json"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("flags = %#v, want %#v", got, want)
 		}
@@ -192,6 +193,7 @@ func TestCommandConfigValidationRejectsUpdateAndReportFlags(t *testing.T) {
 		{name: "check", args: []string{"-check"}},
 		{name: "verbose", args: []string{"-verbose"}},
 		{name: "report", args: []string{"-report-file", "report.json"}},
+		{name: "audit", args: []string{"-audit-file", "audit.json"}},
 	}
 
 	for _, tt := range tests {
@@ -1170,5 +1172,185 @@ func TestCommandReportsAggregateFileFailure(t *testing.T) {
 				t.Fatalf("result %#v content=%q", r, readTestFile(t, good))
 			}
 		})
+	}
+}
+
+func TestCommandWritesConfigAudit(t *testing.T) {
+	dir := t.TempDir()
+	input := `terraform {
+  required_version = ">= 1.9"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+}
+
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "4.2.0"
+}
+`
+	file := writeTestFile(t, dir, "main.tf", input)
+	config := writeTestFile(t, dir, "versions.yml", `terraform_version: ">= 1.10"
+providers:
+  - name: aws
+    version: "~> 6.0"
+modules:
+  - source: terraform-aws-modules/vpc/aws
+    version: 5.0.0
+`)
+	audit := filepath.Join(dir, "audit.json")
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config, "-audit-file", audit})
+
+	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n✓ Wrote audit to '" + audit + "'\n"
+	if result.stdout != wantStdout || result.diagnostics != "" || result.exitCode != -1 {
+		t.Fatalf("result = %#v, want stdout %q and a normal return", result, wantStdout)
+	}
+	wantAudit := `{
+  "schema_version": 1,
+  "terraform": [
+    {
+      "file": "` + file + `",
+      "actual": ">= 1.9",
+      "expected": ">= 1.10",
+      "matches": false
+    }
+  ],
+  "providers": [
+    {
+      "file": "` + file + `",
+      "name": "aws",
+      "actual": "~> 6.0",
+      "expected": "~> 6.0",
+      "matches": true
+    }
+  ],
+  "modules": [
+    {
+      "file": "` + file + `",
+      "name": "vpc",
+      "source": "terraform-aws-modules/vpc/aws",
+      "actual": "4.2.0",
+      "expected": "5.0.0",
+      "matches": false,
+      "skip": null
+    }
+  ]
+}
+`
+	if got := readTestFile(t, audit); got != wantAudit {
+		t.Errorf("audit = %q, want %q", got, wantAudit)
+	}
+	if got := readTestFile(t, file); got != input {
+		t.Errorf("audit changed Terraform content to %q", got)
+	}
+}
+
+func TestCommandAuditRejectsConflictingFlags(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	config := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n")
+	audit := filepath.Join(dir, "audit.json")
+	conflict := "Error: Cannot use -audit-file with -dry-run, -check, -report-file or -force-add\n"
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "without config", args: []string{"-module", "example/module", "-to", "2.0.0"}, want: "Error: -audit-file requires -config\n"},
+		{name: "dry run", args: []string{"-config", config, "-dry-run"}, want: conflict},
+		{name: "check", args: []string{"-config", config, "-check"}, want: conflict},
+		{name: "report", args: []string{"-config", config, "-report-file", filepath.Join(dir, "report.json")}, want: conflict},
+		{name: "force add", args: []string{"-config", config, "-force-add"}, want: conflict},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := append([]string{"tf-version-bump", "-pattern", file, "-audit-file", audit}, tt.args...)
+			result := runMainCommand(t, args)
+			if result.stdout != "" || result.diagnostics != tt.want || result.exitCode != 1 {
+				t.Fatalf("result = %#v, want diagnostic %q and exit 1", result, tt.want)
+			}
+			if _, err := os.Stat(audit); !os.IsNotExist(err) {
+				t.Fatalf("audit stat error = %v, want no audit", err)
+			}
+		})
+	}
+}
+
+func TestCommandAuditRejectsInputCollision(t *testing.T) {
+	dir := t.TempDir()
+	input := "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+	file := writeTestFile(t, dir, "main.tf", input)
+	configContent := "modules:\n  - source: example/module\n    version: 2.0.0\n"
+	config := writeTestFile(t, dir, "versions.yml", configContent)
+
+	for _, destination := range []string{file, config} {
+		result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config, "-audit-file", destination})
+
+		wantDiagnostic := "Error: audit file must not overwrite input file: " + destination + "\n"
+		if result.exitCode != 1 || result.diagnostics != wantDiagnostic {
+			t.Errorf("result = %#v, want diagnostic %q", result, wantDiagnostic)
+		}
+	}
+	if readTestFile(t, file) != input || readTestFile(t, config) != configContent {
+		t.Error("a rejected audit changed an input file")
+	}
+}
+
+func TestCommandAuditRejectsADirectoryDestination(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	config := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n")
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config, "-audit-file", dir})
+
+	if result.exitCode != 1 || result.diagnostics != "Error preparing audit: destination is a directory: "+dir+"\n" {
+		t.Errorf("result = %#v, want the audit preparation failure", result)
+	}
+}
+
+func TestCommandAuditWritesNothingWhenAFileCannotBeParsed(t *testing.T) {
+	dir := t.TempDir()
+	bad := writeTestFile(t, dir, "bad.tf", "terraform {\n")
+	writeTestFile(t, dir, "good.tf", "terraform {\n  required_version = \">= 1.10\"\n}\n")
+	config := writeTestFile(t, dir, "versions.yml", "terraform_version: \">= 1.10\"\n")
+	previous := "previous audit\n"
+	audit := writeTestFile(t, dir, "audit.json", previous)
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", filepath.Join(dir, "*.tf"), "-config", config, "-audit-file", audit})
+
+	if result.exitCode != 1 || !strings.HasPrefix(result.diagnostics, "Error auditing "+bad+": failed to parse HCL: ") {
+		t.Errorf("result = %#v, want a parse failure naming %s", result, bad)
+	}
+	if got := readTestFile(t, audit); got != previous {
+		t.Errorf("audit = %q, want the previous audit kept", got)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read directory: %v", err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if strings.Join(names, ",") != "audit.json,bad.tf,good.tf,versions.yml" {
+		t.Errorf("directory entries = %v, want no temporary audit left behind", names)
+	}
+}
+
+func TestCommandAuditReportsAnInvalidConfig(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "terraform {}\n")
+	config := writeTestFile(t, dir, "versions.yml", "modules:\n  - version: 1.0.0\n")
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config, "-audit-file", filepath.Join(dir, "audit.json")})
+
+	want := "Error loading config file: module at index 0 is missing 'source' field\n"
+	if result.exitCode != 1 || result.diagnostics != want {
+		t.Errorf("result = %#v, want diagnostic %q", result, want)
 	}
 }

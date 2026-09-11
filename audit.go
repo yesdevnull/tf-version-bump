@@ -168,6 +168,33 @@ func auditedAttribute(attr *hclwrite.Attribute, expected string) (actual *string
 	return &value, attributeHasStringValue(attr, expected)
 }
 
+// runAuditMode writes the audit of files against the config. It validates the destination
+// before reading Terraform files, never writes them, and replaces an existing audit only once
+// every file has been audited.
+func runAuditMode(files []string, flags *cliFlags) error {
+	config, err := loadConfig(flags.configFile)
+	if err != nil {
+		return fmt.Errorf("Error loading config file: %w", err) //nolint:staticcheck // User-facing CLI diagnostic.
+	}
+	inputFiles := append(append([]string(nil), files...), flags.configFile)
+	prepared, err := prepareJSONOutput(auditOutput, flags.auditFile, inputFiles)
+	if err != nil {
+		return err
+	}
+	audit, err := buildAudit(files, config)
+	if err != nil {
+		if discardErr := prepared.discard(); discardErr != nil {
+			err = fmt.Errorf("%w; failed to discard prepared audit: %v", err, discardErr)
+		}
+		return err
+	}
+	if err := prepared.publish(audit); err != nil {
+		return fmt.Errorf("Error writing audit: %w", err) //nolint:staticcheck // User-facing CLI diagnostic.
+	}
+	fmt.Printf("✓ Wrote audit to %s\n", quote(flags.auditFile, flags.output))
+	return nil
+}
+
 // auditedObjectVersion reads the version item of an object-syntax provider declaration.
 func auditedObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression []byte, expected string) (actual *string, matches bool) {
 	for _, item := range objExpr.Items {
