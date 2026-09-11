@@ -13,6 +13,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	stderrors "errors"
 	"flag"
@@ -374,16 +375,28 @@ func main() {
 	// Find and validate matching files
 	files := findMatchingFiles(flags)
 	validateRequiredOperationFlags(flags)
+
+	totalUpdates, err := runUpdateMode(files, flags)
+	if err != nil {
+		fatalf("%v", err)
+	}
+	if flags.check && totalUpdates > 0 {
+		exitFunc(2)
+	}
+}
+
+// runUpdateMode applies the selected updates and publishes any requested update report,
+// returning the update-operation total that check mode turns into its exit status.
+func runUpdateMode(files []string, flags *cliFlags) (int, error) {
 	inputFiles := files
 	if flags.configFile != "" {
 		inputFiles = append(append([]string(nil), files...), flags.configFile)
 	}
-	preparedReport, err := prepareUpdateReport(flags.reportFile, inputFiles)
+	preparedReport, err := prepareJSONOutput(updateReportOutput, flags.reportFile, inputFiles)
 	if err != nil {
-		fatalf("%v", err)
+		return 0, err
 	}
 
-	// Run the appropriate operation mode
 	var totalUpdates int
 	if flags.configFile != "" {
 		totalUpdates, err = runConfigFileMode(files, flags)
@@ -396,17 +409,15 @@ func main() {
 				err = fmt.Errorf("%w; failed to discard prepared report: %v", err, discardErr)
 			}
 		}
-		fatalf("%v", err)
+		return totalUpdates, err
 	}
 	if preparedReport != nil {
 		flags.report.SchemaVersion = 2
 		if publishErr := preparedReport.publish(&flags.report); publishErr != nil {
-			fatalf("Error writing update report: %v", publishErr)
+			return totalUpdates, fmt.Errorf("Error writing update report: %v", publishErr) //nolint:staticcheck // User-facing CLI diagnostic.
 		}
 	}
-	if flags.check && totalUpdates > 0 {
-		exitFunc(2)
-	}
+	return totalUpdates, nil
 }
 
 func validateRequiredOperationFlags(flags *cliFlags) {
@@ -418,29 +429,43 @@ func validateRequiredOperationFlags(flags *cliFlags) {
 	}
 }
 
-func prepareUpdateReport(reportFile string, inputFiles []string) (*preparedReportFile, error) {
-	if reportFile == "" {
+// jsonOutput describes a JSON document the command writes through a temporary file once its
+// work succeeds, and how diagnostics name it.
+type jsonOutput struct {
+	fileLabel     string // the destination, as in "report file must not overwrite input file"
+	documentLabel string // the document, as in "Error preparing update report"
+	tempPattern   string
+}
+
+var updateReportOutput = jsonOutput{fileLabel: "report file", documentLabel: "update report", tempPattern: ".tf-version-bump-report-*"}
+
+func prepareJSONOutput(output jsonOutput, destination string, inputFiles []string) (*preparedReportFile, error) {
+	if destination == "" {
 		return nil, nil
 	}
-	if err := validateReportFileDoesNotOverwriteInput(reportFile, inputFiles); err != nil {
+	if err := validateOutputDoesNotOverwriteInput(output, destination, inputFiles); err != nil {
 		return nil, err
 	}
 
-	file, err := os.CreateTemp(filepath.Dir(reportFile), ".tf-version-bump-report-*")
+	file, err := os.CreateTemp(filepath.Dir(destination), output.tempPattern)
 	if err != nil {
-		return nil, fmt.Errorf("Error preparing update report: %w", err) //nolint:staticcheck // User-facing CLI diagnostic.
+		return nil, fmt.Errorf("Error preparing %s: %w", output.documentLabel, err) //nolint:staticcheck // User-facing CLI diagnostic.
 	}
-	return &preparedReportFile{destination: reportFile, file: file}, nil
+	return &preparedReportFile{destination: destination, file: file}, nil
 }
 
-func (prepared *preparedReportFile) publish(report *updateReport) error {
-	data, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
+func (prepared *preparedReportFile) publish(document any) error {
+	var data bytes.Buffer
+	encoder := json.NewEncoder(&data)
+	// encoding/json writes <, > and & as Unicode escapes by default, which would make
+	// constraints such as ">= 1.5" unreadable in the audit.
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(document); err != nil {
 		_ = prepared.discard()
 		return fmt.Errorf("create report: %w", err)
 	}
-	data = append(data, '\n')
-	if _, err := prepared.file.Write(data); err != nil {
+	if _, err := prepared.file.Write(data.Bytes()); err != nil {
 		_ = prepared.discard()
 		return err
 	}
@@ -475,21 +500,21 @@ func (prepared *preparedReportFile) discard() error {
 	return removeErr
 }
 
-func validateReportFileDoesNotOverwriteInput(reportFile string, inputFiles []string) error {
-	if reportFile == "" {
+func validateOutputDoesNotOverwriteInput(output jsonOutput, destination string, inputFiles []string) error {
+	if destination == "" {
 		return nil
 	}
 
-	reportPath, err := filepath.Abs(reportFile)
+	destinationPath, err := filepath.Abs(destination)
 	if err != nil {
-		return fmt.Errorf("Error resolving report file: %w", err) //nolint:staticcheck // User-facing CLI diagnostic.
+		return fmt.Errorf("Error resolving %s: %w", output.fileLabel, err) //nolint:staticcheck // User-facing CLI diagnostic.
 	}
-	reportInfo, reportStatErr := os.Stat(reportPath)
-	if reportStatErr != nil && !os.IsNotExist(reportStatErr) {
-		return fmt.Errorf("Error inspecting report file: %w", reportStatErr) //nolint:staticcheck // User-facing CLI diagnostic.
+	destinationInfo, destinationStatErr := os.Stat(destinationPath)
+	if destinationStatErr != nil && !os.IsNotExist(destinationStatErr) {
+		return fmt.Errorf("Error inspecting %s: %w", output.fileLabel, destinationStatErr) //nolint:staticcheck // User-facing CLI diagnostic.
 	}
-	if reportStatErr == nil && reportInfo.IsDir() {
-		return fmt.Errorf("Error preparing update report: destination is a directory: %s", reportFile) //nolint:staticcheck // User-facing CLI diagnostic.
+	if destinationStatErr == nil && destinationInfo.IsDir() {
+		return fmt.Errorf("Error preparing %s: destination is a directory: %s", output.documentLabel, destination) //nolint:staticcheck // User-facing CLI diagnostic.
 	}
 
 	for _, inputFile := range inputFiles {
@@ -497,18 +522,18 @@ func validateReportFileDoesNotOverwriteInput(reportFile string, inputFiles []str
 		if absErr != nil {
 			return fmt.Errorf("Error resolving input file %s: %w", inputFile, absErr) //nolint:staticcheck // User-facing CLI diagnostic.
 		}
-		if filepath.Clean(reportPath) == filepath.Clean(inputPath) {
-			return fmt.Errorf("Error: report file must not overwrite input file: %s", reportFile) //nolint:staticcheck // User-facing CLI diagnostic.
+		if filepath.Clean(destinationPath) == filepath.Clean(inputPath) {
+			return fmt.Errorf("Error: %s must not overwrite input file: %s", output.fileLabel, destination) //nolint:staticcheck // User-facing CLI diagnostic.
 		}
-		if reportStatErr != nil {
+		if destinationStatErr != nil {
 			continue
 		}
 		inputInfo, inputStatErr := os.Stat(inputPath)
 		if inputStatErr != nil {
 			return fmt.Errorf("Error inspecting input file %s: %w", inputFile, inputStatErr) //nolint:staticcheck // User-facing CLI diagnostic.
 		}
-		if os.SameFile(reportInfo, inputInfo) {
-			return fmt.Errorf("Error: report file must not overwrite input file: %s", reportFile) //nolint:staticcheck // User-facing CLI diagnostic.
+		if os.SameFile(destinationInfo, inputInfo) {
+			return fmt.Errorf("Error: %s must not overwrite input file: %s", output.fileLabel, destination) //nolint:staticcheck // User-facing CLI diagnostic.
 		}
 	}
 
