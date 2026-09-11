@@ -205,7 +205,11 @@ collect_root() {
             '{root: $root, exists: false, files: {"main.tf": false, "providers.tf": false}, audit: null}'
         return
     fi
-    canonical=$(realpath "$path") || return 1
+    # -L is true here (the missing-root check above returned otherwise), so a non-existent path
+    # is a dangling symlink. Check it explicitly: BSD and GNU realpath disagree on how to report
+    # a dangling link, and GNU's default behaviour resolves it instead of failing.
+    [[ -e "$path" ]] || { echo "root $root is a broken symbolic link" >&2; return 1; }
+    canonical=$(realpath "$path" 2>/dev/null) || { echo "root $root could not be resolved" >&2; return 1; }
     path_is_within "$canonical" "$worktree" \
         || { echo "root $root resolves outside the checkout" >&2; return 1; }
     [[ -d "$canonical" ]] || { echo "root $root is not a directory" >&2; return 1; }

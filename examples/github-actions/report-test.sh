@@ -384,6 +384,25 @@ test_collect_records_duplicate_roots_as_a_branch_error() {
 }
 
 
+write_broken_symlink_root_branch() {
+    write_beta_branch "$1"
+    ln -s does-not-exist "$1/broken"
+}
+
+
+test_collect_records_a_broken_symlink_root() {
+    setup_report_fixture
+    add_state_branch state/staging/broken-root write_broken_symlink_root_branch
+
+    REPORT_TERRAFORM_ROOTS=broken assert_silent_success 'collecting a broken symlink root' \
+        "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" run_collect
+
+    jq -e '.branches == [{branch: "state/staging/broken-root", commit: .branches[0].commit,
+        error: "root broken is a broken symbolic link", roots: []}]' "$FIXTURE_OUTPUT/records.json" >/dev/null \
+        || fail "collect did not record the broken symlink root: $(<"$FIXTURE_OUTPUT/records.json")"
+}
+
+
 setup_records_fixture() {
     FIXTURE_ROOT=$(mktemp -d "$TEST_ROOT/records.XXXXXX")
     FIXTURE_OUTPUT="$FIXTURE_ROOT/version-report"
@@ -668,7 +687,7 @@ build_release_archive
 if [[ $# -eq 0 ]]; then
     tests=(test_collect_records_each_branch_root_and_audit test_collect_records_missing_and_empty_roots
         test_collect_records_unreadable_branches_and_continues test_collect_rejects_invalid_inputs
-        test_collect_records_duplicate_roots_as_a_branch_error
+        test_collect_records_duplicate_roots_as_a_branch_error test_collect_records_a_broken_symlink_root
         test_report_writes_the_improved_csv_and_summary test_report_succeeds_when_every_branch_was_read
         test_report_keeps_multi_line_values_on_one_table_row test_report_lists_every_root_with_repository_relative_paths
         test_legacy_writes_the_existing_report_format test_legacy_reports_all_passed_and_missing_roots
