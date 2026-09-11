@@ -71,7 +71,10 @@ Schema version 1:
   `actual` is null.
 - `actual` is the value as written, quotes trimmed; a non-literal expression is
   reported as its source text. `matches` uses the updater's exact comparison
-  (`expressionHasStringValue`), so no consumer reimplements it.
+  (`expressionHasStringValue`), so no consumer reimplements it. A matching value
+  is never changed by an update. A value can also stay unchanged without
+  matching: a skipped module, or an object-syntax provider without `version`,
+  which the updater does not add.
 - Config entries that no selected file uses produce no entries.
 - Entries follow the glob's file order, then block order within a file, then
   config order.
@@ -95,6 +98,10 @@ conflicts, exit status and output. Coverage stays at or above 90%.
   carrying its ID, config path, branch prefixes and Terraform directories. The
   prefixes repeat the update callers' lists; that duplication is the accepted
   cost of a standalone workflow, and a harness test fails if they drift apart.
+- Discovery runs unchanged, so a policy whose prefixes match no branch, or more
+  than 256, fails its report job at discovery without a summary or artefact,
+  exactly as the same prefixes fail the update workflow. The job's timeout is 30
+  minutes.
 
 Steps:
 
@@ -154,7 +161,11 @@ Reproduces the existing report, defects included:
 
 - Summary: a `## Legacy version report (<policy>)` heading, then a table headed
   `| Result | Test | Comment | State Branch |` with FAIL rows only, or
-  `All <n> checks passed.` when there are none.
+  `All <n> checks passed.` when there are none. Its cells are escaped for
+  Markdown and HTML, as the improved report's are. This is the one deliberate
+  difference from the existing report: it changes the raw Markdown but not the
+  rendered table, and stops a `|` or newline in a value breaking a row. The CSV
+  is not escaped.
 - CSV: every row, PASS and FAIL, under the header
   `"Result","Test","Comment","State Branch"`; jq's `@csv` quotes every field,
   the header's included.
@@ -187,6 +198,10 @@ Reproduces the existing report, defects included:
 - CSV: every row under the header
   `"status","branch","kind","subject","block","file","actual","expected","detail"`,
   every field quoted by `@csv`.
+- Both CSVs keep values exactly as written. A value beginning with `=`, `+`,
+  `-` or `@` may be evaluated as a formula by a spreadsheet that opens the file
+  directly; an exact pin such as `= 5.0.0` is valid Terraform. The README says
+  to import the CSVs as text instead; values are not altered to prevent it.
 - Statuses: `PASS`, `FAIL`, `SKIP`, `ERROR`. A value that matches is `PASS`
   even when a filter would skip it; otherwise a skipped value is `SKIP`, and
   anything else is `FAIL`. Kinds: `file`, `root`, `terraform`, `provider`,
@@ -204,7 +219,8 @@ Reproduces the existing report, defects included:
   `Checked <n> branch(es): …` counts line; a `### <branch>` table of its FAIL,
   SKIP and ERROR rows for each branch that has any; and a
   `Branches where every check passed:` list. Cell values are escaped for
-  Markdown and HTML.
+  Markdown and HTML, and newlines in a value become `<br>` so a multi-line
+  expression stays on its row.
 - `report` exits 1 after writing everything when any branch has an error.
   Mismatches alone never fail the job.
 
@@ -233,5 +249,9 @@ standalone workflow; both reports as steps in one job per policy; the legacy
 report's format, module-only scope, per-block rows, ignored filters, `none`,
 single root and non-failing mismatches; the legacy step failing on several
 roots; `@csv` quoting for both CSVs; reporting readable branches before failing
-on unreadable ones; one plan in two parts, with the release between them. This
-spec does not authorise a push, PR, merge or release.
+on unreadable ones; one plan in two parts, with the release between them. After
+the adversarial review: discovery's no-match and 256-branch limits are kept and
+documented, with a 30-minute job timeout; the legacy summary keeps its cell
+escaping as a documented difference; the CSVs' spreadsheet formula risk is
+documented rather than prevented. This spec does not authorise a push, PR,
+merge or release.
