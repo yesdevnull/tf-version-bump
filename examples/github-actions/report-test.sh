@@ -5,7 +5,6 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPOSITORY_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
 REPORT_SCRIPT="$SCRIPT_DIR/.github/scripts/report-state-branches.sh"
-# shellcheck disable=SC2034 # Used by report and legacy subcommand tests added in later tasks.
 REPORT_WORKFLOW="$SCRIPT_DIR/.github/workflows/tf-version-bump-report.yml"
 TEST_GIT=${TEST_GIT-git}
 TEST_ROOT=$(mktemp -d)
@@ -47,6 +46,48 @@ assert_silent_success() {
     fi
     [[ ! -s "$stdout_file" && ! -s "$stderr_file" ]] \
         || fail "$description emitted unexpected output: stdout=$(<"$stdout_file") stderr=$(<"$stderr_file")"
+}
+
+
+test_workflow_reports_each_policy_read_only() {
+    [[ -f "$REPORT_WORKFLOW" ]] || fail 'the report workflow does not exist'
+    local callers
+    callers=$(for policy in nonproduction production; do
+        yq -o=json '.jobs.automation.with' "$SCRIPT_DIR/.github/workflows/tf-version-bump-$policy.yml"
+    done | jq -s .)
+    yq -o=json '.' "$REPORT_WORKFLOW" | jq -e --argjson callers "$callers" '
+        .jobs.report as $job
+        | ($job.steps | map({key: (.name // "checkout"), value: .}) | from_entries) as $steps
+        | .permissions == {contents: "read"} and (.jobs | keys) == ["report"]
+          and $job.permissions == {contents: "read"}
+          and $job.if == "${{ github.ref == format('"'"'refs/heads/{0}'"'"', github.event.repository.default_branch) }}"
+          and $job.strategy["fail-fast"] == false
+          and ([$job.strategy.matrix.include[] | {policy, config_path, branch_prefixes, terraform_directories}]
+               == [$callers[] | {policy: .automation_policy_id, config_path,
+                                 branch_prefixes: .allowed_branch_prefixes, terraform_directories}])
+          and [$job.steps[] | .name // "checkout"] == ["checkout", "Discover state branches", "Collect versions",
+                                                      "Write version report", "Write legacy version report",
+                                                      "Upload version reports"]
+          and $steps["Discover state branches"].env.DISCOVERY_ALLOWED_PREFIXES == "${{ matrix.branch_prefixes }}"
+          and $steps["Discover state branches"].env.DISCOVERY_POLICY_ID == "${{ matrix.policy }}"
+          and $steps["Discover state branches"].env.DISCOVERY_MANUAL_PREFIX == ""
+          and ($steps["Discover state branches"].run | contains(">\"$RUNNER_TEMP/branches.json\""))
+          and $steps["Collect versions"].id == "collect"
+          and $steps["Collect versions"].env.REPORT_BRANCHES == "${{ runner.temp }}/branches.json"
+          and $steps["Collect versions"].env.REPORT_POLICY_ID == "${{ matrix.policy }}"
+          and $steps["Collect versions"].env.REPORT_CONFIG_PATH == "${{ matrix.config_path }}"
+          and $steps["Collect versions"].env.REPORT_TERRAFORM_ROOTS == "${{ matrix.terraform_directories }}"
+          and $steps["Collect versions"].env.REPORT_TF_VERSION_BUMP_VERSION == $callers[0].tf_version_bump_version
+          and $steps["Collect versions"].env.REPORT_TF_VERSION_BUMP_ARCHIVE_SHA256 == $callers[0].tf_version_bump_archive_sha256
+          and ([$steps["Collect versions", "Write version report", "Write legacy version report"].env.REPORT_OUTPUT_DIR]
+               | unique == [$steps["Upload version reports"].with.path])
+          and $steps["Write version report"].if == null
+          and $steps["Write legacy version report"].if == "${{ !cancelled() && steps.collect.outcome == '"'"'success'"'"' }}"
+          and $steps["Upload version reports"].if == $steps["Write legacy version report"].if
+          and $steps["Upload version reports"].with["retention-days"] == 7
+          and $steps["Upload version reports"].with["if-no-files-found"] == "error"
+          and ([.. | strings | select(test("secrets\\."))] == [])
+    ' >/dev/null || fail 'the report workflow does not wire discovery, collection and both reports read-only'
 }
 
 
@@ -580,7 +621,7 @@ if [[ $# -eq 0 ]]; then
         test_report_writes_the_improved_csv_and_summary test_report_succeeds_when_every_branch_was_read
         test_report_keeps_multi_line_values_on_one_table_row
         test_legacy_writes_the_existing_report_format test_legacy_reports_all_passed_and_missing_roots
-        test_legacy_rejects_several_roots)
+        test_legacy_rejects_several_roots test_workflow_reports_each_policy_read_only)
 else tests=("$@"); fi
 for test_name in "${tests[@]}"; do
     "$test_name"
