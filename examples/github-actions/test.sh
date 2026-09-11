@@ -1080,13 +1080,14 @@ test_processing_rejects_ignored_generated_lock() {
 
 test_processing_formats_only_after_dependency_or_lock_changes() {
     local mode mirror newer_package original_lock
-    for mode in unchanged new-lock upgraded-lock; do
+    for mode in unchanged new-lock upgraded-lock disabled; do
         setup_processing_workspace
         PROCESS_TERRAFORM_FMT=true
+        [[ "$mode" != disabled ]] || PROCESS_TERRAFORM_FMT=false
         printf '%s\n' 'terraform_version: ">= 1.0"' >"$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
         "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- .github/tf-version-bump/test.yml
         fixture_commit "$PROCESS_CONTROL_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: keep requested Terraform version unchanged'
-        if [[ "$mode" == new-lock ]]; then
+        if [[ "$mode" == new-lock || "$mode" == disabled ]]; then
             configure_validation_provider_base_without_lock
         elif [[ "$mode" == upgraded-lock ]]; then
             configure_validation_provider_base
@@ -1120,9 +1121,15 @@ test_processing_formats_only_after_dependency_or_lock_changes() {
             [[ ! -e "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'unchanged dependencies emitted a patch'
         else
             [[ "$(sha256_file "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl")" != "$original_lock" ]] || fail 'lock fixture did not change'
-            grep -F 'value = { a = "b" }' "$PROCESS_TARGET_CHECKOUT/root/nested/child.tf" >/dev/null || fail 'lock-only change did not enable formatting'
-            jq -e '.classification == "success" and .formatted == true' "$PROCESS_RESULT_DIR/result.json" >/dev/null \
-                || fail 'formatting that ran was not recorded'
+            if [[ "$mode" == disabled ]]; then
+                cmp "$PROCESS_TMP_ROOT/original-child.tf" "$PROCESS_TARGET_CHECKOUT/root/nested/child.tf" || fail 'disabled formatting rewrote a file'
+                jq -e '.classification == "success" and .formatted == false' "$PROCESS_RESULT_DIR/result.json" >/dev/null \
+                    || fail 'disabled formatting was recorded as run'
+            else
+                grep -F 'value = { a = "b" }' "$PROCESS_TARGET_CHECKOUT/root/nested/child.tf" >/dev/null || fail 'lock-only change did not enable formatting'
+                jq -e '.classification == "success" and .formatted == true' "$PROCESS_RESULT_DIR/result.json" >/dev/null \
+                    || fail 'formatting that ran was not recorded'
+            fi
             "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$PROCESS_TMP_ROOT/applied"
             "$TEST_GIT" -C "$PROCESS_TMP_ROOT/applied" apply --index "$PROCESS_RESULT_DIR/candidate.patch"
             cmp "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" "$PROCESS_TMP_ROOT/applied/root/.terraform.lock.hcl" || fail 'patch omitted lock change'
