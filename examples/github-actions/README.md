@@ -135,7 +135,7 @@ terraform_directories: |
 
 Roots must exist inside the state-branch checkout and must not resolve to duplicate directories. Version updates apply to `*.tf` files directly inside each configured root. When `terraform_fmt` is enabled and updates have changed files, formatting runs recursively below each root. Both supplied callers enable formatting; the reusable workflow defaults it to `false`.
 
-The callers pin `tf-version-bump` to `v1.0.0-rc.11` and verify archive SHA-256 `5560b45e220650e8b18d5836eff05d471f602a6ac970aeeb9628781797f54c85` before running it.
+The callers pin `tf-version-bump` to `v1.0.0-rc.12` and verify archive SHA-256 `35176ca1d6b462220bc3f8a74e3bf8ba30702860d83d0321ed2bde0e761f03eb` before running it.
 
 ## Initialisation and upgrades
 

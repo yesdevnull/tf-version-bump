@@ -321,7 +321,7 @@ func TestReleaseWorkflowReferencesSLSAGeneratorByExactSemanticVersionTag(t *test
 
 func TestUpdateActionsReleasePinUpdatesMaintainedFiles(t *testing.T) {
 	repository := copyActionsReleasePinFixture(t)
-	const newVersion = "v1.0.0-rc.12"
+	const newVersion = "v1.0.0-rc.13"
 	const newDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", newVersion, newDigest)
@@ -330,13 +330,13 @@ func TestUpdateActionsReleasePinUpdatesMaintainedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update release pin: %v\n%s", err, output)
 	}
-	if got, want := string(output), "Updated GitHub Actions example pin to v1.0.0-rc.12\n"; got != want {
+	if got, want := string(output), "Updated GitHub Actions example pin to v1.0.0-rc.13\n"; got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
 
 	for _, filename := range actionsReleasePinFiles() {
 		contents := readTestFile(t, filepath.Join(repository, filename))
-		if strings.Contains(contents, "v1.0.0-rc.11") || strings.Contains(contents, "5560b45e220650e8b18d5836eff05d471f602a6ac970aeeb9628781797f54c85") {
+		if strings.Contains(contents, "v1.0.0-rc.12") || strings.Contains(contents, "35176ca1d6b462220bc3f8a74e3bf8ba30702860d83d0321ed2bde0e761f03eb") {
 			t.Errorf("%s retains the previous release pin", filename)
 		}
 		if !strings.Contains(contents, newVersion) || !strings.Contains(contents, newDigest) {
@@ -358,7 +358,7 @@ func TestUpdateActionsReleasePinAcceptsStableRelease(t *testing.T) {
 	}
 	for _, filename := range actionsReleasePinFiles() {
 		contents := readTestFile(t, filepath.Join(repository, filename))
-		if strings.Contains(contents, "1.0.0-rc.11") {
+		if strings.Contains(contents, "1.0.0-rc.12") {
 			t.Errorf("%s retains the previous prerelease", filename)
 		}
 		if !strings.Contains(contents, newVersion) || !strings.Contains(contents, newDigest) {
@@ -392,7 +392,7 @@ func TestUpdateActionsReleasePinIsIdempotent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	command := exec.CommandContext(ctx, bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.11", "5560b45e220650e8b18d5836eff05d471f602a6ac970aeeb9628781797f54c85")
+	command := exec.CommandContext(ctx, bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.12", "35176ca1d6b462220bc3f8a74e3bf8ba30702860d83d0321ed2bde0e761f03eb")
 	command.Dir = repository
 	command.WaitDelay = time.Second
 	output, err := command.CombinedOutput()
@@ -451,11 +451,11 @@ func TestUpdateActionsReleasePinRejectsInvalidInputWithoutChanges(t *testing.T) 
 		args []string
 	}{
 		{name: "missing arguments"},
-		{name: "version without tag prefix", args: []string{"1.0.0-rc.12", strings.Repeat("a", 64)}},
+		{name: "version without tag prefix", args: []string{"1.0.0-rc.13", strings.Repeat("a", 64)}},
 		{name: "malformed version", args: []string{"v1.0", strings.Repeat("a", 64)}},
 		{name: "leading zero in core version", args: []string{"v01.0.0", strings.Repeat("a", 64)}},
 		{name: "leading zero in numeric prerelease", args: []string{"v1.0.0-01", strings.Repeat("a", 64)}},
-		{name: "short digest", args: []string{"v1.0.0-rc.12", "abc123"}},
+		{name: "short digest", args: []string{"v1.0.0-rc.13", "abc123"}},
 	}
 
 	for _, testCase := range testCases {
@@ -496,13 +496,13 @@ func TestUpdateActionsReleasePinRejectsUnexpectedLayoutWithoutPartialChanges(t *
 	repository := copyActionsReleasePinFixture(t)
 	guide := filepath.Join(repository, "docs", "ADVANCED-USAGE.md")
 	contents := readTestFile(t, guide)
-	contents = strings.Replace(contents, "5560b45e220650e8b18d5836eff05d471f602a6ac970aeeb9628781797f54c85", strings.Repeat("b", 64), 1)
+	contents = strings.Replace(contents, "35176ca1d6b462220bc3f8a74e3bf8ba30702860d83d0321ed2bde0e761f03eb", strings.Repeat("b", 64), 1)
 	if err := os.WriteFile(guide, []byte(contents), 0o644); err != nil {
 		t.Fatalf("write mismatched guide fixture: %v", err)
 	}
 	before := readActionsReleasePinFiles(t, repository)
 
-	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.12", strings.Repeat("a", 64))
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.13", strings.Repeat("a", 64))
 	command.Dir = repository
 	output, err := command.CombinedOutput()
 	var exitError *exec.ExitError
@@ -521,14 +521,14 @@ func TestUpdateActionsReleasePinRejectsDivergentDuplicateFieldWithoutPartialChan
 	repository := copyActionsReleasePinFixture(t)
 	workflow := filepath.Join(repository, "examples", "github-actions", ".github", "workflows", "tf-version-bump-nonproduction.yml")
 	contents := readTestFile(t, workflow)
-	currentField := "      tf_version_bump_version: v1.0.0-rc.11"
+	currentField := "      tf_version_bump_version: v1.0.0-rc.12"
 	contents = strings.Replace(contents, currentField, currentField+"\n      tf_version_bump_version: v0.9.0", 1)
 	if err := os.WriteFile(workflow, []byte(contents), 0o644); err != nil {
 		t.Fatalf("write duplicate-field fixture: %v", err)
 	}
 	before := readActionsReleasePinFiles(t, repository)
 
-	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.12", strings.Repeat("a", 64))
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.13", strings.Repeat("a", 64))
 	command.Dir = repository
 	output, err := command.CombinedOutput()
 	var exitError *exec.ExitError
@@ -556,7 +556,7 @@ func TestUpdateActionsReleasePinRejectsUnwritableTargetWithoutPartialChanges(t *
 	})
 	before := readActionsReleasePinFiles(t, repository)
 
-	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.12", strings.Repeat("a", 64))
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.13", strings.Repeat("a", 64))
 	command.Dir = repository
 	output, err := command.CombinedOutput()
 	var exitError *exec.ExitError
@@ -582,7 +582,7 @@ func TestUpdateActionsReleasePinReplacesFilesAtomicallyAndPreservesMode(t *testi
 		t.Fatalf("stat target before update: %v", err)
 	}
 
-	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.12", strings.Repeat("a", 64))
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.13", strings.Repeat("a", 64))
 	command.Dir = repository
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("update release pin: %v\n%s", err, output)
