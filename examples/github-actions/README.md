@@ -44,7 +44,7 @@ allowed_branch_prefixes: |
   !state/production/specific-branch
 ```
 
-An exclusion names one exact branch, so `state/production/specific-branch-2` is still selected. It applies wherever it appears in the list, and to manual runs too. It must fall under one of the caller's prefixes, or discovery fails before any branch is processed; an exclusion whose branch no longer exists is ignored. Keep the list a block scalar (`|`), because YAML reads a bare value beginning with `!` as a tag. The version report repeats each caller's list, so add the exclusion there too.
+An exclusion names one exact branch, so `state/production/specific-branch-2` is still selected. It applies wherever it appears in the list, and to manual runs too. It must fall under one of the caller's prefixes, or discovery fails before any branch is processed; an exclusion whose branch no longer exists is ignored. Excluding a branch leaves any open update pull request or failure issue for it untouched, so close them by hand. Keep the list a block scalar (`|`), because YAML reads a bare value beginning with `!` as a tag. The version report repeats each caller's list, so add the exclusion there too.
 
 Allow the workflow's `contents`, `pull-requests` and `issues` write permissions. Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** before live publication.
 

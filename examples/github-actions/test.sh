@@ -625,10 +625,13 @@ test_discovery_excludes_exact_branch_names() {
     add_discovery_branch "state/production/specific-branch"
     add_discovery_branch "state/production/specific-branch-2"
     add_discovery_branch "state/production/other"
+    # Git accepts this name; compared as an extended glob it would also drop both siblings above.
+    add_discovery_branch "state/production/@(other|specific-branch-2)"
 
+    local exclusions=$'!state/production/specific-branch\n!state/production/@(other|specific-branch-2)'
     local allow_list output
-    for allow_list in $'state/production/\n!state/production/specific-branch\n!state/production/deleted\n' \
-        $'!state/production/specific-branch\nstate/production/'; do
+    for allow_list in $'state/production/\n'"$exclusions"$'\n!state/production/deleted\n' \
+        "$exclusions"$'\nstate/production/'; do
         DISCOVERY_ALLOWED_PREFIXES=$allow_list
         output=$(run_discovery)
         jq -e '.include | map(.branch) == [
