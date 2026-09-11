@@ -124,6 +124,7 @@ type cliFlags struct {
 	terraformVersion     string
 	providerName         string
 	reportFile           string
+	auditFile            string
 	report               updateReport
 }
 
@@ -245,6 +246,7 @@ func parseFlags() *cliFlags {
 	flagSet.StringVar(&flags.terraformVersion, "terraform-version", "", "Update Terraform required_version in terraform blocks")
 	flagSet.StringVar(&flags.providerName, "provider", "", "Provider name to update (e.g., 'aws', 'azurerm')")
 	flagSet.StringVar(&flags.reportFile, "report-file", "", "Write exact updated Terraform, module, and provider block counts as JSON")
+	flagSet.StringVar(&flags.auditFile, "audit-file", "", "Write each configured version value's current and expected version as JSON without changing files (config mode)")
 	if err := flagSet.Parse(os.Args[1:]); err != nil {
 		if stderrors.Is(err, flag.ErrHelp) {
 			flagSet.SetOutput(usageOutput)
@@ -376,6 +378,13 @@ func main() {
 	files := findMatchingFiles(flags)
 	validateRequiredOperationFlags(flags)
 
+	if flags.auditFile != "" {
+		if err := runAuditMode(files, flags); err != nil {
+			fatalf("%v", err)
+		}
+		return
+	}
+
 	totalUpdates, err := runUpdateMode(files, flags)
 	if err != nil {
 		fatalf("%v", err)
@@ -437,7 +446,10 @@ type jsonOutput struct {
 	tempPattern   string
 }
 
-var updateReportOutput = jsonOutput{fileLabel: "report file", documentLabel: "update report", tempPattern: ".tf-version-bump-report-*"}
+var (
+	updateReportOutput = jsonOutput{fileLabel: "report file", documentLabel: "update report", tempPattern: ".tf-version-bump-report-*"}
+	auditOutput        = jsonOutput{fileLabel: "audit file", documentLabel: "audit", tempPattern: ".tf-version-bump-audit-*"}
+)
 
 func prepareJSONOutput(output jsonOutput, destination string, inputFiles []string) (*preparedReportFile, error) {
 	if destination == "" {
@@ -548,6 +560,9 @@ func validateOperationModes(flags *cliFlags) {
 		}
 		return
 	}
+	if flags.auditFile != "" {
+		validateAuditMode(flags)
+	}
 	if flags.check && flags.dryRun {
 		fatalf("Error: Cannot use -check with -dry-run")
 	}
@@ -596,11 +611,22 @@ func validateConfigUpdateMode(flags *cliFlags) {
 	}
 }
 
+// validateAuditMode keeps -audit-file read-only: it compares files with a config and never
+// combines with flags that preview, check, report or add versions.
+func validateAuditMode(flags *cliFlags) {
+	if flags.configFile == "" {
+		fatalf("Error: -audit-file requires -config")
+	}
+	if flags.dryRun || flags.check || flags.reportFile != "" || flags.forceAdd {
+		fatalf("Error: Cannot use -audit-file with -dry-run, -check, -report-file or -force-add")
+	}
+}
+
 func configValidationHasConflicts(flags *cliFlags) bool {
 	return flags.pattern != "" || flags.configFile != "" || flags.moduleSource != "" || flags.toVersion != "" ||
 		len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" ||
 		flags.terraformVersion != "" || flags.providerName != "" || flags.forceAdd || flags.dryRun ||
-		flags.check || flags.verbose || flags.reportFile != ""
+		flags.check || flags.verbose || flags.reportFile != "" || flags.auditFile != ""
 }
 
 // findMatchingFiles finds all files matching the pattern
