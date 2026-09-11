@@ -16,6 +16,7 @@ type auditReport struct {
 	SchemaVersion int                   `json:"schema_version"`
 	Terraform     []terraformAuditEntry `json:"terraform"`
 	Providers     []providerAuditEntry  `json:"providers"`
+	Modules       []moduleAuditEntry    `json:"modules"`
 }
 
 type terraformAuditEntry struct {
@@ -33,18 +34,37 @@ type providerAuditEntry struct {
 	Matches  bool    `json:"matches"`
 }
 
+type moduleAuditEntry struct {
+	File     string           `json:"file"`
+	Name     string           `json:"name"`
+	Source   string           `json:"source"`
+	Actual   *string          `json:"actual"`
+	Expected string           `json:"expected"`
+	Matches  bool             `json:"matches"`
+	Skip     *moduleAuditSkip `json:"skip"`
+}
+
+// moduleAuditSkip names the first config filter that stops the updater changing a block.
+type moduleAuditSkip struct {
+	Filter string   `json:"filter"`
+	Values []string `json:"values"`
+}
+
 // buildAudit reads each selected file once and records every version value the config targets
 // in it. It never writes files and stops at the first file it cannot read or parse.
 func buildAudit(files []string, config *Config) (*auditReport, error) {
-	audit := &auditReport{SchemaVersion: 1, Terraform: []terraformAuditEntry{}, Providers: []providerAuditEntry{}}
+	audit := &auditReport{SchemaVersion: 1, Terraform: []terraformAuditEntry{}, Providers: []providerAuditEntry{}, Modules: []moduleAuditEntry{}}
 	for _, filename := range files {
 		file, err := parseAuditedFile(filename)
 		if err != nil {
 			return nil, err
 		}
 		for _, block := range file.Body().Blocks() {
-			if block.Type() == "terraform" {
+			switch block.Type() {
+			case "terraform":
 				audit.recordTerraformBlock(filename, block, config)
+			case "module":
+				audit.recordModuleBlock(filename, block, config.Modules)
 			}
 		}
 	}
@@ -93,6 +113,48 @@ func (audit *auditReport) recordRequiredProvider(filename string, requiredProvid
 		actual, matches := auditedObjectVersion(objExpr, expression, provider.Version)
 		audit.Providers = append(audit.Providers, providerAuditEntry{File: filename, Name: provider.Name, Actual: actual, Expected: provider.Version, Matches: matches})
 	}
+}
+
+// recordModuleBlock records the block once for each config entry with an equal source.
+func (audit *auditReport) recordModuleBlock(filename string, block *hclwrite.Block, updates []ModuleUpdate) {
+	source, ok := moduleSourceValue(block)
+	if !ok {
+		return
+	}
+	name := moduleBlockName(block)
+	versionAttribute := block.Body().GetAttribute("version")
+	// Index rather than copy: gocritic's hugeParam rejects passing a ModuleUpdate by value.
+	for i := range updates {
+		update := &updates[i]
+		if update.Source != source {
+			continue
+		}
+		actual, matches := auditedAttribute(versionAttribute, update.Version)
+		audit.Modules = append(audit.Modules, moduleAuditEntry{
+			File: filename, Name: name, Source: source, Actual: actual, Expected: update.Version, Matches: matches,
+			Skip: moduleAuditSkipFor(name, source, actual, update),
+		})
+	}
+}
+
+// moduleAuditSkipFor applies the updater's precedence: a local source, then ignore_modules, then
+// the version filters, which a block without a version never meets.
+func moduleAuditSkipFor(name, source string, actual *string, update *ModuleUpdate) *moduleAuditSkip {
+	switch {
+	case isLocalModule(source):
+		return &moduleAuditSkip{Filter: "local_source", Values: []string{}}
+	case shouldIgnoreModule(name, update.IgnoreModules):
+		return &moduleAuditSkip{Filter: "ignore_modules", Values: update.IgnoreModules}
+	case actual == nil:
+		return nil
+	}
+	switch moduleVersionFilter(*actual, update.IgnoreVersions, update.From) {
+	case "ignore_versions":
+		return &moduleAuditSkip{Filter: "ignore_versions", Values: update.IgnoreVersions}
+	case "from":
+		return &moduleAuditSkip{Filter: "from", Values: update.From}
+	}
+	return nil
 }
 
 // auditedAttribute returns an attribute's value as written, without its quotes, and whether it
