@@ -264,6 +264,8 @@ jobs:
           RECONCILE_DRY_RUN: ${{ inputs.dry_run }}
           RECONCILE_COMMIT_AUTHOR_NAME: ${{ inputs.commit_author_name || 'github-actions[bot]' }}
           RECONCILE_COMMIT_AUTHOR_EMAIL: ${{ inputs.commit_author_email || '41898282+github-actions[bot]@users.noreply.github.com' }}
+          RECONCILE_TERRAFORM_VERSION: ${{ inputs.terraform_version }}
+          RECONCILE_TF_VERSION_BUMP_VERSION: ${{ inputs.tf_version_bump_version }}
           GH_TOKEN: ${{ github.token }}
         run: '"$CONTROL_CHECKOUT/.github/scripts/reconcile-state-branch.sh" publish'
       - name: Report dry-run outcome
