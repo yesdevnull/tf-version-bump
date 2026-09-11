@@ -254,10 +254,101 @@ test_collect_records_missing_and_empty_roots() {
 }
 
 
+write_broken_branch() {
+    printf 'module {\n' >"$1/main.tf"
+}
+
+
+write_symlinked_branch() {
+    write_beta_branch "$1"
+    mv "$1/main.tf" "$1/real.tf"
+    ln -s real.tf "$1/main.tf"
+}
+
+
+write_escaping_root_branch() {
+    write_beta_branch "$1"
+    ln -s .. "$1/outside"
+}
+
+
+test_collect_records_unreadable_branches_and_continues() {
+    setup_report_fixture
+    add_state_branch state/staging/broken write_broken_branch
+    add_state_branch state/staging/linked write_symlinked_branch
+    add_state_branch state/staging/escaping write_escaping_root_branch
+    local missing=0123456789abcdef0123456789abcdef01234567
+    FIXTURE_BRANCH_ENTRIES=$(jq -c --arg oid "$missing" '. + [{branch: "state/staging/missing", base_oid: $oid}]' \
+        <<<"$FIXTURE_BRANCH_ENTRIES")
+    add_state_branch state/staging/beta write_beta_branch
+
+    REPORT_TERRAFORM_ROOTS=$'.\noutside' assert_silent_success 'collecting unreadable branches' \
+        "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" run_collect
+
+    # The parse error must follow the root directly: collect strips the date and time Go's log
+    # package puts before each CLI diagnostic, so the recorded error is stable between runs.
+    jq -e --arg missing "$missing" '
+        [.branches[].branch] == ["state/staging/broken", "state/staging/linked", "state/staging/escaping",
+                                 "state/staging/missing", "state/staging/beta"]
+        and (.branches[0].error | startswith("could not audit root .: Error auditing main.tf: failed to parse HCL"))
+        and .branches[1].error == "root . contains a symlinked Terraform file"
+        and .branches[2].error == "root outside resolves outside the checkout"
+        and (.branches[3].error | startswith("could not fetch commit " + $missing))
+        and all(.branches[0:4][]; .roots == [])
+        and .branches[4].error == null
+        and [.branches[4].roots[] | .exists] == [true, false]' \
+        "$FIXTURE_OUTPUT/records.json" >/dev/null \
+        || fail "collect did not record the unreadable branches and continue: $(<"$FIXTURE_OUTPUT/records.json")"
+}
+
+
+test_collect_rejects_invalid_inputs() {
+    setup_report_fixture
+    add_state_branch state/staging/beta write_beta_branch
+    local wrong_digest
+    wrong_digest=$(printf 'a%.0s' {1..64})
+    local -a cases=(
+        "REPORT_TERRAFORM_ROOTS=../outside|Terraform roots must be non-empty relative paths without .."
+        "REPORT_TERRAFORM_ROOTS=env-[12]|Terraform root env-[12] contains a glob character"
+        "REPORT_CONFIG_PATH=/etc/hosts|config path must be relative and must not contain .."
+        "REPORT_POLICY_ID=Bad|policy ID is invalid"
+        "REPORT_TF_VERSION_BUMP_ARCHIVE_SHA256=$wrong_digest|tf-version-bump release archive checksum mismatch"
+        "REPORT_OUTPUT_DIR=$FIXTURE_RUNNER_TEMP|output directory must be absolute and absent"
+    )
+    local entry assignment expected
+    for entry in "${cases[@]}"; do
+        assignment=${entry%%|*}
+        expected=${entry#*|}
+        if (export "${assignment?}"; run_collect) >"$FIXTURE_ROOT/stdout" 2>"$FIXTURE_ROOT/stderr"; then
+            fail "collect accepted $assignment"
+        fi
+        [[ ! -s "$FIXTURE_ROOT/stdout" ]] || fail "collect printed output for $assignment"
+        [[ "$(<"$FIXTURE_ROOT/stderr")" == "report error: $expected" ]] \
+            || fail "collect did not report '$expected' for $assignment: $(<"$FIXTURE_ROOT/stderr")"
+        [[ ! -e "$FIXTURE_OUTPUT/records.json" ]] || fail "collect wrote records for $assignment"
+    done
+}
+
+
+test_collect_records_duplicate_roots_as_a_branch_error() {
+    setup_report_fixture
+    add_state_branch state/staging/beta write_beta_branch
+
+    REPORT_TERRAFORM_ROOTS=$'.\n./' assert_silent_success 'collecting duplicate roots' \
+        "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" run_collect
+
+    jq -e '.branches == [{branch: "state/staging/beta", commit: .branches[0].commit,
+        error: "root ./ duplicates another root", roots: []}]' "$FIXTURE_OUTPUT/records.json" >/dev/null \
+        || fail "collect did not record duplicate roots as a branch error: $(<"$FIXTURE_OUTPUT/records.json")"
+}
+
+
 build_release_archive
 
 if [[ $# -eq 0 ]]; then
-    tests=(test_collect_records_each_branch_root_and_audit test_collect_records_missing_and_empty_roots)
+    tests=(test_collect_records_each_branch_root_and_audit test_collect_records_missing_and_empty_roots
+        test_collect_records_unreadable_branches_and_continues test_collect_rejects_invalid_inputs
+        test_collect_records_duplicate_roots_as_a_branch_error)
 else tests=("$@"); fi
 for test_name in "${tests[@]}"; do
     "$test_name"
