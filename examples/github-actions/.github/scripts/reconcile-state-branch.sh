@@ -19,7 +19,8 @@ publish additionally checks the clean exact-base RECONCILE_TARGET_CHECKOUT and
 RECONCILE_TERRAFORM_ROOTS, creates one owned update commit, and reconciles marked
 PRs and failure issues. Requires RECONCILE_DRY_RUN (true/false), RUNNER_TEMP,
 RECONCILE_RUN_URL, RECONCILE_GIT_REMOTE, RECONCILE_REPOSITORY, GH_TOKEN,
-RECONCILE_COMMIT_AUTHOR_NAME and RECONCILE_COMMIT_AUTHOR_EMAIL.
+RECONCILE_COMMIT_AUTHOR_NAME, RECONCILE_COMMIT_AUTHOR_EMAIL, and the
+RECONCILE_TERRAFORM_VERSION and RECONCILE_TF_VERSION_BUMP_VERSION their bodies name.
 It respects Git signing configuration. Dry runs never mutate remote refs or GitHub.
 Automation and invalid results never publish or clean up GitHub records.
 EOF
@@ -58,7 +59,8 @@ validate_result() {
         --arg policy "$RECONCILE_AUTOMATION_POLICY_ID" --arg control "$RECONCILE_CONTROL_OID" \
         --arg branch "$RECONCILE_STATE_BRANCH" --arg base "$RECONCILE_BASE_OID" \
         --arg hash "$RECONCILE_REF_HASH" '
-        .schema_version == 3 and .run_id == $run and .run_attempt == $attempt and
+        .schema_version == 4 and .run_id == $run and .run_attempt == $attempt and
+        (.formatted | type == "boolean") and
         .automation_policy_id == $policy and .control_oid == $control and
         .state_branch == $branch and .base_oid == $base and .ref_hash == $hash and
         (.roots | type == "array" and length > 0 and length == (unique | length) and
@@ -192,11 +194,12 @@ verify_remote_base() {
 }
 
 write_github_body() {
-    local body="$RECONCILE_TEMPORARY_PATH/body"
-    printf '%s\n\nTerraform dependency update for %s.\n\nResult: %s\n\nBase: %s\n\nWorkflow run: <a href="%s">run %s, attempt %s</a>\n' \
-        "$(github_marker)" "$(html_code "$RECONCILE_STATE_BRANCH")" "$(html_code "$CLASSIFICATION")" \
-        "$(html_code "$RECONCILE_BASE_OID")" "$(html_escape "$RECONCILE_RUN_URL")" \
-        "$RECONCILE_RUN_ID" "$RECONCILE_RUN_ATTEMPT" >"$body"
+    local body="$RECONCILE_TEMPORARY_PATH/body" formatting
+    formatting=$(jq -r 'if .formatted then "ran" else "did not run" end' "$MANIFEST")
+    printf '%s\n\nTerraform dependency update for %s.\n\nResult: %s\n\nFormatting: <code>terraform fmt</code> %s\n\nTools: Terraform %s, tf-version-bump %s\n\nWorkflow run: <a href="%s">run %s, attempt %s</a>\n' \
+        "$(github_marker)" "$(html_code "$RECONCILE_STATE_BRANCH")" "$(html_code "$CLASSIFICATION")" "$formatting" \
+        "$(html_code "$RECONCILE_TERRAFORM_VERSION")" "$(html_code "$RECONCILE_TF_VERSION_BUMP_VERSION")" \
+        "$(html_escape "$RECONCILE_RUN_URL")" "$RECONCILE_RUN_ID" "$RECONCILE_RUN_ATTEMPT" >"$body"
     if [[ "$CLASSIFICATION" == branch-* ]]; then
         printf '\nStage: %s\n\nRoot: %s\n\nStatus: %s\n' \
             "$(html_code "$(jq -r '.failure.stage' "$MANIFEST")")" \
@@ -244,6 +247,8 @@ publish_result() {
     : "${RECONCILE_GIT_REMOTE:?RECONCILE_GIT_REMOTE must be set}"
     : "${RECONCILE_REPOSITORY:?RECONCILE_REPOSITORY must be set}"
     : "${RECONCILE_RUN_URL:?RECONCILE_RUN_URL must be set}"
+    : "${RECONCILE_TERRAFORM_VERSION:?RECONCILE_TERRAFORM_VERSION must be set}"
+    : "${RECONCILE_TF_VERSION_BUMP_VERSION:?RECONCILE_TF_VERSION_BUMP_VERSION must be set}"
     : "${GH_TOKEN:?GH_TOKEN must be set}"
     if [[ "$CLASSIFICATION" == success ]]; then construct_update_commit; publish_update_ref; fi
     verify_remote_base

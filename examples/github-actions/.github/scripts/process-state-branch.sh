@@ -45,6 +45,7 @@ CONFIG_PATH=""
 TERRAFORM_ROOTS=()
 TF_DATA_DIRECTORIES=()
 ROOTS_JSON='[]'
+FORMATTED=false
 TERRAFORM_ENVIRONMENT=()
 SECRET_ENVIRONMENT_COUNT=0
 UNESCAPED_VALUE=''
@@ -225,12 +226,12 @@ write_result() {
         --arg policy "$PROCESS_AUTOMATION_POLICY_ID" --arg control_oid "$PROCESS_CONTROL_OID" \
         --arg branch "$PROCESS_STATE_BRANCH" --arg base_oid "$PROCESS_BASE_OID" \
         --arg ref_hash "$PROCESS_REF_HASH" --arg classification "$classification" \
-        --argjson roots "$ROOTS_JSON" --arg digest "$digest" \
+        --argjson roots "$ROOTS_JSON" --argjson formatted "$FORMATTED" --arg digest "$digest" \
         --arg stage "$stage" --arg root "$root" --argjson status "$status" \
-        '{schema_version: 3, run_id: $run_id, run_attempt: $run_attempt,
+        '{schema_version: 4, run_id: $run_id, run_attempt: $run_attempt,
           automation_policy_id: $policy, control_oid: $control_oid,
           state_branch: $branch, base_oid: $base_oid, ref_hash: $ref_hash,
-          classification: $classification, roots: $roots}
+          classification: $classification, roots: $roots, formatted: $formatted}
         + (if $classification == "success" then {patch_sha256: $digest}
            elif $stage != "" then {failure: {stage: $stage, root: $root, status: $status}}
            else {} end)' >"$RESULT_STAGE/result.json"
@@ -307,6 +308,7 @@ process_roots() {
     local candidate_status
     candidate_status=$(git -C "$TARGET_CHECKOUT" status --porcelain=v1 --untracked-files=all)
     if [[ "$PROCESS_TERRAFORM_FMT" == true && -n "$candidate_status" ]]; then
+        FORMATTED=true
         index=0
         for root in "${TERRAFORM_ROOTS[@]}"; do
             index=$((index + 1))

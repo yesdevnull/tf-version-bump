@@ -141,6 +141,8 @@ run_publish() {
         RECONCILE_DRY_RUN=${RECONCILE_DRY_RUN-true} \
         RECONCILE_COMMIT_AUTHOR_NAME='Reconcile Automation' \
         RECONCILE_COMMIT_AUTHOR_EMAIL='reconcile@example.invalid' \
+        RECONCILE_TERRAFORM_VERSION=1.15.5 \
+        RECONCILE_TF_VERSION_BUMP_VERSION=v1.0.0-rc.11 \
         GH_TOKEN=test-only-token \
         RUNNER_TEMP="$FIXTURE_ROOT/runner-temp" \
         "$RECONCILE_SCRIPT" publish
@@ -168,9 +170,10 @@ setup_success_fixture() {
     "$TEST_GIT" -C "$FIXTURE_SOURCE" diff --binary --full-index >"$FIXTURE_RESULT/candidate.patch"
     jq -n --arg oid "$FIXTURE_BASE_OID" --arg hash "$(ref_hash)" \
         --arg digest "$(sha256_file "$FIXTURE_RESULT/candidate.patch")" \
-        '{schema_version: 3, run_id: "100", run_attempt: "1", automation_policy_id: "nonproduction",
+        '{schema_version: 4, run_id: "100", run_attempt: "1", automation_policy_id: "nonproduction",
           control_oid: $oid, state_branch: "state/nonproduction/example", base_oid: $oid,
-          ref_hash: $hash, classification: "success", roots: ["root"], patch_sha256: $digest}' \
+          ref_hash: $hash, classification: "success", roots: ["root"], formatted: true,
+          patch_sha256: $digest}' \
         >"$FIXTURE_RESULT/result.json"
     setup_gh_capture
     if [[ "$TEST_GIT" != git ]]; then ln -s "$TEST_GIT" "$FIXTURE_BIN/git"; fi
@@ -232,6 +235,8 @@ test_reconciles_supplied_processing_failure() {
     [[ "$(<"$FIXTURE_GH_CAPTURE/closed-pr")" == 17 ]] || fail 'invalid configuration left obsolete PR open'
     [[ "$(sed -n '2p' "$FIXTURE_GH_CAPTURE/calls")" == 'pr close 17 '* ]] || fail 'failure issue handled before PR closure'
     grep -F 'issue create ' "$FIXTURE_GH_CAPTURE/calls" >/dev/null || fail 'invalid configuration did not create failure issue'
+    grep -F 'Formatting: <code>terraform fmt</code> did not run' "$FIXTURE_GH_CAPTURE/issue-body" >/dev/null \
+        || fail 'failure issue misreports formatting'
 }
 
 test_publishes_one_owned_commit_from_exact_base() {
@@ -249,6 +254,10 @@ test_publishes_one_owned_commit_from_exact_base() {
     fi
     grep -F 'pr create ' "$FIXTURE_GH_CAPTURE/calls" >/dev/null || fail 'success did not create PR'
     grep -F '/actions/runs/100' "$FIXTURE_GH_CAPTURE/pr-body" >/dev/null || fail 'PR omitted run link'
+    grep -F 'Formatting: <code>terraform fmt</code> ran' "$FIXTURE_GH_CAPTURE/pr-body" >/dev/null || fail 'PR omitted formatting'
+    grep -F 'Tools: Terraform <code>1.15.5</code>, tf-version-bump <code>v1.0.0-rc.11</code>' \
+        "$FIXTURE_GH_CAPTURE/pr-body" >/dev/null || fail 'PR omitted tool versions'
+    ! grep -F "$FIXTURE_BASE_OID" "$FIXTURE_GH_CAPTURE/pr-body" >/dev/null || fail 'PR shows the base OID'
     cmp "$FIXTURE_SOURCE/root/main.tf" "$FIXTURE_CHECKOUT/root/main.tf" || fail 'published content differs'
     "$TEST_GIT" -C "$FIXTURE_CHECKOUT" reset --hard "$FIXTURE_BASE_OID" >/dev/null
     existing_records
@@ -259,7 +268,7 @@ test_publishes_one_owned_commit_from_exact_base() {
 
 test_result_validation_prevents_mutation() {
     local mutation
-    for mutation in '.run_attempt="2"' '.base_oid="bad"' '.patch_sha256=("0"*64)' '.roots=["other"]' '.classification="unknown"'; do
+    for mutation in '.run_attempt="2"' '.base_oid="bad"' '.patch_sha256=("0"*64)' '.roots=["other"]' '.classification="unknown"' '.formatted="true"'; do
         setup_success_fixture
         change_result "$mutation"
         assert_publish_failure 'reconciliation error:'

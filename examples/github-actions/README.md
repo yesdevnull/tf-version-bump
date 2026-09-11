@@ -156,6 +156,8 @@ Pull requests and failure issues carry this stable marker:
 <!-- tf-version-bump:<policy>:<ref-hash> -->
 ```
 
+Their body names the result, whether `terraform fmt` ran, the Terraform and tf-version-bump versions and the workflow run; a failure issue adds the failed stage, root and exit status.
+
 | Result | Publication |
 | --- | --- |
 | Changed and valid | Create or refresh the marked PR; close the marked failure issue |

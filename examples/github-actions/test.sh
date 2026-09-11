@@ -889,8 +889,8 @@ test_processing_combines_update_init_format_validate() {
     local base_oid
     base_oid=$(processing_base_oid)
     assert_silent_success 'combined processing' "$PROCESS_TMP_ROOT/stdout" "$PROCESS_TMP_ROOT/stderr" run_processing
-    jq -e --arg base "$base_oid" '.schema_version == 3 and .classification == "success" and
-        .base_oid == $base and .roots == ["root", "second"] and (.patch_sha256 | length == 64)' \
+    jq -e --arg base "$base_oid" '.schema_version == 4 and .classification == "success" and
+        .formatted == true and .base_oid == $base and .roots == ["root", "second"] and (.patch_sha256 | length == 64)' \
         "$PROCESS_RESULT_DIR/result.json" >/dev/null || fail 'missing combined result contract'
     [[ "$(processing_base_oid)" == "$base_oid" ]] || fail 'processing created a commit'
     [[ -f "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'missing final patch'
@@ -978,7 +978,9 @@ test_workflow_runs_three_jobs_with_current_attempt_results() {
         ([.process.steps[] | select(.with.name != null) | .with.name] ==
          [.publish.steps[] | select(.with.name != null) | .with.name]) and
         ([.publish.steps[] | select(.env.TF_TOKEN_app_terraform_io != null)] | length == 0) and
-        ([.publish.steps[] | select(.env.RECONCILE_RUN_URL != null)] | length == 1)
+        ([.publish.steps[] | select(.env.RECONCILE_RUN_URL != null)] | length == 1) and
+        ([.publish.steps[] | select(.env.RECONCILE_TERRAFORM_VERSION == "${{ inputs.terraform_version }}"
+            and .env.RECONCILE_TF_VERSION_BUMP_VERSION == "${{ inputs.tf_version_bump_version }}")] | length == 1)
     ' >/dev/null || fail 'workflow does not wire the three-job current-attempt result contract'
 }
 
@@ -1113,12 +1115,14 @@ test_processing_formats_only_after_dependency_or_lock_changes() {
         cmp "$PROCESS_TMP_ROOT/original-main.tf" "$PROCESS_TARGET_CHECKOUT/root/main.tf" || fail 'lock-only case changed Terraform constraints'
         if [[ "$mode" == unchanged ]]; then
             jq -e '.classification == "no-change"' "$PROCESS_RESULT_DIR/result.json" >/dev/null || fail 'unchanged dependencies produced a formatting-only candidate'
+            jq -e '.formatted == false' "$PROCESS_RESULT_DIR/result.json" >/dev/null || fail 'skipped formatting was recorded as run'
             cmp "$PROCESS_TMP_ROOT/original-child.tf" "$PROCESS_TARGET_CHECKOUT/root/nested/child.tf" || fail 'unchanged dependencies triggered formatting'
             [[ ! -e "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'unchanged dependencies emitted a patch'
         else
             [[ "$(sha256_file "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl")" != "$original_lock" ]] || fail 'lock fixture did not change'
             grep -F 'value = { a = "b" }' "$PROCESS_TARGET_CHECKOUT/root/nested/child.tf" >/dev/null || fail 'lock-only change did not enable formatting'
-            jq -e '.classification == "success"' "$PROCESS_RESULT_DIR/result.json" >/dev/null
+            jq -e '.classification == "success" and .formatted == true' "$PROCESS_RESULT_DIR/result.json" >/dev/null \
+                || fail 'formatting that ran was not recorded'
             "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$PROCESS_TMP_ROOT/applied"
             "$TEST_GIT" -C "$PROCESS_TMP_ROOT/applied" apply --index "$PROCESS_RESULT_DIR/candidate.patch"
             cmp "$PROCESS_TARGET_CHECKOUT/root/.terraform.lock.hcl" "$PROCESS_TMP_ROOT/applied/root/.terraform.lock.hcl" || fail 'patch omitted lock change'
@@ -1396,7 +1400,7 @@ write_report_manifest() {
     jq -n --arg branch 'state/nonproduction/example-thing' \
         --arg classification "$classification" --argjson failure "$failure" \
         --argjson roots "$roots" \
-        '{schema_version: 3, state_branch: $branch, classification: $classification, roots: $roots}
+        '{schema_version: 4, state_branch: $branch, classification: $classification, roots: $roots}
          + (if $failure == null then {} else {failure: $failure} end)' >"$path"
 }
 
