@@ -1325,21 +1325,32 @@ func attributeHasStringValue(attr *hclwrite.Attribute, value string) bool {
 	return expressionHasStringValue(attr.Expr().BuildTokens(nil).Bytes(), value)
 }
 
+// moduleVersionFilter names the config filter that stops an update from currentVersion:
+// "ignore_versions" when it lists the version, "from" when it is set and does not, or "" when
+// neither applies. ignore_versions takes precedence over from.
+func moduleVersionFilter(currentVersion string, ignoreVersions, fromVersions []string) string {
+	if len(ignoreVersions) > 0 && containsVersion(ignoreVersions, currentVersion) {
+		return "ignore_versions"
+	}
+	if len(fromVersions) > 0 && !containsVersion(fromVersions, currentVersion) {
+		return "from"
+	}
+	return ""
+}
+
 func shouldSkipModuleVersion(moduleName, currentVersion string, opts *moduleUpdateOptions) bool {
-	if len(opts.ignoreVersions) > 0 && containsVersion(opts.ignoreVersions, currentVersion) {
+	switch moduleVersionFilter(currentVersion, opts.ignoreVersions, opts.fromVersions) {
+	case "ignore_versions":
 		if opts.verbose {
 			fmt.Printf("  ⊗ Skipped module %s in %s (current version %s matches 'ignore-version' filter %v)\n", quote(moduleName, opts.outputFormat), opts.filename, quote(currentVersion, opts.outputFormat), opts.ignoreVersions)
 		}
 		return true
-	}
-
-	if len(opts.fromVersions) > 0 && !containsVersion(opts.fromVersions, currentVersion) {
+	case "from":
 		if opts.verbose {
 			fmt.Printf("  ⊗ Skipped module %s in %s (current version %s does not match any 'from' filter %v)\n", quote(moduleName, opts.outputFormat), opts.filename, quote(currentVersion, opts.outputFormat), opts.fromVersions)
 		}
 		return true
 	}
-
 	return false
 }
 
