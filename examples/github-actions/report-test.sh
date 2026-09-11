@@ -343,12 +343,162 @@ test_collect_records_duplicate_roots_as_a_branch_error() {
 }
 
 
+setup_records_fixture() {
+    FIXTURE_ROOT=$(mktemp -d "$TEST_ROOT/records.XXXXXX")
+    FIXTURE_OUTPUT="$FIXTURE_ROOT/version-report"
+    mkdir "$FIXTURE_OUTPUT"
+    : >"$FIXTURE_ROOT/summary.md"
+}
+
+
+# Four branches covering every improved-report status: alpha has a provider and module
+# mismatch, a skipped module and a missing version; beta lacks providers.tf; gamma passes
+# everything; delta could not be read.
+write_report_records() {
+    cat >"$FIXTURE_OUTPUT/records.json" <<'EOF'
+{
+  "policy": "nonproduction",
+  "roots": ["."],
+  "branches": [
+    {"branch": "state/nonproduction/alpha", "commit": "1111111111111111111111111111111111111111", "error": null, "roots": [
+      {"root": ".", "exists": true, "files": {"main.tf": true, "providers.tf": true}, "audit": {"schema_version": 1,
+        "terraform": [{"file": "versions.tf", "actual": ">= 1.10", "expected": ">= 1.10", "matches": true}],
+        "providers": [{"file": "versions.tf", "name": "aws", "actual": "~> 5.0", "expected": "~> 6.0", "matches": false}],
+        "modules": [
+          {"file": "main.tf", "name": "vpc", "source": "terraform-aws-modules/vpc/aws", "actual": "4.2.0", "expected": "5.0.0", "matches": false, "skip": null},
+          {"file": "main.tf", "name": "legacy_vpc", "source": "terraform-aws-modules/vpc/aws", "actual": "3.19.0", "expected": "5.0.0", "matches": false, "skip": {"filter": "ignore_modules", "values": ["legacy_*"]}},
+          {"file": "storage.tf", "name": "logs", "source": "terraform-aws-modules/s3-bucket/aws", "actual": ">= 4.0, < 5.0", "expected": ">= 4.0, < 5.0", "matches": true, "skip": null},
+          {"file": "storage.tf", "name": "assets", "source": "terraform-aws-modules/s3-bucket/aws", "actual": null, "expected": ">= 4.0, < 5.0", "matches": false, "skip": null}
+        ]}}]},
+    {"branch": "state/staging/beta", "commit": "2222222222222222222222222222222222222222", "error": null, "roots": [
+      {"root": ".", "exists": true, "files": {"main.tf": true, "providers.tf": false}, "audit": {"schema_version": 1, "terraform": [], "providers": [],
+        "modules": [{"file": "main.tf", "name": "vpc", "source": "terraform-aws-modules/vpc/aws", "actual": "5.0.0", "expected": "5.0.0", "matches": true, "skip": null}]}}]},
+    {"branch": "state/staging/gamma", "commit": "3333333333333333333333333333333333333333", "error": null, "roots": [
+      {"root": ".", "exists": true, "files": {"main.tf": true, "providers.tf": true}, "audit": {"schema_version": 1, "terraform": [], "providers": [],
+        "modules": [{"file": "main.tf", "name": "vpc", "source": "terraform-aws-modules/vpc/aws", "actual": "5.0.0", "expected": "5.0.0", "matches": true, "skip": null}]}}]},
+    {"branch": "state/staging/delta", "commit": "4444444444444444444444444444444444444444", "error": "could not fetch commit 4444444444444444444444444444444444444444", "roots": []}
+  ]
+}
+EOF
+}
+
+
+run_report_subcommand() {
+    env REPORT_OUTPUT_DIR="$FIXTURE_OUTPUT" GITHUB_STEP_SUMMARY="$FIXTURE_ROOT/summary.md" \
+        "$REPORT_SCRIPT" "$1"
+}
+
+
+assert_file_content() {
+    local description=$1 actual=$2 expected=$3
+    diff -u "$expected" "$actual" >&2 || fail "$description differs from the expected content"
+}
+
+
+test_report_writes_the_improved_csv_and_summary() {
+    setup_records_fixture
+    write_report_records
+
+    if run_report_subcommand report >"$FIXTURE_ROOT/stdout" 2>"$FIXTURE_ROOT/stderr"; then
+        fail 'the report passed although a branch could not be read'
+    fi
+    [[ ! -s "$FIXTURE_ROOT/stdout" && "$(<"$FIXTURE_ROOT/stderr")" \
+        == 'report error: 1 branch(es) could not be read; the version report lists them' ]] \
+        || fail "the report did not name the unreadable branch count: $(<"$FIXTURE_ROOT/stderr")"
+
+    cat >"$FIXTURE_ROOT/expected.csv" <<'EOF'
+"status","branch","kind","subject","block","file","actual","expected","detail"
+"PASS","state/nonproduction/alpha","root",".","","","","","found"
+"PASS","state/nonproduction/alpha","file","main.tf","","main.tf","","","found"
+"PASS","state/nonproduction/alpha","file","providers.tf","","providers.tf","","","found"
+"PASS","state/nonproduction/alpha","terraform","required_version","","versions.tf",">= 1.10",">= 1.10",""
+"FAIL","state/nonproduction/alpha","provider","aws","","versions.tf","~> 5.0","~> 6.0","version differs"
+"FAIL","state/nonproduction/alpha","module","terraform-aws-modules/vpc/aws","vpc","main.tf","4.2.0","5.0.0","version differs"
+"SKIP","state/nonproduction/alpha","module","terraform-aws-modules/vpc/aws","legacy_vpc","main.tf","3.19.0","5.0.0","skipped by ignore_modules (legacy_*)"
+"PASS","state/nonproduction/alpha","module","terraform-aws-modules/s3-bucket/aws","logs","storage.tf",">= 4.0, < 5.0",">= 4.0, < 5.0",""
+"FAIL","state/nonproduction/alpha","module","terraform-aws-modules/s3-bucket/aws","assets","storage.tf","",">= 4.0, < 5.0","no version attribute"
+"PASS","state/staging/beta","root",".","","","","","found"
+"PASS","state/staging/beta","file","main.tf","","main.tf","","","found"
+"FAIL","state/staging/beta","file","providers.tf","","providers.tf","","","not found"
+"PASS","state/staging/beta","module","terraform-aws-modules/vpc/aws","vpc","main.tf","5.0.0","5.0.0",""
+"PASS","state/staging/gamma","root",".","","","","","found"
+"PASS","state/staging/gamma","file","main.tf","","main.tf","","","found"
+"PASS","state/staging/gamma","file","providers.tf","","providers.tf","","","found"
+"PASS","state/staging/gamma","module","terraform-aws-modules/vpc/aws","vpc","main.tf","5.0.0","5.0.0",""
+"ERROR","state/staging/delta","branch","","","","","","could not fetch commit 4444444444444444444444444444444444444444"
+EOF
+    assert_file_content 'the improved CSV' "$FIXTURE_OUTPUT/version-report.csv" "$FIXTURE_ROOT/expected.csv"
+
+    cat >"$FIXTURE_ROOT/expected.md" <<'EOF'
+## Version report (nonproduction)
+
+Checked 4 branch(es): 4 FAIL, 12 PASS, 1 SKIP, 1 ERROR
+
+### state/nonproduction/alpha: 3 FAIL, 5 PASS, 1 SKIP, 0 ERROR
+
+| Status | Kind | Subject | Block | File | Actual | Expected | Detail |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| FAIL | provider | aws |  | versions.tf | &#126;&gt; 5.0 | &#126;&gt; 6.0 | version differs |
+| FAIL | module | terraform-aws-modules/vpc/aws | vpc | main.tf | 4.2.0 | 5.0.0 | version differs |
+| SKIP | module | terraform-aws-modules/vpc/aws | legacy&#95;vpc | main.tf | 3.19.0 | 5.0.0 | skipped by ignore&#95;modules (legacy&#95;&#42;) |
+| FAIL | module | terraform-aws-modules/s3-bucket/aws | assets | storage.tf |  | &gt;= 4.0, &lt; 5.0 | no version attribute |
+
+### state/staging/beta: 1 FAIL, 3 PASS, 0 SKIP, 0 ERROR
+
+| Status | Kind | Subject | Block | File | Actual | Expected | Detail |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| FAIL | file | providers.tf |  | providers.tf |  |  | not found |
+
+### state/staging/delta: 0 FAIL, 0 PASS, 0 SKIP, 1 ERROR
+
+| Status | Kind | Subject | Block | File | Actual | Expected | Detail |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ERROR | branch |  |  |  |  |  | could not fetch commit 4444444444444444444444444444444444444444 |
+
+Branches where every check passed:
+
+- state/staging/gamma (4 checks)
+EOF
+    assert_file_content 'the improved summary' "$FIXTURE_ROOT/summary.md" "$FIXTURE_ROOT/expected.md"
+}
+
+
+test_report_succeeds_when_every_branch_was_read() {
+    setup_records_fixture
+    write_report_records
+    jq '.branches |= map(select(.error == null))' "$FIXTURE_OUTPUT/records.json" >"$FIXTURE_ROOT/readable.json"
+    mv "$FIXTURE_ROOT/readable.json" "$FIXTURE_OUTPUT/records.json"
+
+    assert_silent_success 'reporting readable branches' "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" \
+        run_report_subcommand report
+    grep -qxF 'Checked 3 branch(es): 4 FAIL, 12 PASS, 1 SKIP, 0 ERROR' "$FIXTURE_ROOT/summary.md" \
+        || fail "the summary did not count the readable branches: $(<"$FIXTURE_ROOT/summary.md")"
+}
+
+
+# The audit records a non-literal expression as its source text, which can span lines.
+test_report_keeps_multi_line_values_on_one_table_row() {
+    setup_records_fixture
+    write_report_records
+    jq '.branches = [.branches[0] | .roots[0].audit.modules[0].actual = "try(\n  var.vpc_version,\n  \"5.0.0\"\n)"]' \
+        "$FIXTURE_OUTPUT/records.json" >"$FIXTURE_ROOT/multi-line.json"
+    mv "$FIXTURE_ROOT/multi-line.json" "$FIXTURE_OUTPUT/records.json"
+
+    assert_silent_success 'reporting a multi-line value' "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" \
+        run_report_subcommand report
+    grep -qxF '| FAIL | module | terraform-aws-modules/vpc/aws | vpc | main.tf | try(<br>  var.vpc&#95;version,<br>  &quot;5.0.0&quot;<br>) | 5.0.0 | version differs |' \
+        "$FIXTURE_ROOT/summary.md" || fail "the multi-line value broke its table row: $(<"$FIXTURE_ROOT/summary.md")"
+}
+
+
 build_release_archive
 
 if [[ $# -eq 0 ]]; then
     tests=(test_collect_records_each_branch_root_and_audit test_collect_records_missing_and_empty_roots
         test_collect_records_unreadable_branches_and_continues test_collect_rejects_invalid_inputs
-        test_collect_records_duplicate_roots_as_a_branch_error)
+        test_collect_records_duplicate_roots_as_a_branch_error
+        test_report_writes_the_improved_csv_and_summary test_report_succeeds_when_every_branch_was_read
+        test_report_keeps_multi_line_values_on_one_table_row)
 else tests=("$@"); fi
 for test_name in "${tests[@]}"; do
     "$test_name"
