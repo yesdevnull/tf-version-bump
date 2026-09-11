@@ -612,6 +612,57 @@ test_legacy_rejects_several_roots() {
 }
 
 
+# Three roots written as processing would accept them: "." spelled "./", a subdirectory spelled
+# with a trailing slash, and a root the branch does not have. Exercises the per-root order, the
+# root check's FAIL/not-found row, and file rows relative to the repository root for a root other
+# than ".".
+write_multi_root_records() {
+    cat >"$FIXTURE_OUTPUT/records.json" <<'EOF'
+{
+  "policy": "nonproduction",
+  "roots": ["./", "infra/", "missing"],
+  "branches": [
+    {"branch": "state/staging/multi-root", "commit": "5555555555555555555555555555555555555555", "error": null, "roots": [
+      {"root": "./", "exists": true, "files": {"main.tf": true, "providers.tf": true}, "audit": {"schema_version": 1, "terraform": [], "providers": [],
+        "modules": [{"file": "main.tf", "name": "vpc", "source": "terraform-aws-modules/vpc/aws", "actual": "~> 4.0 | 5.0", "expected": "~> 4.0", "matches": false, "skip": null}]}},
+      {"root": "infra/", "exists": true, "files": {"main.tf": true, "providers.tf": false}, "audit": {"schema_version": 1, "terraform": [], "providers": [],
+        "modules": [{"file": "infra/main.tf", "name": "vpc", "source": "terraform-aws-modules/vpc/aws", "actual": "5.0.0", "expected": "5.0.0", "matches": true, "skip": null}]}},
+      {"root": "missing", "exists": false, "files": {"main.tf": false, "providers.tf": false}, "audit": null}
+    ]}
+  ]
+}
+EOF
+}
+
+
+test_report_lists_every_root_with_repository_relative_paths() {
+    setup_records_fixture
+    write_multi_root_records
+
+    assert_silent_success 'reporting several roots' "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" \
+        run_report_subcommand report
+
+    cat >"$FIXTURE_ROOT/expected.csv" <<'EOF'
+"status","branch","kind","subject","block","file","actual","expected","detail"
+"PASS","state/staging/multi-root","root","./","","","","","found"
+"PASS","state/staging/multi-root","file","main.tf","","main.tf","","","found"
+"PASS","state/staging/multi-root","file","providers.tf","","providers.tf","","","found"
+"FAIL","state/staging/multi-root","module","terraform-aws-modules/vpc/aws","vpc","main.tf","~> 4.0 | 5.0","~> 4.0","version differs"
+"PASS","state/staging/multi-root","root","infra/","","","","","found"
+"PASS","state/staging/multi-root","file","main.tf","","infra/main.tf","","","found"
+"FAIL","state/staging/multi-root","file","providers.tf","","infra/providers.tf","","","not found"
+"PASS","state/staging/multi-root","module","terraform-aws-modules/vpc/aws","vpc","infra/main.tf","5.0.0","5.0.0",""
+"FAIL","state/staging/multi-root","root","missing","","","","","not found"
+"FAIL","state/staging/multi-root","file","main.tf","","missing/main.tf","","","not found"
+"FAIL","state/staging/multi-root","file","providers.tf","","missing/providers.tf","","","not found"
+EOF
+    assert_file_content 'the multi-root CSV' "$FIXTURE_OUTPUT/version-report.csv" "$FIXTURE_ROOT/expected.csv"
+
+    grep -qxF '| FAIL | module | terraform-aws-modules/vpc/aws | vpc | main.tf | &#126;&gt; 4.0 &#124; 5.0 | &#126;&gt; 4.0 | version differs |' \
+        "$FIXTURE_ROOT/summary.md" || fail "the pipe in an actual value was not escaped: $(<"$FIXTURE_ROOT/summary.md")"
+}
+
+
 build_release_archive
 
 if [[ $# -eq 0 ]]; then
@@ -619,7 +670,7 @@ if [[ $# -eq 0 ]]; then
         test_collect_records_unreadable_branches_and_continues test_collect_rejects_invalid_inputs
         test_collect_records_duplicate_roots_as_a_branch_error
         test_report_writes_the_improved_csv_and_summary test_report_succeeds_when_every_branch_was_read
-        test_report_keeps_multi_line_values_on_one_table_row
+        test_report_keeps_multi_line_values_on_one_table_row test_report_lists_every_root_with_repository_relative_paths
         test_legacy_writes_the_existing_report_format test_legacy_reports_all_passed_and_missing_roots
         test_legacy_rejects_several_roots test_workflow_reports_each_policy_read_only)
 else tests=("$@"); fi
