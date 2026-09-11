@@ -2,7 +2,7 @@
 
 This copyable example updates Terraform dependencies across selected branches and opens or refreshes a pull request for each changed branch. It uses three jobs:
 
-1. **Discover** selects branches by literal prefix and records their commit IDs.
+1. **Discover** selects branches by literal prefix, less any excluded branches, and records their commit IDs.
 2. **Process** updates each branch in a disposable checkout, runs `terraform init`, optionally formats the candidate, then runs `terraform validate`.
 3. **Publish** checks the result and patch, then manages the update branch, pull request and failure issue.
 
@@ -34,6 +34,17 @@ The same copy adds `tf-version-bump-report.yml`, a read-only version report desc
 [below](#version-report).
 
 Both callers run only from the default branch. Their schedules are Monday 04:17 and Sunday 04:43 respectively in `Australia/Melbourne`. They also run when their control configuration changes, and can be started manually. A manual `branch_prefix` can narrow the configured prefixes but cannot select another branch family.
+
+To leave one branch out of a caller's policy, add a line naming it with a leading `!`:
+
+```yaml
+allowed_branch_prefixes: |
+  state/production/
+  aws-state/production/
+  !state/production/specific-branch
+```
+
+An exclusion names one exact branch, so `state/production/specific-branch-2` is still selected. It applies wherever it appears in the list, and to manual runs too. It must fall under one of the caller's prefixes, or discovery fails before any branch is processed; an exclusion whose branch no longer exists is ignored. Excluding a branch leaves any open update pull request or failure issue for it untouched, so close them by hand. Keep the list a block scalar (`|`), because YAML reads a bare value beginning with `!` as a tag. The version report repeats each caller's list, so add the exclusion there too.
 
 Allow the workflow's `contents`, `pull-requests` and `issues` write permissions. Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** before live publication.
 
@@ -187,8 +198,8 @@ access, runs no Terraform and receives no secrets.
 
 One job per policy discovers the policy's branches exactly as the update workflow does, then audits
 each branch's discovered commit with `tf-version-bump -audit-file`. Its matrix repeats each caller's
-branch prefixes, config path and Terraform directories; the example's harness fails if they differ,
-so change both together.
+branch prefixes and exclusions, config path and Terraform directories; the example's harness fails
+if they differ, so change both together.
 
 Each job writes two reports to its summary and uploads both as CSV files, with the collected
 `records.json`, in an artefact retained for seven days. A configured module, provider or
@@ -210,8 +221,8 @@ Each job writes two reports to its summary and uploads both as CSV files, with t
 
 Version mismatches never fail the job. A branch that cannot be read fails it after both reports are
 written, so the gap is visible. Discovery runs exactly as in the update workflow, so a policy whose
-prefixes match no branch, or more than 256, fails its report job before any report is written, as it
-fails the update run.
+prefixes and exclusions select no branch, or more than 256, fails its report job before any report
+is written, as it fails the update run.
 
 Both CSVs keep values exactly as written. A value beginning with `=`, `+`, `-` or `@`, such as the
 valid Terraform pin `= 5.0.0`, may be evaluated as a formula by a spreadsheet that opens the file

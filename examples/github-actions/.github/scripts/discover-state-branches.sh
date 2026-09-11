@@ -29,16 +29,44 @@ fail_discovery() {
     exit 1
 }
 
+validate_branch_text() {
+    local value=$1
+    local description=$2
+
+    [[ -n "$value" ]] || fail_discovery input "$description must not be empty"
+    [[ "$value" != /* ]] || fail_discovery input "$description must not be absolute-looking"
+    [[ ! "$value" =~ [[:cntrl:]] ]] \
+        || fail_discovery input "$description must not contain control characters"
+}
+
 validate_branch_prefix() {
     local prefix=$1
     local description=$2
 
-    [[ -n "$prefix" ]] || fail_discovery input "$description must not be empty"
-    [[ "$prefix" != /* ]] || fail_discovery input "$description must not be absolute-looking"
-    [[ ! "$prefix" =~ [[:cntrl:]] ]] \
-        || fail_discovery input "$description must not contain control characters"
+    validate_branch_text "$prefix" "$description"
     git check-ref-format "refs/heads/${prefix}placeholder" >/dev/null 2>&1 \
         || fail_discovery input "$description is not a valid literal branch prefix"
+}
+
+validate_excluded_branch() {
+    local branch=$1 prefix
+
+    validate_branch_text "$branch" "excluded branch"
+    git check-ref-format "refs/heads/$branch" >/dev/null 2>&1 \
+        || fail_discovery input "excluded branch is not a valid branch name"
+    for prefix in "${allowed_prefixes[@]}"; do
+        [[ "$branch" != "$prefix"* ]] || return 0
+    done
+    fail_discovery input "excluded branch must fall under an allowed prefix"
+}
+
+branch_is_excluded() {
+    local branch=$1 excluded_branch
+
+    for excluded_branch in "${excluded_branches[@]}"; do
+        [[ "$branch" != "$excluded_branch" ]] || return 0
+    done
+    return 1
 }
 
 : "${DISCOVERY_DEFAULT_BRANCH:?DISCOVERY_DEFAULT_BRANCH must be set}"
@@ -68,9 +96,24 @@ control_oid=$DISCOVERY_CONTROL_OID
     || fail_discovery input "automation policy ID must match ^[a-z0-9][a-z0-9-]{0,31}$"
 
 [[ -n "$DISCOVERY_ALLOWED_PREFIXES" ]] || fail_discovery input "allowed prefixes must not be empty"
-readarray -t allowed_prefixes < <(printf '%s' "$DISCOVERY_ALLOWED_PREFIXES")
+# A line beginning with `!` excludes the exact branch it names, wherever it appears in the list.
+readarray -t allow_list_lines < <(printf '%s' "$DISCOVERY_ALLOWED_PREFIXES")
+allowed_prefixes=()
+excluded_branches=()
+for line in "${allow_list_lines[@]}"; do
+    if [[ "$line" == '!'* ]]; then
+        excluded_branches+=("${line#!}")
+    else
+        allowed_prefixes+=("$line")
+    fi
+done
+[[ ${#allowed_prefixes[@]} -gt 0 ]] \
+    || fail_discovery input "allowed prefixes must not consist only of exclusions"
 for prefix in "${allowed_prefixes[@]}"; do
     validate_branch_prefix "$prefix" "allowed prefix"
+done
+for branch in "${excluded_branches[@]}"; do
+    validate_excluded_branch "$branch"
 done
 
 selection_prefixes=("${allowed_prefixes[@]}")
@@ -100,6 +143,9 @@ fi
 branch_records=()
 while IFS=$'\t' read -r oid ref; do
     branch=${ref#refs/heads/}
+    if branch_is_excluded "$branch"; then
+        continue
+    fi
     for prefix in "${selection_prefixes[@]}"; do
         if [[ "$branch" == "$prefix"* ]]; then
             branch_records+=("$branch"$'\t'"$oid")
@@ -110,7 +156,7 @@ done <"$remote_heads_file"
 rm -f -- "$remote_heads_file"
 
 [[ ${#branch_records[@]} -gt 0 ]] \
-    || fail_discovery selection "no remote branches matched the configured prefixes"
+    || fail_discovery selection "no remote branches matched the configured prefixes and exclusions"
 [[ ${#branch_records[@]} -le 256 ]] \
     || fail_discovery matrix "more than 256 branches matched; narrow or partition the prefix policy"
 
