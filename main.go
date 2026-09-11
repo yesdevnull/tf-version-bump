@@ -394,13 +394,19 @@ func main() {
 	}
 }
 
+// commandInputFiles lists every file the command reads: the selected Terraform files and, in
+// config mode, the config. An output destination must not overwrite any of them.
+func commandInputFiles(files []string, configFile string) []string {
+	if configFile == "" {
+		return files
+	}
+	return append(append([]string(nil), files...), configFile)
+}
+
 // runUpdateMode applies the selected updates and publishes any requested update report,
 // returning the update-operation total that check mode turns into its exit status.
 func runUpdateMode(files []string, flags *cliFlags) (int, error) {
-	inputFiles := files
-	if flags.configFile != "" {
-		inputFiles = append(append([]string(nil), files...), flags.configFile)
-	}
+	inputFiles := commandInputFiles(files, flags.configFile)
 	preparedReport, err := prepareJSONOutput(updateReportOutput, flags.reportFile, inputFiles)
 	if err != nil {
 		return 0, err
