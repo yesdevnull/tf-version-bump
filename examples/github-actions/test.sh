@@ -6,6 +6,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DISCOVER_SCRIPT="$SCRIPT_DIR/.github/scripts/discover-state-branches.sh"
 PROCESS_SCRIPT="$SCRIPT_DIR/.github/scripts/process-state-branch.sh"
 RECONCILE_TEST="$SCRIPT_DIR/reconcile-test.sh"
+REPORT_TEST="$SCRIPT_DIR/report-test.sh"
 REUSABLE_WORKFLOW="$SCRIPT_DIR/.github/workflows/tf-version-bump-reusable.yml"
 TEST_GIT=${TEST_GIT-git}
 
@@ -1716,6 +1717,7 @@ if [[ $# -eq 0 ]]; then
         printf 'PASS: %s\n' "$test_name"
     done
     "$RECONCILE_TEST"
+    "$REPORT_TEST"
 else
     for test_name in "$@"; do
         "$test_name"
