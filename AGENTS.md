@@ -30,6 +30,7 @@ golangci-lint run --timeout=5m
 tf-version-bump/
 ├── main.go                  # Core logic
 ├── config.go                # YAML config handling
+├── audit.go                 # -audit-file comparison
 ├── *_test.go                # Comprehensive tests (Go tests)
 ├── schema/config-schema.json # YAML validation schema
 ├── examples/                # Sample configs, .tf files, and branch automation
@@ -43,6 +44,7 @@ tf-version-bump/
 |------|---------|
 | `main.go` | CLI parsing, HCL processing, version updates |
 | `config.go` | YAML config loading and validation |
+| `audit.go` | Read-only `-audit-file` comparison of files with a config |
 | Focused `*_test.go` files | Contract owners by responsibility; see the detailed test layout in `CLAUDE.md` |
 | `config_test.go` | Config validation tests |
 | `schema/config-schema.json` | JSON Schema for YAML |

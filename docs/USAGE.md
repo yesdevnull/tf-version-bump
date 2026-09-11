@@ -21,6 +21,9 @@ tf-version-bump -validate-config <file>
 with the three direct operation flags or their module filters. `-validate-config` checks only the
 YAML runtime contract and cannot be combined with update or report flags.
 
+`-audit-file` is a config-mode option rather than another mode: it compares the selected files with
+the config and writes the result without changing any Terraform file.
+
 An eligible module, provider, or Terraform version that already evaluates to its requested constant
 string is a no-op: the command does not rewrite the file or count it as an update.
 
@@ -44,6 +47,7 @@ string is a no-op: the command does not rewrite the file or count it as an updat
 | `-verbose` | Module updates | Report modules skipped by name or version filters. |
 | `-output <format>` | All update modes | `text` (default) uses single quotes; `md` uses backticks in messages. |
 | `-report-file <path>` | All update modes | Write exact updated Terraform, module, and provider block counts as JSON. |
+| `-audit-file <path>` | Config mode | Write every configured version value's current and expected version as JSON, without changing files. |
 | `-version` | Standalone | Print version, commit, and build date metadata, then exit. |
 
 `-output md` changes quoting in human-readable update messages; it does not emit a structured
@@ -80,6 +84,58 @@ do not change files. The report is written only after the update operation compl
 errors. Its destination is validated before Terraform files are modified and cannot be one of the
 selected Terraform or YAML config inputs. Changed-file counts are outside this report; automation
 can derive them from its version-control diff.
+
+### Machine-readable version audit
+
+Use `-audit-file` with a config to record how far the selected files are from it, without changing
+them:
+
+```bash
+tf-version-bump \
+  -pattern "**/*.tf" \
+  -config versions.yml \
+  -audit-file audit.json
+```
+
+The audit lists every value the config targets that the files declare:
+
+```json
+{
+  "schema_version": 1,
+  "terraform": [
+    {"file": "versions.tf", "actual": ">= 1.10", "expected": ">= 1.10", "matches": true}
+  ],
+  "providers": [
+    {"file": "versions.tf", "name": "aws", "actual": "~> 5.0", "expected": "~> 6.0", "matches": false}
+  ],
+  "modules": [
+    {"file": "main.tf", "name": "vpc", "source": "terraform-aws-modules/vpc/aws",
+     "actual": "4.2.0", "expected": "5.0.0", "matches": false, "skip": null},
+    {"file": "main.tf", "name": "legacy_vpc", "source": "terraform-aws-modules/vpc/aws",
+     "actual": "3.19.0", "expected": "5.0.0", "matches": false,
+     "skip": {"filter": "ignore_modules", "values": ["legacy_*"]}}
+  ]
+}
+```
+
+- `terraform` has one entry per `terraform` block when the config sets `terraform_version`.
+- `providers` has one entry per `required_providers` declaration, in either syntax, whose local name
+  the config lists.
+- `modules` has one entry per module block and config entry with an equal `source`, so a block that
+  two entries target appears twice.
+- `actual` is the value as written, without its quotes, or `null` when the declaration has no
+  version. A non-literal expression appears as its source text.
+- `matches` is true when the value already evaluates to the expected string, so an update would never
+  change it. A value can also stay unchanged without matching: a skipped module, or an object-syntax
+  provider without `version`, which updates do not add.
+- `skip` names the first filter that would stop an update, in the order the updater applies them:
+  `local_source`, `ignore_modules`, `ignore_versions`, then `from`. A module without a `version` is
+  never skipped by a version filter.
+
+Config entries that no selected file uses produce no entries. The audit is written only after every
+selected file parses; otherwise the command exits 1 and leaves any existing audit untouched. A
+written audit exits 0 whatever it contains. The destination is validated like `-report-file`'s, and
+`-audit-file` cannot be combined with `-dry-run`, `-check`, `-report-file` or `-force-add`.
 
 ## Module updates
 
@@ -256,6 +312,7 @@ Config mode applies updates in this order for each selected set of files:
 3. Modules, in YAML order
 
 Use `-force-add`, `-dry-run`, `-check`, `-verbose`, or `-output md` with config mode when required.
+Add `-audit-file` to compare the files with the config instead of updating them.
 See [Configuration](CONFIGURATION.md) for the complete YAML contract.
 
 Config summaries count module entry/file applications as `update(s)`, not distinct files. A file
@@ -300,6 +357,8 @@ An invalid pattern or a pattern with no matching files is a fatal command error.
 - `-check` performs the same no-write preview, exits 0 when no eligible version value would change,
   and exits 2 after a successful run that found updates. Errors exit 1 and take precedence over
   status 2.
+- `-audit-file` writes its audit and exits 0 whatever the audit contains; a selected file that cannot
+  be read or parsed exits 1 without writing it.
 - Parse, stat, read, and write errors for an individual file are logged and processing continues
   with later files or updates.
 
