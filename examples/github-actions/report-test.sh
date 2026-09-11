@@ -491,6 +491,86 @@ test_report_keeps_multi_line_values_on_one_table_row() {
 }
 
 
+test_legacy_writes_the_existing_report_format() {
+    setup_records_fixture
+    write_report_records
+
+    assert_silent_success 'writing the legacy report' "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" \
+        run_report_subcommand legacy
+
+    cat >"$FIXTURE_ROOT/expected.csv" <<'EOF'
+"Result","Test","Comment","State Branch"
+"PASS","main.tf","found: main.tf","state/nonproduction/alpha"
+"PASS","providers.tf","found: providers.tf","state/nonproduction/alpha"
+"FAIL","terraform-aws-modules/vpc/aws","version mismatch: act. 4.2.0 exp. 5.0.0","state/nonproduction/alpha"
+"FAIL","terraform-aws-modules/vpc/aws","version mismatch: act. 3.19.0 exp. 5.0.0","state/nonproduction/alpha"
+"PASS","terraform-aws-modules/s3-bucket/aws","version matched: act. >= 4.0, < 5.0 exp. >= 4.0, < 5.0","state/nonproduction/alpha"
+"FAIL","terraform-aws-modules/s3-bucket/aws","version mismatch: act. none exp. >= 4.0, < 5.0","state/nonproduction/alpha"
+"PASS","main.tf","found: main.tf","state/staging/beta"
+"FAIL","providers.tf","not found: providers.tf","state/staging/beta"
+"PASS","terraform-aws-modules/vpc/aws","version matched: act. 5.0.0 exp. 5.0.0","state/staging/beta"
+"PASS","main.tf","found: main.tf","state/staging/gamma"
+"PASS","providers.tf","found: providers.tf","state/staging/gamma"
+"PASS","terraform-aws-modules/vpc/aws","version matched: act. 5.0.0 exp. 5.0.0","state/staging/gamma"
+EOF
+    assert_file_content 'the legacy CSV' "$FIXTURE_OUTPUT/legacy-report.csv" "$FIXTURE_ROOT/expected.csv"
+
+    cat >"$FIXTURE_ROOT/expected.md" <<'EOF'
+## Legacy version report (nonproduction)
+
+| Result | Test | Comment | State Branch |
+| --- | --- | --- | --- |
+| FAIL | terraform-aws-modules/vpc/aws | version mismatch: act. 4.2.0 exp. 5.0.0 | state/nonproduction/alpha |
+| FAIL | terraform-aws-modules/vpc/aws | version mismatch: act. 3.19.0 exp. 5.0.0 | state/nonproduction/alpha |
+| FAIL | terraform-aws-modules/s3-bucket/aws | version mismatch: act. none exp. &gt;= 4.0, &lt; 5.0 | state/nonproduction/alpha |
+| FAIL | providers.tf | not found: providers.tf | state/staging/beta |
+EOF
+    assert_file_content 'the legacy summary' "$FIXTURE_ROOT/summary.md" "$FIXTURE_ROOT/expected.md"
+}
+
+
+test_legacy_reports_all_passed_and_missing_roots() {
+    setup_records_fixture
+    write_report_records
+    jq '.branches |= map(select(.branch == "state/staging/gamma"))' "$FIXTURE_OUTPUT/records.json" \
+        >"$FIXTURE_ROOT/gamma.json"
+    mv "$FIXTURE_ROOT/gamma.json" "$FIXTURE_OUTPUT/records.json"
+
+    assert_silent_success 'writing a passing legacy report' "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" \
+        run_report_subcommand legacy
+    [[ "$(<"$FIXTURE_ROOT/summary.md")" == $'## Legacy version report (nonproduction)\n\nAll 3 checks passed.' ]] \
+        || fail "the passing legacy summary is wrong: $(<"$FIXTURE_ROOT/summary.md")"
+
+    : >"$FIXTURE_ROOT/summary.md"
+    jq '.branches[0].roots[0] = {root: ".", exists: false, files: {"main.tf": false, "providers.tf": false}, audit: null}' \
+        "$FIXTURE_OUTPUT/records.json" >"$FIXTURE_ROOT/missing.json"
+    mv "$FIXTURE_ROOT/missing.json" "$FIXTURE_OUTPUT/records.json"
+    assert_silent_success 'writing a legacy report for a missing root' "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" \
+        run_report_subcommand legacy
+    [[ "$(<"$FIXTURE_OUTPUT/legacy-report.csv")" == '"Result","Test","Comment","State Branch"
+"FAIL","main.tf","not found: main.tf","state/staging/gamma"
+"FAIL","providers.tf","not found: providers.tf","state/staging/gamma"' ]] \
+        || fail "the missing-root legacy CSV is wrong: $(<"$FIXTURE_OUTPUT/legacy-report.csv")"
+}
+
+
+test_legacy_rejects_several_roots() {
+    setup_records_fixture
+    write_report_records
+    jq '.roots = [".", "infra"]' "$FIXTURE_OUTPUT/records.json" >"$FIXTURE_ROOT/roots.json"
+    mv "$FIXTURE_ROOT/roots.json" "$FIXTURE_OUTPUT/records.json"
+
+    if run_report_subcommand legacy >"$FIXTURE_ROOT/stdout" 2>"$FIXTURE_ROOT/stderr"; then
+        fail 'the legacy report accepted several roots'
+    fi
+    [[ ! -s "$FIXTURE_ROOT/stdout" \
+        && "$(<"$FIXTURE_ROOT/stderr")" == 'report error: legacy report supports one Terraform root only' ]] \
+        || fail "the legacy report did not reject several roots: $(<"$FIXTURE_ROOT/stderr")"
+    [[ ! -e "$FIXTURE_OUTPUT/legacy-report.csv" && ! -s "$FIXTURE_ROOT/summary.md" ]] \
+        || fail 'the legacy report wrote output for several roots'
+}
+
+
 build_release_archive
 
 if [[ $# -eq 0 ]]; then
@@ -498,7 +578,9 @@ if [[ $# -eq 0 ]]; then
         test_collect_records_unreadable_branches_and_continues test_collect_rejects_invalid_inputs
         test_collect_records_duplicate_roots_as_a_branch_error
         test_report_writes_the_improved_csv_and_summary test_report_succeeds_when_every_branch_was_read
-        test_report_keeps_multi_line_values_on_one_table_row)
+        test_report_keeps_multi_line_values_on_one_table_row
+        test_legacy_writes_the_existing_report_format test_legacy_reports_all_passed_and_missing_roots
+        test_legacy_rejects_several_roots)
 else tests=("$@"); fi
 for test_name in "${tests[@]}"; do
     "$test_name"

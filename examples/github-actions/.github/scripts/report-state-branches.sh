@@ -8,6 +8,7 @@ usage() {
     cat <<'EOF'
 Usage: report-state-branches.sh collect
        report-state-branches.sh report
+       report-state-branches.sh legacy
        report-state-branches.sh --help
 
 Compare each discovered state branch with its policy's control configuration, without
@@ -26,6 +27,10 @@ files live below RUNNER_TEMP.
 report appends the version report to GITHUB_STEP_SUMMARY and writes version-report.csv
 into REPORT_OUTPUT_DIR from its records.json. It exits 1 after writing both when any
 branch could not be read; version mismatches alone never fail it.
+
+legacy appends the legacy report (FAIL rows only) to GITHUB_STEP_SUMMARY and writes
+legacy-report.csv with every PASS and FAIL row. It supports one Terraform root only and
+omits branches that could not be read.
 EOF
 }
 
@@ -97,6 +102,41 @@ def counts:
        else "\nBranches where every check passed:\n\n" + (map("- \(.branch | cell) (\(.rows | length) checks)\n") | join(""))
        end)
 '
+
+# The legacy report reproduces an existing report exactly, defects included: modules only,
+# the module source as its Test, filters ignored and one row per block.
+# shellcheck disable=SC2016 # jq, not the shell, expands these.
+LEGACY_ROWS_JQ='
+def legacy_rows:
+  .branch as $branch
+  | .roots[0] as $root
+  | ((("main.tf", "providers.tf") as $name
+      | if $root.files[$name] then ["PASS", $name, "found: \($name)"] else ["FAIL", $name, "not found: \($name)"] end),
+     (($root.audit.modules // [])[]
+      | [(if .matches then "PASS" else "FAIL" end), .source,
+         "version \(if .matches then "matched" else "mismatch" end): act. \(.actual // "none") exp. \(.expected)"]))
+  | . + [$branch];
+'
+
+legacy() {
+    local records
+    records=$(records_file)
+    [[ "$(jq '.roots | length' "$records")" -eq 1 ]] \
+        || report_error 'legacy report supports one Terraform root only'
+    jq -r "$REPORT_JQ_DEFINITIONS$LEGACY_ROWS_JQ"'
+        (["Result", "Test", "Comment", "State Branch"] | @csv),
+        (.branches[] | select(.error == null) | legacy_rows | @csv)
+    ' "$records" >"$REPORT_OUTPUT_DIR/legacy-report.csv"
+    jq -j "$REPORT_JQ_DEFINITIONS$LEGACY_ROWS_JQ"'
+        [.branches[] | select(.error == null) | legacy_rows] as $rows
+        | ($rows | map(select(.[0] == "FAIL"))) as $failures
+        | "## Legacy version report (\(.policy | cell))\n\n"
+          + (if $failures == [] then "All \($rows | length) checks passed.\n"
+             else "| Result | Test | Comment | State Branch |\n| --- | --- | --- | --- |\n"
+                  + ($failures | map(table_row + "\n") | join(""))
+             end)
+    ' "$records" >>"$GITHUB_STEP_SUMMARY"
+}
 
 records_file() {
     : "${REPORT_OUTPUT_DIR:?REPORT_OUTPUT_DIR must be set}"
@@ -272,5 +312,6 @@ case "$1" in
     --help) usage ;;
     collect) collect ;;
     report) report ;;
+    legacy) legacy ;;
     *) usage >&2; exit 2 ;;
 esac
