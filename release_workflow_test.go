@@ -577,6 +577,7 @@ func actionsReleasePinFiles() []string {
 	return []string{
 		"examples/github-actions/.github/workflows/tf-version-bump-production.yml",
 		"examples/github-actions/.github/workflows/tf-version-bump-nonproduction.yml",
+		"examples/github-actions/.github/workflows/tf-version-bump-report.yml",
 		"examples/github-actions/.github/workflows/tf-version-bump-config-validation.yml",
 		"examples/github-actions/test.sh",
 		"examples/github-actions/README.md",
