@@ -176,7 +176,7 @@ func runAuditMode(files []string, flags *cliFlags) error {
 	if err != nil {
 		return fmt.Errorf("Error loading config file: %w", err) //nolint:staticcheck // User-facing CLI diagnostic.
 	}
-	inputFiles := append(append([]string(nil), files...), flags.configFile)
+	inputFiles := commandInputFiles(files, flags.configFile)
 	prepared, err := prepareJSONOutput(auditOutput, flags.auditFile, inputFiles)
 	if err != nil {
 		return err
