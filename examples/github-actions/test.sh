@@ -617,6 +617,44 @@ test_discovery_accepts_caller_block_scalar_prefixes() {
 }
 
 
+test_discovery_excludes_exact_branch_names() {
+    # Production break caught: a `!` entry is matched as a prefix and silently drops siblings
+    # sharing its name, applies only after the prefix line, or stops the run once its branch is
+    # deleted.
+    setup_discovery_repository
+    add_discovery_branch "state/production/specific-branch"
+    add_discovery_branch "state/production/specific-branch-2"
+    add_discovery_branch "state/production/other"
+
+    local allow_list output
+    for allow_list in $'state/production/\n!state/production/specific-branch\n!state/production/deleted\n' \
+        $'!state/production/specific-branch\nstate/production/'; do
+        DISCOVERY_ALLOWED_PREFIXES=$allow_list
+        output=$(run_discovery)
+        jq -e '.include | map(.branch) == [
+            "state/production/other",
+            "state/production/specific-branch-2"
+        ]' <<<"$output" >/dev/null \
+            || fail "exclusions did not drop exactly the named branch: $output"
+    done
+}
+
+
+test_discovery_manual_prefix_keeps_exclusions() {
+    # Production break caught: a manual dispatch prefix brings back a branch its caller excludes.
+    setup_discovery_repository
+    add_discovery_branch "state/production/specific-branch"
+    add_discovery_branch "state/production/specific-branch-2"
+
+    DISCOVERY_ALLOWED_PREFIXES=$'state/production/\n!state/production/specific-branch'
+    DISCOVERY_MANUAL_PREFIX="state/production/specific-"
+    local output
+    output=$(run_discovery)
+    jq -e '.include | map(.branch) == ["state/production/specific-branch-2"]' <<<"$output" >/dev/null \
+        || fail "manual discovery prefix selected an excluded branch: $output"
+}
+
+
 test_discovery_rejects_invalid_inputs_by_stage() {
     # Production break caught: invalid policy/caller inputs reach matrix creation, failures emit
     # partial JSON, or diagnostics attribute the failure to the wrong discovery stage.
@@ -640,8 +678,36 @@ test_discovery_rejects_invalid_inputs_by_stage() {
     DISCOVERY_ALLOWED_PREFIXES="/state/prod/"
     assert_discovery_failure "discovery input error:" "absolute-looking branch prefix"
 
+    DISCOVERY_ALLOWED_PREFIXES='!state/prod/example'
+    assert_discovery_failure "discovery input error: allowed prefixes must not consist only of exclusions" \
+        "allow-list of exclusions only"
+
+    DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!'
+    assert_discovery_failure "discovery input error: excluded branch must not be empty" "empty exclusion"
+
+    DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!/state/prod/example'
+    assert_discovery_failure "discovery input error: excluded branch must not be absolute-looking" \
+        "absolute-looking exclusion"
+
+    DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!state/prod/ex\tample'
+    assert_discovery_failure "discovery input error: excluded branch must not contain control characters" \
+        "exclusion containing a control character"
+
+    DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!state/prod/'
+    assert_discovery_failure "discovery input error: excluded branch is not a valid branch name" \
+        "exclusion naming a prefix instead of a branch"
+
+    DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!state/other/example'
+    assert_discovery_failure "discovery input error: excluded branch must fall under an allowed prefix" \
+        "exclusion outside every allowed prefix"
+
     DISCOVERY_ALLOWED_PREFIXES="state/missing/"
     assert_discovery_failure "discovery selection error:" "allow-list with no remote matches"
+
+    DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!state/prod/example'
+    assert_discovery_failure \
+        "discovery selection error: no remote branches matched the configured prefixes and exclusions" \
+        "allow-list whose exclusions remove every match"
 
     DISCOVERY_ALLOWED_PREFIXES="state/prod/"
     DISCOVERY_CALLER_REF="refs/heads/feature"
