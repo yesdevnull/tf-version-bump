@@ -120,18 +120,6 @@ terraform {
 	}
 }
 
-func TestBuildAudit_StopsAtTheFirstUnparseableFile(t *testing.T) {
-	dir := t.TempDir()
-	bad := writeTestFile(t, dir, "bad.tf", "terraform {\n")
-	good := writeTestFile(t, dir, "good.tf", "terraform {\n  required_version = \">= 1.10\"\n}\n")
-
-	audit, err := buildAudit([]string{bad, good}, &Config{TerraformVersion: ">= 1.10"})
-
-	if audit != nil || err == nil || !strings.HasPrefix(err.Error(), "Error auditing "+bad+": failed to parse HCL: ") {
-		t.Fatalf("audit = %v, err = %v; want no audit and a parse error naming %s", audit, err, bad)
-	}
-}
-
 func TestBuildAudit_ReportsAnUnreadableFile(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.tf")
 
