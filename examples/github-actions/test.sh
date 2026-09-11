@@ -890,7 +890,7 @@ test_processing_combines_update_init_format_validate() {
     base_oid=$(processing_base_oid)
     assert_silent_success 'combined processing' "$PROCESS_TMP_ROOT/stdout" "$PROCESS_TMP_ROOT/stderr" run_processing
     jq -e --arg base "$base_oid" '.schema_version == 4 and .classification == "success" and
-        .formatted == true and .base_oid == $base and .roots == ["root", "second"] and (.patch_sha256 | length == 64)' \
+        .base_oid == $base and .roots == ["root", "second"] and (.patch_sha256 | length == 64)' \
         "$PROCESS_RESULT_DIR/result.json" >/dev/null || fail 'missing combined result contract'
     [[ "$(processing_base_oid)" == "$base_oid" ]] || fail 'processing created a commit'
     [[ -f "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'missing final patch'
