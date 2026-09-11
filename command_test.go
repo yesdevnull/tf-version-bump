@@ -12,10 +12,10 @@ import (
 )
 
 func TestParseFlagsContract(t *testing.T) {
-	args := []string{"tf-version-bump", "-pattern", "**/*.tf", "-module", "example/module", "-to", "2.0.0", "-from", "1.0.0", "-from", "1.5.0", "-ignore-version", "3.0.0", "-ignore-modules", "vpc, legacy-*", "-config", "config.yml", "-validate-config", "validate.yml", "-force-add", "-dry-run", "-check", "-verbose", "-version", "-output", "md", "-terraform-version", ">= 1.5", "-provider", "aws"}
+	args := []string{"tf-version-bump", "-pattern", "**/*.tf", "-module", "example/module", "-to", "2.0.0", "-from", "1.0.0", "-from", "1.5.0", "-ignore-version", "3.0.0", "-ignore-modules", "vpc, legacy-*", "-branch", " main ", "-config", "config.yml", "-validate-config", "validate.yml", "-force-add", "-dry-run", "-check", "-verbose", "-version", "-output", "md", "-terraform-version", ">= 1.5", "-provider", "aws"}
 	withFlagArgs(t, args, func() {
 		got := parseFlags()
-		want := &cliFlags{pattern: "**/*.tf", moduleSource: "example/module", toVersion: "2.0.0", fromVersions: stringSliceFlag{"1.0.0", "1.5.0"}, ignoreVersions: stringSliceFlag{"3.0.0"}, ignoreModules: "vpc, legacy-*", configFile: "config.yml", validationConfigFile: "validate.yml", forceAdd: true, dryRun: true, check: true, verbose: true, showVersion: true, output: "md", terraformVersion: ">= 1.5", providerName: "aws"}
+		want := &cliFlags{pattern: "**/*.tf", moduleSource: "example/module", toVersion: "2.0.0", fromVersions: stringSliceFlag{"1.0.0", "1.5.0"}, ignoreVersions: stringSliceFlag{"3.0.0"}, ignoreModules: "vpc, legacy-*", branch: "main", configFile: "config.yml", validationConfigFile: "validate.yml", forceAdd: true, dryRun: true, check: true, verbose: true, showVersion: true, output: "md", terraformVersion: ">= 1.5", providerName: "aws"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("flags = %#v, want %#v", got, want)
 		}
@@ -28,6 +28,25 @@ func TestLoadModuleUpdatesContract(t *testing.T) {
 	want := []ModuleUpdate{{Source: "example/module", Version: "2.0.0", From: FromVersions{"1.0.0", "1.5.0"}, IgnoreVersions: FromVersions{"3.0.0", "~> 3.0"}, IgnoreModules: []string{"vpc", "legacy-*"}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("updates = %#v, want %#v", got, want)
+	}
+}
+
+func TestLoadModuleUpdatesResolvesBranchScopedIgnorePatterns(t *testing.T) {
+	flags := &cliFlags{pattern: "*.tf", moduleSource: "example/module", toVersion: "2.0.0", ignoreModules: "legacy-*,release/*/vpc,main/database", branch: "release/2026-09"}
+	got := loadModuleUpdates(flags)
+	want := []ModuleUpdate{{Source: "example/module", Version: "2.0.0", IgnoreModules: []string{"legacy-*", "vpc"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("updates = %#v, want %#v", got, want)
+	}
+}
+
+func TestLoadModuleUpdatesRejectsBranchScopedIgnoreWithoutBranch(t *testing.T) {
+	restore, _ := stubExit(t)
+	t.Cleanup(restore)
+	flags := &cliFlags{pattern: "*.tf", moduleSource: "example/module", toVersion: "2.0.0", ignoreModules: "main/vpc"}
+	diagnostic := captureLog(t, func() { requireExitCall(t, func() { _ = loadModuleUpdates(flags) }) })
+	if diagnostic != "Error: ignore pattern 'main/vpc' is scoped to a branch, so the -branch flag is required\n" {
+		t.Fatalf("diagnostic: %q", diagnostic)
 	}
 }
 
@@ -185,6 +204,7 @@ func TestCommandConfigValidationRejectsUpdateAndReportFlags(t *testing.T) {
 		{name: "source version", args: []string{"-from", "1.0.0"}},
 		{name: "ignored version", args: []string{"-ignore-version", "1.0.0"}},
 		{name: "ignored module", args: []string{"-ignore-modules", "legacy-*"}},
+		{name: "branch", args: []string{"-branch", "main"}},
 		{name: "Terraform version", args: []string{"-terraform-version", ">= 1.5"}},
 		{name: "provider", args: []string{"-provider", "aws"}},
 		{name: "force add", args: []string{"-force-add"}},
@@ -376,6 +396,50 @@ func TestRunConfigFileModeReturnsLoadErrorContract(t *testing.T) {
 	_, err := runConfigFileMode(nil, &cliFlags{configFile: "does-not-exist"})
 	if err == nil || !errors.Is(err, os.ErrNotExist) || !strings.HasPrefix(err.Error(), "Error loading config file:") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestCommandConfigBranchScopedIgnoreModules(t *testing.T) {
+	const terraform = "module \"shared-vpc\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+	const config = "modules:\n  - source: example/module\n    version: 2.0.0\n    ignore_modules:\n      - state/staging/example-thing/shared-vpc\n"
+
+	tests := []struct {
+		name, branch, wantVersion string
+	}{
+		{name: "scoped branch is ignored", branch: "state/staging/example-thing", wantVersion: "1.0.0"},
+		{name: "other branch is updated", branch: "state/nonproduction/example-thing", wantVersion: "2.0.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			file := writeTestFile(t, dir, "main.tf", terraform)
+			configFile := writeTestFile(t, dir, "versions.yml", config)
+
+			result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", configFile, "-branch", tt.branch})
+
+			if result.diagnostics != "" || result.exitCode != -1 {
+				t.Fatalf("result = %#v, want a successful run", result)
+			}
+			if !strings.Contains(readTestFile(t, file), "version = \""+tt.wantVersion+"\"") {
+				t.Fatalf("content = %q, want version %q", readTestFile(t, file), tt.wantVersion)
+			}
+		})
+	}
+}
+
+func TestCommandConfigBranchScopedIgnoreRequiresBranch(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"vpc\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	configFile := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n    ignore_modules:\n      - main/vpc\n")
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", configFile})
+
+	if result.exitCode != 1 || result.diagnostics != "Error: ignore pattern 'main/vpc' is scoped to a branch, so the -branch flag is required\n" {
+		t.Fatalf("result = %#v, want the branch requirement diagnostic and exit 1", result)
+	}
+	if !strings.Contains(readTestFile(t, file), "version = \"1.0.0\"") {
+		t.Fatalf("content = %q, want the file left unchanged", readTestFile(t, file))
 	}
 }
 

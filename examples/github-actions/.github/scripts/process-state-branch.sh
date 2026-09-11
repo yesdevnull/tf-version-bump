@@ -176,7 +176,7 @@ process_roots() {
         relative=$(jq -r --argjson i "$((index - 1))" '.[$i]' <<<"$ROOTS_JSON")
         # The updater resolves its glob relative to its working directory.
         (cd "$root" && branch_command branch-update tf-version-bump "$relative" "update-$index.log" \
-            "$DATA_ROOT/tf-version-bump" -pattern '*.tf' -config "$CONFIG_PATH")
+            "$DATA_ROOT/tf-version-bump" -pattern '*.tf' -branch "$PROCESS_STATE_BRANCH" -config "$CONFIG_PATH")
     done
     # Local module references must see every root's final dependency constraints during init.
     index=0

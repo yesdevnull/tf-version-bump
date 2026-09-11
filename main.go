@@ -112,6 +112,7 @@ type cliFlags struct {
 	fromVersions         stringSliceFlag
 	ignoreVersions       stringSliceFlag
 	ignoreModules        string
+	branch               string
 	configFile           string
 	validationConfigFile string
 	forceAdd             bool
@@ -233,6 +234,7 @@ func parseFlags() *cliFlags {
 	flagSet.Var(&flags.fromVersions, "from", "Optional: version to update from (can be specified multiple times, e.g., -from 3.0.0 -from '~> 3.0')")
 	flagSet.Var(&flags.ignoreVersions, "ignore-version", "Optional: version(s) to skip (can be specified multiple times, e.g., -ignore-version 3.0.0 -ignore-version '~> 3.0')")
 	flagSet.StringVar(&flags.ignoreModules, "ignore-modules", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
+	flagSet.StringVar(&flags.branch, "branch", "", "Optional: current branch name, required by branch-scoped ignore patterns (e.g., 'release/2026-09')")
 	flagSet.StringVar(&flags.configFile, "config", "", "Path to YAML config file with multiple module updates")
 	flagSet.StringVar(&flags.validationConfigFile, "validate-config", "", "Validate a YAML config file without updating Terraform files")
 	flagSet.BoolVar(&flags.forceAdd, "force-add", false, "Add a missing version attribute to registry modules (default: skip with warning)")
@@ -269,6 +271,8 @@ func parseFlags() *cliFlags {
 		fatalf("Error: Invalid output format '%s'. Must be 'text' or 'md'", flags.output)
 	}
 
+	flags.branch = strings.TrimSpace(flags.branch)
+
 	return flags
 }
 
@@ -293,9 +297,44 @@ func loadModuleUpdates(flags *cliFlags) []ModuleUpdate {
 		}
 	}
 
-	return []ModuleUpdate{
+	updates := []ModuleUpdate{
 		{Source: flags.moduleSource, Version: flags.toVersion, From: FromVersions(flags.fromVersions), IgnoreVersions: FromVersions(flags.ignoreVersions), IgnoreModules: ignorePatterns},
 	}
+	if err := resolveBranchIgnoreModules(updates, flags.branch); err != nil {
+		fatalf("Error: %v", err)
+		return nil
+	}
+
+	return updates
+}
+
+// resolveBranchIgnoreModules reduces each entry's ignore_modules list to the module patterns that
+// apply to branch. A branch-scoped pattern cannot be evaluated without a branch, so it is an error
+// rather than a silent no-op that would bump a module the configuration excludes.
+func resolveBranchIgnoreModules(updates []ModuleUpdate, branch string) error {
+	for i := range updates {
+		if len(updates[i].IgnoreModules) == 0 {
+			continue
+		}
+
+		resolved := make([]string, 0, len(updates[i].IgnoreModules))
+		for _, entry := range updates[i].IgnoreModules {
+			branchPattern, modulePattern, err := splitIgnoreModuleEntry(entry)
+			switch {
+			case err != nil:
+				return err
+			case branchPattern == "":
+				resolved = append(resolved, modulePattern)
+			case branch == "":
+				return fmt.Errorf("ignore pattern '%s' is scoped to a branch, so the -branch flag is required", entry)
+			case matchPattern(branch, branchPattern):
+				resolved = append(resolved, modulePattern)
+			}
+		}
+		updates[i].IgnoreModules = resolved
+	}
+
+	return nil
 }
 
 // processFiles processes all matching files and applies module updates.
@@ -573,7 +612,7 @@ func validateConfigUpdateMode(flags *cliFlags) {
 
 func configValidationHasConflicts(flags *cliFlags) bool {
 	return flags.pattern != "" || flags.configFile != "" || flags.moduleSource != "" || flags.toVersion != "" ||
-		len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" ||
+		len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" || flags.branch != "" ||
 		flags.terraformVersion != "" || flags.providerName != "" || flags.forceAdd || flags.dryRun ||
 		flags.check || flags.verbose || flags.reportFile != ""
 }
@@ -650,6 +689,11 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 	if err != nil {
 		//nolint:staticcheck // The capitalised prefix is user-facing CLI output.
 		return 0, fmt.Errorf("Error loading config file: %w", err)
+	}
+
+	if err := resolveBranchIgnoreModules(config.Modules, flags.branch); err != nil {
+		//nolint:staticcheck // The capitalised prefix is user-facing CLI output.
+		return 0, fmt.Errorf("Error: %w", err)
 	}
 
 	var terraformUpdates, terraformErrors, providerUpdates, providerErrors, moduleUpdates, moduleErrors int

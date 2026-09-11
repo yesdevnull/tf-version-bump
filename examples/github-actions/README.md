@@ -47,6 +47,8 @@ Edit the control configurations on the default branch:
 
 These are strict `tf-version-bump` configuration files. The workflow owns file selection, so do not add a `pattern` key. Pull requests changing these files run a read-only config validation check; they do not process state branches or run Terraform.
 
+Each state branch is processed with its own `-branch` value, so an `ignore_modules` entry can be limited to one branch by writing it as `<branch-pattern>/<module-pattern>`. `state/staging/example-thing/shared-vpc` skips that module only on that branch, while a bare `shared-vpc` skips it on every branch. The pull-request check validates these entries without a branch, because it only checks the configuration's shape. See [branch-scoped module names](../../docs/CONFIGURATION.md#branch-scoped-module-names).
+
 The callers process the repository root by default:
 
 ```yaml
