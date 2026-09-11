@@ -26,6 +26,7 @@ All Go code is in a single flat `main` package — no subdirectories, no package
 ```
 main.go                  # CLI parsing, HCL processing, all version updates
 config.go                # YAML config loading and validation
+audit.go                 # -audit-file: read-only comparison of files with a config
 *_test.go                # split by concern (see Testing)
 schema/config-schema.json # JSON Schema for the YAML config
 examples/                # Sample .tf/.yml files and branch automation
@@ -114,7 +115,8 @@ not atomic. Files are processed in memory, so very large files (>100MB) are impr
 ### Update flow
 
 `main()` → `validateOperationModes` → either standalone config validation or
-`findMatchingFiles` → `runConfigFileMode` (YAML) / `runCLIMode` (one direct operation).
+`findMatchingFiles` → `runAuditMode` (`-audit-file`: `buildAudit`, never writes Terraform files) or
+`runUpdateMode` → `runConfigFileMode` (YAML) / `runCLIMode` (one direct operation).
 Each update mode dispatches to one of three update paths:
 `updateModuleVersionWithCount`, `updateTerraformVersion`, or `updateProviderVersionWithCount`.
 
@@ -201,6 +203,12 @@ the complete command. Keep human summaries and the report separate: existing sum
 source/file operations, while the report counts individual changed blocks. Dry-run reports contain
 zero counts because no file values changed.
 
+`-audit-file` is the read-only comparison contract. In config mode it writes schema version 1 JSON
+listing each configured Terraform, provider and module version value the selected files declare,
+its current and expected values, whether they already match and, for modules, the first filter that
+would skip an update. The audit and the updater share `moduleVersionFilter` and the
+`attributeHasStringValue` comparison; keep the audit in step with any change to update filtering.
+
 `-check` uses the existing dry-run update paths but has a separate automation exit contract. The
 mode runners return their update-operation total to `main`: a processing error exits 1, a successful
 check with a positive total exits 2, and a successful check with no eligible update returns normally
@@ -219,6 +227,7 @@ Final test layout by concern:
 - `module_update_test.go` — module updates, filtering, diagnostics, permissions, and errors.
 - `terraform_version_test.go` — Terraform required-version updates.
 - `provider_update_test.go` — provider updates and attribute preservation.
+- `audit_test.go` — audit entries, filter precedence, and agreement with the updater.
 - `config_test.go` / `config_schema_test.go` — YAML configuration and schema validation.
 - `documentation_test.go` — local documentation links, schema-backed examples, and constraints.
 - `command_test.go` — CLI parsing, output, and exit behaviour.

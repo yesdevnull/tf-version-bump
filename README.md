@@ -160,6 +160,10 @@ Terraform, module, and provider block counts as JSON. See the
 [usage reference](docs/USAGE.md#machine-readable-update-report) for the report contract and the
 [examples cookbook](examples/README.md#automation-cookbook) for a complete workflow.
 
+To compare files with a config without changing them, pass `-audit-file audit.json` in config mode
+instead. The audit lists every configured value's current and expected version; the
+[usage reference](docs/USAGE.md#machine-readable-version-audit) describes it.
+
 ## Common controls
 
 ### Select current versions
