@@ -372,7 +372,59 @@ update would be a no-op.
 - Consumes: Task 1's `auditReport`, `auditedAttribute`, `parseAuditedFile`, `auditValue`, `auditJSON`; `ModuleUpdate`, `FromVersions` (`config.go`); `moduleSourceValue`, `moduleBlockName`, `isLocalModule`, `shouldIgnoreModule`, `containsVersion`, `updateModuleVersionWithCount`, `captureStderr`.
 - Produces: `auditReport.Modules []moduleAuditEntry` (JSON key `modules`); `type moduleAuditEntry struct { File, Name, Source string; Actual *string; Expected string; Matches bool; Skip *moduleAuditSkip }`; `type moduleAuditSkip struct { Filter string; Values []string }`; `func moduleVersionFilter(currentVersion string, ignoreVersions, fromVersions []string) string` returning `"ignore_versions"`, `"from"` or `""`.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Share the updater's version-filter precedence (refactor under the existing tests)**
+
+Do this before writing Task 2's tests: once they are appended, the package's tests do not compile until Step 4, so this refactor could not be verified on its own.
+
+In `main.go`, replace `shouldSkipModuleVersion` (currently lines 1328-1344) with:
+
+```go
+// moduleVersionFilter names the config filter that stops an update from currentVersion:
+// "ignore_versions" when it lists the version, "from" when it is set and does not, or "" when
+// neither applies. ignore_versions takes precedence over from.
+func moduleVersionFilter(currentVersion string, ignoreVersions, fromVersions []string) string {
+	if len(ignoreVersions) > 0 && containsVersion(ignoreVersions, currentVersion) {
+		return "ignore_versions"
+	}
+	if len(fromVersions) > 0 && !containsVersion(fromVersions, currentVersion) {
+		return "from"
+	}
+	return ""
+}
+
+func shouldSkipModuleVersion(moduleName, currentVersion string, opts *moduleUpdateOptions) bool {
+	switch moduleVersionFilter(currentVersion, opts.ignoreVersions, opts.fromVersions) {
+	case "ignore_versions":
+		if opts.verbose {
+			fmt.Printf("  ⊗ Skipped module %s in %s (current version %s matches 'ignore-version' filter %v)\n", quote(moduleName, opts.outputFormat), opts.filename, quote(currentVersion, opts.outputFormat), opts.ignoreVersions)
+		}
+		return true
+	case "from":
+		if opts.verbose {
+			fmt.Printf("  ⊗ Skipped module %s in %s (current version %s does not match any 'from' filter %v)\n", quote(moduleName, opts.outputFormat), opts.filename, quote(currentVersion, opts.outputFormat), opts.fromVersions)
+		}
+		return true
+	}
+	return false
+}
+```
+
+Run: `go test -count=1 ./...` and `golangci-lint run --timeout=5m`
+Expected: PASS and no findings; the refactor changes no behaviour, and the existing module-filter and `-verbose` tests pin it.
+
+Commit it on its own after `git status --short`:
+
+```text
+refactor: name the module version filter that skips an update
+
+moduleVersionFilter reports which of ignore_versions or from stops an
+update, in the updater's precedence, so the coming audit can record the
+same filter the updater applies instead of re-deriving it.
+
+<trailer lines>
+```
+
+- [ ] **Step 2: Write the failing tests**
 
 Append to `audit_test.go`:
 
@@ -506,48 +558,10 @@ func TestBuildAudit_AgreesWithTheUpdaterOnModulesItWouldChange(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [ ] **Step 3: Run the tests to verify they fail**
 
 Run: `go test -count=1 -run 'TestBuildAudit' ./...`
 Expected: FAIL to build with `undefined: moduleAuditEntry`, `undefined: moduleAuditSkip` and `audit.Modules undefined`.
-
-- [ ] **Step 3: Share the updater's version-filter precedence**
-
-In `main.go`, replace `shouldSkipModuleVersion` (currently lines 1328-1344) with:
-
-```go
-// moduleVersionFilter names the config filter that stops an update from currentVersion:
-// "ignore_versions" when it lists the version, "from" when it is set and does not, or "" when
-// neither applies. ignore_versions takes precedence over from.
-func moduleVersionFilter(currentVersion string, ignoreVersions, fromVersions []string) string {
-	if len(ignoreVersions) > 0 && containsVersion(ignoreVersions, currentVersion) {
-		return "ignore_versions"
-	}
-	if len(fromVersions) > 0 && !containsVersion(fromVersions, currentVersion) {
-		return "from"
-	}
-	return ""
-}
-
-func shouldSkipModuleVersion(moduleName, currentVersion string, opts *moduleUpdateOptions) bool {
-	switch moduleVersionFilter(currentVersion, opts.ignoreVersions, opts.fromVersions) {
-	case "ignore_versions":
-		if opts.verbose {
-			fmt.Printf("  ⊗ Skipped module %s in %s (current version %s matches 'ignore-version' filter %v)\n", quote(moduleName, opts.outputFormat), opts.filename, quote(currentVersion, opts.outputFormat), opts.ignoreVersions)
-		}
-		return true
-	case "from":
-		if opts.verbose {
-			fmt.Printf("  ⊗ Skipped module %s in %s (current version %s does not match any 'from' filter %v)\n", quote(moduleName, opts.outputFormat), opts.filename, quote(currentVersion, opts.outputFormat), opts.fromVersions)
-		}
-		return true
-	}
-	return false
-}
-```
-
-Run: `go test -count=1 -run 'TestUpdateModule|TestCommand|TestProcessFiles' ./...`
-Expected: the existing update tests PASS (the refactor changes no behaviour); `TestBuildAudit` still fails to build.
 
 - [ ] **Step 4: Record module entries**
 
@@ -589,7 +603,9 @@ func (audit *auditReport) recordModuleBlock(filename string, block *hclwrite.Blo
 	}
 	name := moduleBlockName(block)
 	versionAttribute := block.Body().GetAttribute("version")
-	for _, update := range updates {
+	// Index rather than copy: gocritic's hugeParam rejects passing a ModuleUpdate by value.
+	for i := range updates {
+		update := &updates[i]
 		if update.Source != source {
 			continue
 		}
@@ -603,7 +619,7 @@ func (audit *auditReport) recordModuleBlock(filename string, block *hclwrite.Blo
 
 // moduleAuditSkipFor applies the updater's precedence: a local source, then ignore_modules, then
 // the version filters, which a block without a version never meets.
-func moduleAuditSkipFor(name, source string, actual *string, update ModuleUpdate) *moduleAuditSkip {
+func moduleAuditSkipFor(name, source string, actual *string, update *ModuleUpdate) *moduleAuditSkip {
 	switch {
 	case isLocalModule(source):
 		return &moduleAuditSkip{Filter: "local_source", Values: []string{}}
@@ -646,16 +662,16 @@ Then `go test -count=1 ./...` and `golangci-lint run --timeout=5m`. Expected: PA
 
 - [ ] **Step 6: Commit**
 
-Stage `audit.go`, `audit_test.go` and `main.go` after `git status --short`, then commit:
+Stage `audit.go` and `audit_test.go` after `git status --short` (Step 1 already committed `main.go`), then commit:
 
 ```text
 feat: audit module versions in the updater's filter precedence
 
 Each module block is recorded once per config entry with an equal source,
 with the first filter that would stop an update: a local source,
-ignore_modules, ignore_versions, then from. shouldSkipModuleVersion and the
-audit now share moduleVersionFilter, so the two cannot disagree about
-which versions a filter excludes.
+ignore_modules, ignore_versions, then from. The audit uses the updater's
+moduleVersionFilter, so the two cannot disagree about which versions a
+filter excludes.
 
 <trailer lines>
 ```
@@ -707,7 +723,8 @@ func prepareJSONOutput(output jsonOutput, destination string, inputFiles []strin
 func (prepared *preparedReportFile) publish(document any) error {
 	var data bytes.Buffer
 	encoder := json.NewEncoder(&data)
-	// Version constraints such as ">= 1.5" stay readable instead of becoming ">= 1.5".
+	// encoding/json writes <, > and & as Unicode escapes by default, which would make
+	// constraints such as ">= 1.5" unreadable in the audit.
 	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(document); err != nil {
@@ -1133,7 +1150,8 @@ untouched when any file cannot be parsed.
 **Files:**
 - Modify: `docs/USAGE.md` (after line 22; flag table at line 46; new section after line 82; config-mode paragraph at line 258; output bullets at lines 296-304)
 - Modify: `README.md` (after line 161)
-- Modify: `CLAUDE.md` (Layout block, Testing list, "Errors and output")
+- Modify: `CLAUDE.md` (Layout block, "Update flow", Testing list, "Errors and output")
+- Modify: `AGENTS.md` (repository tree and file table)
 
 **Interfaces:**
 - Consumes: the behaviour from Tasks 1-3.
@@ -1197,8 +1215,9 @@ The audit lists every value the config targets that the files declare:
   two entries target appears twice.
 - `actual` is the value as written, without its quotes, or `null` when the declaration has no
   version. A non-literal expression appears as its source text.
-- `matches` is true when the value already evaluates to the expected string, which is exactly when an
-  update would leave it unchanged.
+- `matches` is true when the value already evaluates to the expected string, so an update would never
+  change it. A value can also stay unchanged without matching: a skipped module, or an object-syntax
+  provider without `version`, which updates do not add.
 - `skip` names the first filter that would stop an update, in the order the updater applies them:
   `local_source`, `ignore_modules`, `ignore_versions`, then `from`. A module without a `version` is
   never skipped by a version filter.
@@ -1250,6 +1269,28 @@ listing each configured Terraform, provider and module version value the selecte
 its current and expected values, whether they already match and, for modules, the first filter that
 would skip an update. The audit and the updater share `moduleVersionFilter` and the
 `attributeHasStringValue` comparison; keep the audit in step with any change to update filtering.
+```
+
+In "Update flow", replace the first paragraph with:
+
+```markdown
+`main()` → `validateOperationModes` → either standalone config validation or
+`findMatchingFiles` → `runAuditMode` (`-audit-file`: `buildAudit`, never writes Terraform files) or
+`runUpdateMode` → `runConfigFileMode` (YAML) / `runCLIMode` (one direct operation).
+Each update mode dispatches to one of three update paths:
+`updateModuleVersionWithCount`, `updateTerraformVersion`, or `updateProviderVersionWithCount`.
+```
+
+In `AGENTS.md`, add `audit.go` beside the core files. In the repository tree, after the `config.go` line (line 32), add:
+
+```text
+├── audit.go                 # -audit-file comparison
+```
+
+In the file table, after the `config.go` row (line 45), add:
+
+```markdown
+| `audit.go` | Read-only `-audit-file` comparison of files with a config |
 ```
 
 - [ ] **Step 4: Verify the documentation**
@@ -1679,7 +1720,11 @@ install_tool() {
     curl --fail --silent --show-error --location --output "$archive" \
         "https://github.com/yesdevnull/tf-version-bump/releases/download/$REPORT_TF_VERSION_BUMP_VERSION/tf-version-bump_${version}_linux_x86_64.tar.gz" \
         || report_error 'could not download the tf-version-bump release archive'
-    printf '%s  %s\n' "$REPORT_TF_VERSION_BUMP_ARCHIVE_SHA256" "$archive" | sha256sum --check --status \
+    # Compare the digest directly: the harness runs this on macOS too, whose sha256sum lacks
+    # GNU's --check --status.
+    local digest
+    digest=$(sha256sum "$archive")
+    [[ "${digest%% *}" == "$REPORT_TF_VERSION_BUMP_ARCHIVE_SHA256" ]] \
         || report_error 'tf-version-bump release archive checksum mismatch'
     tar -xzf "$archive" -C "$WORK_ROOT" tf-version-bump
     TOOL="$WORK_ROOT/tf-version-bump"
@@ -1712,7 +1757,12 @@ collect_root() {
         printf '%s\n' '{"schema_version": 1, "terraform": [], "providers": [], "modules": []}' >"$audit"
     elif ! (cd "$worktree" && "$TOOL" -pattern "$root/*.tf" -config "$config" -audit-file "$audit") \
         >"$WORK_ROOT/audit.log" 2>&1; then
-        echo "could not audit root $root: $(tail -n 1 "$WORK_ROOT/audit.log")" >&2
+        local failure
+        failure=$(tail -n 1 "$WORK_ROOT/audit.log")
+        # The CLI logs through Go's log package, which starts each line with the date and time;
+        # dropping it keeps the recorded error stable between runs.
+        failure=${failure#[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9] }
+        echo "could not audit root $root: $failure" >&2
         return 1
     fi
     local main_found=false providers_found=false
@@ -1811,7 +1861,7 @@ esac
 Run: `examples/github-actions/report-test.sh`
 Expected: `PASS: test_collect_records_each_branch_root_and_audit` and `PASS: test_collect_records_missing_and_empty_roots`, nothing else.
 
-Then `make shellcheck`. Expected: clean. If shellcheck reports SC2329 for writer functions that are only passed by name (for example `write_alpha_branch`), add `# shellcheck disable=SC2329 # Called by name through add_state_branch.` above each one.
+Then run the pinned shellcheck (0.11.0) directly on the new and changed scripts, because `make shellcheck` lints only tracked files and these are not committed until Step 5: `shellcheck examples/github-actions/.github/scripts/report-state-branches.sh examples/github-actions/report-test.sh examples/github-actions/test.sh`. Expected: clean. If shellcheck reports SC2329 for writer functions that are only passed by name (for example `write_alpha_branch`), add `# shellcheck disable=SC2329 # Called by name through add_state_branch.` above each one.
 
 - [ ] **Step 5: Commit**
 
@@ -1875,6 +1925,8 @@ test_collect_records_unreadable_branches_and_continues() {
     REPORT_TERRAFORM_ROOTS=$'.\noutside' assert_silent_success 'collecting unreadable branches' \
         "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" run_collect
 
+    # The parse error must follow the root directly: collect strips the date and time Go's log
+    # package puts before each CLI diagnostic, so the recorded error is stable between runs.
     jq -e --arg missing "$missing" '
         [.branches[].branch] == ["state/staging/broken", "state/staging/linked", "state/staging/escaping",
                                  "state/staging/missing", "state/staging/beta"]
@@ -2092,13 +2144,28 @@ test_report_succeeds_when_every_branch_was_read() {
     grep -qxF 'Checked 3 branch(es): 4 FAIL, 12 PASS, 1 SKIP, 0 ERROR' "$FIXTURE_ROOT/summary.md" \
         || fail "the summary did not count the readable branches: $(<"$FIXTURE_ROOT/summary.md")"
 }
+
+
+# The audit records a non-literal expression as its source text, which can span lines.
+test_report_keeps_multi_line_values_on_one_table_row() {
+    setup_records_fixture
+    write_report_records
+    jq '.branches = [.branches[0] | .roots[0].audit.modules[0].actual = "try(\n  var.vpc_version,\n  \"5.0.0\"\n)"]' \
+        "$FIXTURE_OUTPUT/records.json" >"$FIXTURE_ROOT/multi-line.json"
+    mv "$FIXTURE_ROOT/multi-line.json" "$FIXTURE_OUTPUT/records.json"
+
+    assert_silent_success 'reporting a multi-line value' "$FIXTURE_ROOT/stdout" "$FIXTURE_ROOT/stderr" \
+        run_report_subcommand report
+    grep -qxF '| FAIL | module | terraform-aws-modules/vpc/aws | vpc | main.tf | try(<br>  var.vpc&#95;version,<br>  &quot;5.0.0&quot;<br>) | 5.0.0 | version differs |' \
+        "$FIXTURE_ROOT/summary.md" || fail "the multi-line value broke its table row: $(<"$FIXTURE_ROOT/summary.md")"
+}
 ```
 
-Add both names to `tests=(…)`.
+Add the three names to `tests=(…)`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `examples/github-actions/report-test.sh test_report_writes_the_improved_csv_and_summary test_report_succeeds_when_every_branch_was_read`
+Run: `examples/github-actions/report-test.sh test_report_writes_the_improved_csv_and_summary test_report_succeeds_when_every_branch_was_read test_report_keeps_multi_line_values_on_one_table_row`
 Expected: `FAIL: the report did not name the unreadable branch count: Usage: …` for the first (the dispatcher rejects `report`).
 
 - [ ] **Step 3: Implement `report`**
@@ -2107,14 +2174,16 @@ Add below `report_error`:
 
 ```bash
 # Escapes a value for a Markdown table cell: HTML special characters, then the characters
-# Markdown would read as structure or emphasis, as numeric entities.
+# Markdown would read as structure or emphasis, as numeric entities, then newlines as <br> so a
+# multi-line expression stays on its row.
 REPORT_JQ_DEFINITIONS='
-def cell: tostring | @html | gsub("(?<c>[|*_`~\\[\\]\\\\])"; "&#\(.c | explode[0]);");
+def cell: tostring | @html | gsub("(?<c>[|*_`~\\[\\]\\\\])"; "&#\(.c | explode[0]);") | gsub("\r?\n"; "<br>");
 def table_row: "| " + (map(cell) | join(" | ")) + " |";
 '
 
 # The improved report's rows for one branch record: each root's own check, its file checks,
 # then every audited value. A matching value passes even when a filter would skip it.
+# shellcheck disable=SC2016 # jq, not the shell, expands these.
 VERSION_ROWS_JQ='
 def root_file($root; $name): if $root == "." then $name else "\($root)/\($name)" end;
 def found_row($kind; $subject; $file; $found):
@@ -2145,6 +2214,7 @@ def branch_rows:
      file: .file, actual: .actual, expected: .expected, detail: .detail};
 '
 
+# shellcheck disable=SC2016 # jq, not the shell, expands these.
 VERSION_SUMMARY_JQ='
 def counts:
   "\(map(select(.status == "FAIL")) | length) FAIL, \(map(select(.status == "PASS")) | length) PASS, "
@@ -2326,6 +2396,7 @@ Add below `VERSION_SUMMARY_JQ`:
 ```bash
 # The legacy report reproduces an existing report exactly, defects included: modules only,
 # the module source as its Test, filters ignored and one row per block.
+# shellcheck disable=SC2016 # jq, not the shell, expands these.
 LEGACY_ROWS_JQ='
 def legacy_rows:
   .branch as $branch
@@ -2488,7 +2559,7 @@ jobs:
               aws-state/production/
             terraform_directories: .
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -2635,7 +2706,13 @@ Each job writes two reports to its summary and uploads both as CSV files, with t
   supports a single Terraform root.
 
 Version mismatches never fail the job. A branch that cannot be read fails it after both reports are
-written, so the gap is visible.
+written, so the gap is visible. Discovery runs exactly as in the update workflow, so a policy whose
+prefixes match no branch, or more than 256, fails its report job before any report is written, as it
+fails the update run.
+
+Both CSVs keep values exactly as written. A value beginning with `=`, `+`, `-` or `@`, such as the
+valid Terraform pin `= 5.0.0`, may be evaluated as a formula by a spreadsheet that opens the file
+directly, so import the CSVs as text instead.
 ```
 
 - [ ] **Step 2: Verify**
