@@ -165,6 +165,17 @@ Custom wildcard matcher (`shouldIgnoreModule` → `matchPattern`), matching modu
 not sources. `*` means zero or more characters: `vpc` (exact), `legacy-*` (prefix),
 `*-test` (suffix), `*-vpc-*` (contains).
 
+An entry may be branch-scoped as `<branch-pattern>/<module-pattern>`. `splitIgnoreModuleEntry`
+(config.go) divides it at the **last** `/`, which is unambiguous because Terraform module names
+cannot contain one; `sanitizeModuleUpdates` rejects an empty branch or module part so
+`-validate-config` catches the mistake. `resolveBranchIgnoreModules` (main.go) then reduces each
+entry's list to the module patterns applicable to `-branch` *before* the update paths run, so
+`updateModuleVersionWithCount` and `shouldIgnoreModule` stay branch-unaware and their signatures
+unchanged. The branch part reuses `matchPattern`, so `*` spans `/`. A branch-scoped entry without
+`-branch` is a hard error: silently dropping the exclusion would bump a module the config protects.
+The tool never reads the branch from Git — the caller supplies it (the state-branch automation has
+it as `PROCESS_STATE_BRANCH`, and its processing checkout is detached anyway).
+
 ### Config shape (`config.go`)
 
 Parsed with `KnownFields(true)` — unknown YAML keys are an error. `FromVersions` has a custom
@@ -177,7 +188,7 @@ type ModuleUpdate struct {
     Version        string       // required
     From           FromVersions // optional: only update from these versions
     IgnoreVersions FromVersions // optional
-    IgnoreModules  []string     // optional: name patterns
+    IgnoreModules  []string     // optional: name patterns, optionally '<branch>/<name>'
 }
 ```
 

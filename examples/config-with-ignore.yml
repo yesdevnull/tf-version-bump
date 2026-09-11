@@ -40,3 +40,11 @@ modules:
     ignore_modules:
       - "*-temp-*"             # Ignore temporary clusters
       - "experimental-*"       # Ignore experimental setups
+
+  # Branch-scoped exclusions; these require the -branch flag
+  - source: "terraform-aws-modules/elasticache/aws"
+    version: "1.4.0"
+    ignore_modules:
+      - "shared-cache"                             # Ignored on every branch
+      - "state/staging/example-thing/local-cache"  # Ignored only on that one branch
+      - "release/*/legacy-cache"                   # Ignored on any release/* branch

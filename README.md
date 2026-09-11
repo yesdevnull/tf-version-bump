@@ -122,8 +122,8 @@ tf-version-bump -validate-config versions.yml
 
 Config mode is exclusive with `-module`, `-provider`, `-terraform-version`, `-to`, and the
 module-filter flags. It can still be combined with global behaviour flags such as `-dry-run`,
-`-check`, `-force-add`, `-verbose`, `-output`, and `-report-file`, subject to the check-mode
-restrictions below.
+`-check`, `-force-add`, `-verbose`, `-branch`, `-output`, and `-report-file`, subject to the
+check-mode restrictions below.
 
 ## Preview and review
 
@@ -194,6 +194,23 @@ tf-version-bump \
   -to "5.0.0" \
   -ignore-modules "legacy-vpc,test-*,*-deprecated"
 ```
+
+A pattern can be scoped to particular branches by prefixing it with a branch pattern. The final
+`/` separates the branch pattern from the module pattern, because Terraform module names cannot
+contain `/`:
+
+```bash
+tf-version-bump \
+  -pattern "**/*.tf" \
+  -module "terraform-aws-modules/vpc/aws" \
+  -to "5.0.0" \
+  -ignore-modules "legacy-vpc,state/staging/example-thing/shared-vpc" \
+  -branch "state/staging/example-thing"
+```
+
+An unscoped pattern applies to every branch. A scoped pattern requires `-branch`; the command does
+not read the branch from Git. See
+[Branch-scoped module-name filters](docs/USAGE.md#branch-scoped-module-name-filters).
 
 ### Add a missing module version
 

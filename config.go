@@ -59,7 +59,7 @@ type ModuleUpdate struct {
 	Version        string       `yaml:"version"`         // Target version (e.g., "5.0.0")
 	From           FromVersions `yaml:"from"`            // Optional: only update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
 	IgnoreVersions FromVersions `yaml:"ignore_versions"` // Optional: skip update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
-	IgnoreModules  []string     `yaml:"ignore_modules"`  // Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
+	IgnoreModules  []string     `yaml:"ignore_modules"`  // Optional: module name patterns, optionally scoped to a branch (e.g., ["vpc", "legacy-*", "release/*/vpc"])
 }
 
 // ProviderUpdate represents a provider version update in required_providers blocks
@@ -94,6 +94,7 @@ type ProviderUpdate struct {
 //	    ignore_modules:        # Optional: module names or patterns to ignore
 //	      - "legacy-vpc"
 //	      - "test-*"
+//	      - "release/*/vpc"    # Optional: scoped to branches matching "release/*"
 //	  - source: "terraform-aws-modules/s3-bucket/aws"
 //	    version: "4.0.0"
 type Config struct {
@@ -189,9 +190,33 @@ func sanitizeModuleUpdates(modules []ModuleUpdate) error {
 		if modules[i].Version == "" {
 			return fmt.Errorf("module at index %d is missing 'version' field", i)
 		}
+		for _, entry := range modules[i].IgnoreModules {
+			if _, _, err := splitIgnoreModuleEntry(entry); err != nil {
+				return fmt.Errorf("module at index %d has an invalid 'ignore_modules' entry: %w", i, err)
+			}
+		}
 	}
 
 	return nil
+}
+
+// splitIgnoreModuleEntry divides a branch-scoped ignore entry into its branch and module patterns.
+// Terraform module names cannot contain '/', so the final separator always divides the two.
+// An entry without a separator applies to every branch and yields an empty branch pattern.
+func splitIgnoreModuleEntry(entry string) (branchPattern, modulePattern string, err error) {
+	segments := strings.Split(entry, "/")
+	if len(segments) == 1 {
+		return "", entry, nil
+	}
+
+	for index, segment := range segments {
+		segments[index] = strings.TrimSpace(segment)
+		if segments[index] == "" {
+			return "", "", fmt.Errorf("'%s' must be '<branch>/<module>' with no empty '/'-separated part", entry)
+		}
+	}
+
+	return strings.Join(segments[:len(segments)-1], "/"), segments[len(segments)-1], nil
 }
 
 func trimNonEmptyStrings(values []string) []string {

@@ -163,14 +163,17 @@
           },
           "ignore_modules": {
             "type": "array",
-            "description": "Optional: List of module names or patterns to ignore. Supports wildcard matching using '*' for zero or more characters",
+            "description": "Optional: List of module names or patterns to ignore. Supports wildcard matching using '*' for zero or more characters. An entry may be scoped to a branch as '<branch-pattern>/<module-pattern>'; the final '/' separates the two because Terraform module names cannot contain it. A scoped entry requires the -branch flag",
             "items": {
-              "type": "string"
+              "type": "string",
+              "$comment": "One or more non-empty '/'-separated segments. The last segment is the module pattern; anything before it is the branch pattern.",
+              "pattern": "^[^/]+(?:/[^/]+)*$"
             },
             "examples": [
               ["vpc", "legacy-*"],
               ["test-*", "*-deprecated"],
-              ["prod-vpc", "staging-*", "*-old"]
+              ["prod-vpc", "staging-*", "*-old"],
+              ["state/staging/example-thing/shared-vpc", "release/*/legacy-vpc"]
             ]
           }
         },

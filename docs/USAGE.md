@@ -34,6 +34,7 @@ string is a no-op: the command does not rewrite the file or count it as an updat
 | `-from <version>` | Direct module mode | Update only this exact current-version string. Repeatable. |
 | `-ignore-version <version>` | Direct module mode | Skip this exact current-version string. Repeatable. |
 | `-ignore-modules <patterns>` | Direct module mode | Comma-separated module block labels; `*` is a wildcard. |
+| `-branch <name>` | Module updates | Branch name used to resolve branch-scoped ignore patterns. |
 | `-config <file>` | Config mode | YAML file containing one or more update groups. |
 | `-validate-config <file>` | Standalone | Validate a non-empty YAML update config without selecting Terraform files. |
 | `-terraform-version <constraint>` | Direct Terraform mode | Value to set as `required_version`. |
@@ -154,6 +155,38 @@ tf-version-bump \
 The only special character is `*`, which matches zero or more characters. Matching is
 case-sensitive. An exact name contains no wildcard.
 
+### Branch-scoped module-name filters
+
+An ignore pattern can be limited to particular branches by prefixing it with a branch pattern.
+Terraform module names cannot contain `/`, so the final `/` separates the two patterns: everything
+before it is the branch pattern and everything after it is the module pattern.
+
+```bash
+tf-version-bump \
+  -pattern "**/*.tf" \
+  -module "terraform-aws-modules/vpc/aws" \
+  -to "5.0.0" \
+  -ignore-modules "legacy-vpc,state/staging/example-thing/shared-vpc" \
+  -branch "state/staging/example-thing"
+```
+
+| Pattern | Ignores |
+|---------|---------|
+| `shared-vpc` | That module on every branch |
+| `state/staging/example-thing/shared-vpc` | That module only on `state/staging/example-thing` |
+| `release/*/legacy-vpc` | `legacy-vpc` on any branch starting `release/` |
+| `state/staging/*` | Every module on `state/staging` |
+
+The branch pattern uses the same wildcard rules as the module pattern, so `*` spans `/` rather than
+stopping at a path segment. `release/*` therefore matches `release/2026-09` and
+`release/2026-09/hotfix` alike. No `/`-separated part may be empty, so `state/staging/`, `/vpc`,
+and `state//vpc` are rejected.
+
+The command does not inspect Git. Supply `-branch` yourself, for example with
+`-branch "$(git rev-parse --abbrev-ref HEAD)"`. A branch-scoped pattern without `-branch` is an
+error rather than a silent no-op, because silently dropping the exclusion would update a module the
+configuration set out to protect. Unscoped patterns never require `-branch`.
+
 ### Missing versions and module sources
 
 A matching registry module without `version` is skipped with a warning unless `-force-add` is
@@ -169,7 +202,7 @@ Module processing follows this order:
 
 1. Require an exact source match.
 2. Skip local sources.
-3. Apply module-name exclusions.
+3. Apply module-name exclusions, after branch-scoped patterns are resolved against `-branch`.
 4. Skip a missing version unless `-force-add` is enabled and the source is a registry module.
 5. Apply `ignore-version` exclusions.
 6. Apply the `from` allow-list.
@@ -255,8 +288,8 @@ Config mode applies updates in this order for each selected set of files:
 2. Providers, in YAML order
 3. Modules, in YAML order
 
-Use `-force-add`, `-dry-run`, `-check`, `-verbose`, or `-output md` with config mode when required.
-See [Configuration](CONFIGURATION.md) for the complete YAML contract.
+Use `-force-add`, `-dry-run`, `-check`, `-verbose`, `-branch`, or `-output md` with config mode when
+required. See [Configuration](CONFIGURATION.md) for the complete YAML contract.
 
 Config summaries count module entry/file applications as `update(s)`, not distinct files. A file
 matched by two module entries therefore contributes two module updates.

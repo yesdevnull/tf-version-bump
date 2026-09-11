@@ -192,7 +192,7 @@ GitHub Actions runs on every push/PR:
 
 Priority order in `updateModuleVersion()`:
 1. **Source and locality**: Require an exact source match; skip local sources
-2. **Ignore patterns**: If module name matches `ignore_modules`, skip
+2. **Ignore patterns**: If module name matches `ignore_modules`, skip; an entry may be branch-scoped as `<branch>/<name>` and resolved against `-branch` beforehand
 3. **Missing version**: Skip unless `force-add` is enabled and the source is a registry module
 4. **Ignore versions**: If current version is in `ignore_versions`, skip (takes precedence)
 5. **From filter**: If `from` is set and current version doesn't match, skip
