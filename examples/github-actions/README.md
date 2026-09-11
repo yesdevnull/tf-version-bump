@@ -190,17 +190,18 @@ each branch's discovered commit with `tf-version-bump -audit-file`. Its matrix r
 branch prefixes, config path and Terraform directories; the example's harness fails if they differ,
 so change both together.
 
-A configured module, provider or `required_version` that a branch does not declare produces no row for that branch.
-
 Each job writes two reports to its summary and uploads both as CSV files, with the collected
-`records.json`, in an artefact retained for seven days:
+`records.json`, in an artefact retained for seven days. A configured module, provider or
+`required_version` that a branch does not declare produces no row for that branch:
 
 - **Version report** (`version-report.csv`): one row per check with `status`, `branch`, `kind`,
   `subject`, `block`, `file`, `actual`, `expected` and `detail` columns. It checks each root's
   presence, whether `main.tf` and `providers.tf` exist, `required_version`, providers and modules.
   A value that already matches passes; a module the config's `ignore_modules`, `ignore_versions` or
-  `from` excludes is `SKIP`, naming the filter; a branch that cannot be fetched or parsed is
-  `ERROR`. The summary counts every status and lists each branch's non-passing rows.
+  `from` excludes is `SKIP`, naming the filter, as is a module with a local source; a branch that
+  cannot be fetched, parsed or safely read — a symlinked Terraform file, a root outside the
+  checkout, or a duplicate root — is `ERROR`. The summary counts every status and lists each
+  branch's non-passing rows.
 - **Legacy version report** (`legacy-report.csv`): the columns `Result`, `Test`, `Comment` and
   `State Branch` in an existing report's format, with only FAIL rows in the summary. It checks
   modules and the two files only, ignores the config's filters, names each module by its source
