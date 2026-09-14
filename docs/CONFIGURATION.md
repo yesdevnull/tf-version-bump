@@ -224,10 +224,15 @@ short branch name, not `refs/heads/…` or `origin/…`:
 tf-version-bump -pattern "**/*.tf" -config versions.yml -branch "$(git branch --show-current)"
 ```
 
-`git branch --show-current` is deliberate: it prints nothing on a detached checkout, so the command
-stops with the error below. `git rev-parse --abbrev-ref HEAD` prints `HEAD` there, which names no
-branch, so a literal `-branch HEAD` is rejected, as is any value beginning `refs/` such as
-`$GITHUB_REF`.
+`git branch --show-current` is deliberate: it prints nothing on a detached checkout, so a config
+containing a branch-scoped entry stops with this error:
+
+```text
+Error: ignore pattern 'state/staging/example-thing/shared-vpc' is scoped to a branch, but -branch is missing or empty; a detached checkout has no current branch
+```
+
+`git rev-parse --abbrev-ref HEAD` prints `HEAD` there, which names no branch, so a literal
+`-branch HEAD` is rejected, as is any value beginning `refs/` such as `$GITHUB_REF`.
 
 A config containing a branch-scoped entry fails when `-branch` is missing, rather than silently
 dropping the exclusion and updating a module the config set out to protect. Configs that use only

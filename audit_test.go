@@ -326,11 +326,38 @@ func TestCommandAuditRequiresBranchForScopedIgnoreModules(t *testing.T) {
 
 	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", moduleFile, "-config", configFile, "-audit-file", auditFile})
 
-	want := "Error: ignore pattern 'state/staging/example-thing/shared_vpc' is scoped to a branch, so the -branch flag is required\n"
+	want := "Error: ignore pattern 'state/staging/example-thing/shared_vpc' is scoped to a branch, but -branch is missing or empty; a detached checkout has no current branch\n"
 	if result.exitCode != 1 || result.diagnostics != want {
 		t.Fatalf("result = %#v, want diagnostic %q and exit 1", result, want)
 	}
 	if _, err := os.Stat(auditFile); !os.IsNotExist(err) {
 		t.Fatalf("audit file stat error = %v, want the audit not to be written", err)
+	}
+}
+
+// The audit must resolve scoped entries against the -branch it was given, exactly as an update
+// does, or the version report would mark a deliberately excluded module as out of date.
+func TestCommandAuditResolvesScopedIgnoreModulesAgainstBranch(t *testing.T) {
+	const entry = "state/staging/example-thing/shared_vpc"
+	dir := t.TempDir()
+	moduleFile := writeTestFile(t, dir, "main.tf", "module \"shared_vpc\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	configFile := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n    ignore_modules:\n      - "+entry+"\n")
+	auditFile := filepath.Join(dir, "audit.json")
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", moduleFile, "-config", configFile, "-branch", "state/staging/example-thing", "-audit-file", auditFile})
+
+	if result.diagnostics != "" || result.exitCode != -1 {
+		t.Fatalf("result = %#v, want a successful audit", result)
+	}
+	var report auditReport
+	if err := json.Unmarshal([]byte(readTestFile(t, auditFile)), &report); err != nil {
+		t.Fatalf("parse audit file: %v", err)
+	}
+	want := []moduleAuditEntry{{
+		File: moduleFile, Name: "shared_vpc", Source: "example/module",
+		Actual: auditValue("1.0.0"), Expected: "2.0.0", Skip: &moduleAuditSkip{Filter: "ignore_modules", Values: []string{entry}},
+	}}
+	if got, wantJSON := auditJSON(t, report.Modules), auditJSON(t, want); got != wantJSON {
+		t.Fatalf("modules = %s, want %s", got, wantJSON)
 	}
 }

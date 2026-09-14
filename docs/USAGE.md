@@ -245,6 +245,10 @@ stopping at a path segment. `release/*` therefore matches `release/2026-09` and
 `release/2026-09/hotfix` alike. No `/`-separated part may be empty, so `state/staging/`, `/vpc`,
 and `state//vpc` are rejected.
 
+`-ignore-modules` is split on commas before any `/` is considered, so it cannot express a branch
+pattern containing `,`. Use `ignore_modules` in a config file for such a branch, or put `*` in
+place of the comma, accepting that it also matches other characters.
+
 A trailing `/*` is the module pattern, not a branch glob. `state/staging/*` means every module on a
 branch named exactly `state/staging`, which cannot exist alongside any `state/staging/<name>`
 branch, because Git stores refs as directories. Under a `state/<environment>/<name>` scheme, use
@@ -258,8 +262,13 @@ tf-version-bump -pattern "**/*.tf" -config versions.yml -branch "$(git branch --
 ```
 
 Prefer that over `git rev-parse --abbrev-ref HEAD`, which prints `HEAD` on a detached checkout —
-the usual CI case. `git branch --show-current` prints nothing when detached, so the command stops
-with the error below rather than matching nothing and updating the module anyway.
+the usual CI case. `git branch --show-current` prints nothing when detached, so a command with a
+branch-scoped pattern stops with this error rather than matching nothing and updating the module
+anyway:
+
+```text
+Error: ignore pattern 'state/staging/example-thing/shared-vpc' is scoped to a branch, but -branch is missing or empty; a detached checkout has no current branch
+```
 
 A literal `-branch HEAD`, and any value beginning `refs/`, are rejected for the same reason: both
 name no branch, so every scoped pattern would be dropped without warning. `refs/` covers

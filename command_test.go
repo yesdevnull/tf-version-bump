@@ -474,6 +474,9 @@ func TestCommandBranchScopedIgnoreRequiresBranch(t *testing.T) {
 		{name: "direct mode", args: func(moduleFile, _ string) []string {
 			return []string{"-pattern", moduleFile, "-module", "example/module", "-to", "2.0.0", "-ignore-modules", "main/vpc"}
 		}},
+		{name: "empty branch from a detached checkout", args: func(moduleFile, configFile string) []string {
+			return []string{"-pattern", moduleFile, "-config", configFile, "-branch", "   "}
+		}},
 	}
 
 	for _, tt := range tests {
@@ -484,7 +487,7 @@ func TestCommandBranchScopedIgnoreRequiresBranch(t *testing.T) {
 
 			result := runMainCommand(t, append([]string{"tf-version-bump"}, tt.args(moduleFile, configFile)...))
 
-			want := "Error: ignore pattern 'main/vpc' is scoped to a branch, so the -branch flag is required\n"
+			want := "Error: ignore pattern 'main/vpc' is scoped to a branch, but -branch is missing or empty; a detached checkout has no current branch\n"
 			if result.exitCode != 1 || result.diagnostics != want {
 				t.Fatalf("result = %#v, want diagnostic %q and exit 1", result, want)
 			}

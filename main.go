@@ -235,7 +235,7 @@ func parseFlags() *cliFlags {
 	flagSet.StringVar(&flags.toVersion, "to", "", "Desired version number")
 	flagSet.Var(&flags.fromVersions, "from", "Optional: version to update from (can be specified multiple times, e.g., -from 3.0.0 -from '~> 3.0')")
 	flagSet.Var(&flags.ignoreVersions, "ignore-version", "Optional: version(s) to skip (can be specified multiple times, e.g., -ignore-version 3.0.0 -ignore-version '~> 3.0')")
-	flagSet.StringVar(&flags.ignoreModules, "ignore-modules", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
+	flagSet.StringVar(&flags.ignoreModules, "ignore-modules", "", "Optional: comma-separated list of module names or patterns to ignore; a '<branch>/<module>' pattern requires -branch (e.g., 'vpc,legacy-*,release/*/vpc')")
 	flagSet.StringVar(&flags.branch, "branch", "", "Optional: current branch name, required by branch-scoped ignore patterns (e.g., 'release/2026-09')")
 	flagSet.StringVar(&flags.configFile, "config", "", "Path to YAML config file with multiple module updates")
 	flagSet.StringVar(&flags.validationConfigFile, "validate-config", "", "Validate a YAML config file without updating Terraform files")
@@ -294,7 +294,7 @@ func loadModuleUpdates(flags *cliFlags) []ModuleUpdate {
 	// Single module mode - validate required flags
 	if flags.pattern == "" || flags.moduleSource == "" || flags.toVersion == "" {
 		fmt.Println("Usage:")
-		fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -to <version> [-from <version>]... [-ignore-version <version>]... [-ignore-modules <patterns>]")
+		fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -to <version> [-from <version>]... [-ignore-version <version>]... [-ignore-modules <patterns>] [-branch <name>]")
 		fmt.Println("  Config file:    tf-version-bump -pattern <glob> -config <config-file>")
 		flag.PrintDefaults()
 		exitFunc(1)
@@ -339,7 +339,7 @@ func resolveBranchIgnoreModules(updates []ModuleUpdate, branch string) error {
 			case branchPattern == "":
 				resolved = append(resolved, modulePattern)
 			case branch == "":
-				return fmt.Errorf("ignore pattern '%s' is scoped to a branch, so the -branch flag is required", entry)
+				return fmt.Errorf("ignore pattern '%s' is scoped to a branch, but -branch is missing or empty; a detached checkout has no current branch", entry)
 			case matchPattern(branch, branchPattern):
 				resolved = append(resolved, modulePattern)
 			}
