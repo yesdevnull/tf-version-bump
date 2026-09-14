@@ -37,6 +37,7 @@ string is a no-op: the command does not rewrite the file or count it as an updat
 | `-from <version>` | Direct module mode | Update only this exact current-version string. Repeatable. |
 | `-ignore-version <version>` | Direct module mode | Skip this exact current-version string. Repeatable. |
 | `-ignore-modules <patterns>` | Direct module mode | Comma-separated module block labels; `*` is a wildcard. |
+| `-branch <name>` | Module updates and audit | Short branch name used to resolve branch-scoped ignore patterns. |
 | `-config <file>` | Config mode | YAML file containing one or more update groups. |
 | `-validate-config <file>` | Standalone | Validate a non-empty YAML update config without selecting Terraform files. |
 | `-terraform-version <constraint>` | Direct Terraform mode | Value to set as `required_version`. |
@@ -131,6 +132,13 @@ The audit lists every value the config targets that the files declare:
 - `skip` names the first filter that would stop an update, in the order the updater applies them:
   `local_source`, `ignore_modules`, `ignore_versions`, then `from`. A module without a `version` is
   never skipped by a version filter.
+- `skip.values` lists every configured value for the filter as written, so branch-scoped
+  `ignore_modules` entries appear in full, including those scoped to other branches.
+
+The audit applies `ignore_modules` exactly as the updater does, including branch scoping, so both
+agree on which modules are excluded. Pass `-branch` whenever the config has a branch-scoped entry;
+without it the audit fails with the same error as an update rather than silently reporting the
+module as out of date.
 
 Config entries that no selected file uses produce no entries. The audit is written only after every
 selected file parses; otherwise the command exits 1 and leaves any existing audit untouched. A
@@ -210,6 +218,58 @@ tf-version-bump \
 The only special character is `*`, which matches zero or more characters. Matching is
 case-sensitive. An exact name contains no wildcard.
 
+### Branch-scoped module-name filters
+
+An ignore pattern can be limited to particular branches by prefixing it with a branch pattern.
+Terraform module names cannot contain `/`, so the final `/` separates the two patterns: everything
+before it is the branch pattern and everything after it is the module pattern.
+
+```bash
+tf-version-bump \
+  -pattern "**/*.tf" \
+  -module "terraform-aws-modules/vpc/aws" \
+  -to "5.0.0" \
+  -ignore-modules "legacy-vpc,state/staging/example-thing/shared-vpc" \
+  -branch "state/staging/example-thing"
+```
+
+| Pattern | Ignores |
+|---------|---------|
+| `shared-vpc` | That module on every branch |
+| `state/staging/example-thing/shared-vpc` | That module only on `state/staging/example-thing` |
+| `release/*/legacy-vpc` | `legacy-vpc` on any branch starting `release/` |
+| `state/staging/*/*` | Every module on any `state/staging/…` branch |
+
+The branch pattern uses the same wildcard rules as the module pattern, so `*` spans `/` rather than
+stopping at a path segment. `release/*` therefore matches `release/2026-09` and
+`release/2026-09/hotfix` alike. No `/`-separated part may be empty, so `state/staging/`, `/vpc`,
+and `state//vpc` are rejected.
+
+A trailing `/*` is the module pattern, not a branch glob. `state/staging/*` means every module on a
+branch named exactly `state/staging`, which cannot exist alongside any `state/staging/<name>`
+branch, because Git stores refs as directories. Under a `state/<environment>/<name>` scheme, use
+`state/staging/*/*`.
+
+The command does not inspect Git, so supply `-branch` yourself. It takes the short branch name, as
+`git branch --show-current` prints it, not `refs/heads/…` or `origin/…`:
+
+```bash
+tf-version-bump -pattern "**/*.tf" -config versions.yml -branch "$(git branch --show-current)"
+```
+
+Prefer that over `git rev-parse --abbrev-ref HEAD`, which prints `HEAD` on a detached checkout —
+the usual CI case. `git branch --show-current` prints nothing when detached, so the command stops
+with the error below rather than matching nothing and updating the module anyway.
+
+A literal `-branch HEAD`, and any value beginning `refs/`, are rejected for the same reason: both
+name no branch, so every scoped pattern would be dropped without warning. `refs/` covers
+`-branch "$GITHUB_REF"`, which holds `refs/heads/<name>` in GitHub Actions. A value starting
+`origin/` is not rejected, because a local branch may legitimately be named that way.
+
+A branch-scoped pattern without `-branch` is an error rather than a silent no-op, because silently
+dropping the exclusion would update a module the configuration set out to protect. Unscoped
+patterns never require `-branch`.
+
 ### Missing versions and module sources
 
 A matching registry module without `version` is skipped with a warning unless `-force-add` is
@@ -225,7 +285,7 @@ Module processing follows this order:
 
 1. Require an exact source match.
 2. Skip local sources.
-3. Apply module-name exclusions.
+3. Apply module-name exclusions, after branch-scoped patterns are resolved against `-branch`.
 4. Skip a missing version unless `-force-add` is enabled and the source is a registry module.
 5. Apply `ignore-version` exclusions.
 6. Apply the `from` allow-list.
@@ -311,8 +371,8 @@ Config mode applies updates in this order for each selected set of files:
 2. Providers, in YAML order
 3. Modules, in YAML order
 
-Use `-force-add`, `-dry-run`, `-check`, `-verbose`, or `-output md` with config mode when required.
-Add `-audit-file` to compare the files with the config instead of updating them.
+Use `-force-add`, `-dry-run`, `-check`, `-verbose`, `-branch`, or `-output md` with config mode when
+required. Add `-audit-file` to compare the files with the config instead of updating them.
 See [Configuration](CONFIGURATION.md) for the complete YAML contract.
 
 Config summaries count module entry/file applications as `update(s)`, not distinct files. A file

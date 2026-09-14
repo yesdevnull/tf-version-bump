@@ -155,7 +155,7 @@ Evaluated across `updateModuleBlockResult` and `shouldSkipModuleVersion`:
 
 1. Source must match exactly.
 2. Local sources are skipped.
-3. `ignore_modules` matches the module *name* → skip.
+3. `ignore_modules` matches the module _name_ → skip.
 4. A missing version is skipped unless `-force-add` is set and the source is a registry module.
 5. `ignore_versions` contains the current value → skip (takes precedence over `from`).
 6. `from` is set and does not contain the current value → skip.
@@ -166,6 +166,27 @@ Evaluated across `updateModuleBlockResult` and `shouldSkipModuleVersion`:
 Custom wildcard matcher (`shouldIgnoreModule` → `matchPattern`), matching module **names**,
 not sources. `*` means zero or more characters: `vpc` (exact), `legacy-*` (prefix),
 `*-test` (suffix), `*-vpc-*` (contains).
+
+An entry may be branch-scoped as `<branch-pattern>/<module-pattern>`. `splitIgnoreModuleEntry`
+(config.go) divides it at the **last** `/`, which is unambiguous because Terraform module names
+cannot contain one; `sanitizeModuleUpdates` rejects an empty part so `-validate-config` catches the
+mistake. `resolveBranchIgnoreModules` (main.go) then records the patterns applicable to `-branch` in
+`ModuleUpdate.resolvedIgnoreModules`, leaving `IgnoreModules` as the config writes it. Filtering
+reads the resolved list; the audit's `skip.values` reports the configured one, so a reader sees
+which entry caused a skip. The branch part reuses `matchPattern`, so `*` spans `/`.
+
+**Both readers must go through `loadResolvedConfig`.** It is the only place that pairs `loadConfig`
+with `resolveBranchIgnoreModules`, so `runConfigFileMode` and `runAuditMode` cannot drift into
+disagreeing about which modules are excluded — the state-branch version report is built on the
+audit, so drift would mark deliberately excluded modules as out of date. Tests that build a
+`Config` literal must resolve it too (see `auditConfig` in audit_test.go).
+
+A branch-scoped entry without `-branch` is a hard error: silently dropping the exclusion would bump
+a module the config protects. For the same reason `-branch HEAD` is rejected, because
+`git rev-parse --abbrev-ref HEAD` prints it on a detached checkout; the docs recommend
+`git branch --show-current`, which is empty there. The tool never reads the branch from Git — the
+caller supplies it (the state-branch automation has it as `PROCESS_STATE_BRANCH`, and its
+processing checkout is detached anyway).
 
 ### Config shape (`config.go`)
 
@@ -179,7 +200,9 @@ type ModuleUpdate struct {
     Version        string       // required
     From           FromVersions // optional: only update from these versions
     IgnoreVersions FromVersions // optional
-    IgnoreModules  []string     // optional: name patterns
+    IgnoreModules  []string     // optional: name patterns, optionally '<branch>/<name>', as written
+
+    resolvedIgnoreModules []string // set by resolveBranchIgnoreModules; what filtering reads
 }
 ```
 

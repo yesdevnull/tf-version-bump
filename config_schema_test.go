@@ -180,6 +180,71 @@ func TestConfigSchemaVersionPatternAllowsTerraformConstraints(t *testing.T) {
 	}
 }
 
+// The schema must accept exactly what the loader accepts. Anything it rejects that the loader
+// keeps, or accepts that the loader rejects, misleads an editor into the wrong diagnostic.
+func TestConfigSchemaIgnoreModulesPatternMatchesTheLoader(t *testing.T) {
+	schema := loadConfigSchema(t)
+
+	var items struct {
+		Pattern string `json:"pattern"`
+	}
+	var property struct {
+		Items json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(schema.Properties.Modules.Items.Properties["ignore_modules"], &property); err != nil {
+		t.Fatalf("parse ignore_modules schema: %v", err)
+	}
+	if err := json.Unmarshal(property.Items, &items); err != nil {
+		t.Fatalf("parse ignore_modules items schema: %v", err)
+	}
+	if items.Pattern == "" {
+		t.Fatal("ignore_modules items should constrain their entries with a pattern")
+	}
+	pattern, err := regexp.Compile(items.Pattern)
+	if err != nil {
+		t.Fatalf("compile ignore_modules pattern %q: %v", items.Pattern, err)
+	}
+
+	tests := []struct {
+		entry string
+		valid bool
+	}{
+		{entry: "vpc", valid: true},
+		{entry: "legacy-*", valid: true},
+		{entry: "main/vpc", valid: true},
+		{entry: "state/staging/example-thing/shared-vpc", valid: true},
+		{entry: "state/*/shared-*", valid: true},
+		{entry: "", valid: true},
+		{entry: "   ", valid: true},
+		{entry: "state/ /vpc", valid: false},
+		{entry: "state//vpc", valid: false},
+		{entry: "/vpc", valid: false},
+		{entry: "state/staging/", valid: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.entry, func(t *testing.T) {
+			if got := pattern.MatchString(tt.entry); got != tt.valid {
+				t.Errorf("pattern.MatchString(%q) = %v, want %v", tt.entry, got, tt.valid)
+			}
+			assertLoaderAgreesWithSchema(t, tt.entry, tt.valid)
+		})
+	}
+}
+
+// assertLoaderAgreesWithSchema confirms the runtime reaches the schema's verdict for one entry.
+func assertLoaderAgreesWithSchema(t *testing.T, entry string, valid bool) {
+	t.Helper()
+	modules := []ModuleUpdate{{Source: "example/module", Version: "1.0.0", IgnoreModules: []string{entry}}}
+	err := sanitizeModuleUpdates(modules)
+	if valid && err != nil {
+		t.Errorf("sanitizeModuleUpdates(%q) = %v, want the loader to accept it", entry, err)
+	}
+	if !valid && err == nil {
+		t.Errorf("sanitizeModuleUpdates(%q) accepted an entry the schema rejects", entry)
+	}
+}
+
 func schemaNodeType(t *testing.T, raw json.RawMessage) string {
 	t.Helper()
 	var node map[string]any

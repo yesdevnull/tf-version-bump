@@ -213,6 +213,14 @@ written, so the gap is visible. Discovery runs exactly as in the update workflow
 prefixes match no branch, or more than 256, fails its report job before any report is written, as it
 fails the update run.
 
+Do not use branch-scoped `ignore_modules` entries with this example yet. Neither the update job nor
+the version report passes `-branch`, and the pinned release predates branch scoping, so an entry
+such as `state/staging/example-thing/shared-vpc` is read as a plain module name that never matches.
+The update job would open a pull request bumping the very module the entry protects, the
+configuration check would not stop it, and the report would show the module as a version mismatch.
+Scoped entries become safe here once the pin bump and the `-branch "$PROCESS_STATE_BRANCH"` wiring
+land together.
+
 Both CSVs keep values exactly as written. A value beginning with `=`, `+`, `-` or `@`, such as the
 valid Terraform pin `= 5.0.0`, may be evaluated as a formula by a spreadsheet that opens the file
 directly, so import the CSVs as text instead.

@@ -113,6 +113,7 @@ type cliFlags struct {
 	fromVersions         stringSliceFlag
 	ignoreVersions       stringSliceFlag
 	ignoreModules        string
+	branch               string
 	configFile           string
 	validationConfigFile string
 	forceAdd             bool
@@ -235,6 +236,7 @@ func parseFlags() *cliFlags {
 	flagSet.Var(&flags.fromVersions, "from", "Optional: version to update from (can be specified multiple times, e.g., -from 3.0.0 -from '~> 3.0')")
 	flagSet.Var(&flags.ignoreVersions, "ignore-version", "Optional: version(s) to skip (can be specified multiple times, e.g., -ignore-version 3.0.0 -ignore-version '~> 3.0')")
 	flagSet.StringVar(&flags.ignoreModules, "ignore-modules", "", "Optional: comma-separated list of module names or patterns to ignore (e.g., 'vpc,legacy-*')")
+	flagSet.StringVar(&flags.branch, "branch", "", "Optional: current branch name, required by branch-scoped ignore patterns (e.g., 'release/2026-09')")
 	flagSet.StringVar(&flags.configFile, "config", "", "Path to YAML config file with multiple module updates")
 	flagSet.StringVar(&flags.validationConfigFile, "validate-config", "", "Validate a YAML config file without updating Terraform files")
 	flagSet.BoolVar(&flags.forceAdd, "force-add", false, "Add a missing version attribute to registry modules (default: skip with warning)")
@@ -272,6 +274,18 @@ func parseFlags() *cliFlags {
 		fatalf("Error: Invalid output format '%s'. Must be 'text' or 'md'", flags.output)
 	}
 
+	flags.branch = strings.TrimSpace(flags.branch)
+	// Both of these name no branch, so every branch-scoped ignore pattern would be dropped
+	// silently. 'git rev-parse --abbrev-ref HEAD' prints HEAD on a detached checkout, and
+	// GITHUB_REF holds a full ref. Git stores a branch called 'refs/heads/main' under
+	// 'refs/heads/refs/heads/main', so the prefix cannot belong to a real branch name.
+	if flags.branch == "HEAD" {
+		fatalf("Error: -branch must be a branch name, not 'HEAD'. Use 'git branch --show-current', which is empty on a detached checkout")
+	}
+	if strings.HasPrefix(flags.branch, "refs/") {
+		fatalf("Error: -branch must be a branch name, not the ref '%s'. Use 'git branch --show-current' rather than a full ref such as GITHUB_REF", flags.branch)
+	}
+
 	return flags
 }
 
@@ -296,16 +310,68 @@ func loadModuleUpdates(flags *cliFlags) []ModuleUpdate {
 		}
 	}
 
-	return []ModuleUpdate{
+	updates := []ModuleUpdate{
 		{Source: flags.moduleSource, Version: flags.toVersion, From: FromVersions(flags.fromVersions), IgnoreVersions: FromVersions(flags.ignoreVersions), IgnoreModules: ignorePatterns},
 	}
+	if err := resolveBranchIgnoreModules(updates, flags.branch); err != nil {
+		fatalf("Error: %v", err)
+		return nil
+	}
+
+	return updates
+}
+
+// resolveBranchIgnoreModules records, for each entry, the ignore_modules patterns that apply to
+// branch. A branch-scoped pattern cannot be evaluated without a branch, so it is an error rather
+// than a silent no-op that would bump a module the configuration excludes.
+func resolveBranchIgnoreModules(updates []ModuleUpdate, branch string) error {
+	for i := range updates {
+		if len(updates[i].IgnoreModules) == 0 {
+			continue
+		}
+
+		resolved := make([]string, 0, len(updates[i].IgnoreModules))
+		for _, entry := range updates[i].IgnoreModules {
+			branchPattern, modulePattern, err := splitIgnoreModuleEntry(entry)
+			switch {
+			case err != nil:
+				return err
+			case branchPattern == "":
+				resolved = append(resolved, modulePattern)
+			case branch == "":
+				return fmt.Errorf("ignore pattern '%s' is scoped to a branch, so the -branch flag is required", entry)
+			case matchPattern(branch, branchPattern):
+				resolved = append(resolved, modulePattern)
+			}
+		}
+		updates[i].resolvedIgnoreModules = resolved
+	}
+
+	return nil
+}
+
+// loadResolvedConfig is the single entry point for reading a config into an executable form. The
+// update and audit paths share it so their module filtering cannot drift apart.
+func loadResolvedConfig(configFile, branch string) (*Config, error) {
+	config, err := loadConfig(configFile)
+	if err != nil {
+		//nolint:staticcheck // The capitalised prefix is user-facing CLI output.
+		return nil, fmt.Errorf("Error loading config file: %w", err)
+	}
+	if err := resolveBranchIgnoreModules(config.Modules, branch); err != nil {
+		//nolint:staticcheck // The capitalised prefix is user-facing CLI output.
+		return nil, fmt.Errorf("Error: %w", err)
+	}
+	return config, nil
 }
 
 // processFiles processes all matching files and applies module updates.
 func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (totalUpdates, totalErrors int) {
 	for _, file := range files {
-		for _, update := range updates {
-			updated, changedBlocks, err := updateModuleVersionWithCount(file, update.Source, update.Version, update.From, update.IgnoreVersions, update.IgnoreModules, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
+		// Index rather than copy: gocritic's rangeValCopy rejects ranging over ModuleUpdate by value.
+		for i := range updates {
+			update := &updates[i]
+			updated, changedBlocks, err := updateModuleVersionWithCount(file, update.Source, update.Version, update.From, update.IgnoreVersions, update.resolvedIgnoreModules, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				totalErrors++
@@ -628,11 +694,24 @@ func validateAuditMode(flags *cliFlags) {
 	}
 }
 
+// configValidationHasConflicts reports whether any update or report flag accompanies
+// -validate-config, which validates a config on its own. It is split in two so neither half
+// exceeds the cyclomatic limit as flags are added.
 func configValidationHasConflicts(flags *cliFlags) bool {
-	return flags.pattern != "" || flags.configFile != "" || flags.moduleSource != "" || flags.toVersion != "" ||
-		len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" ||
-		flags.terraformVersion != "" || flags.providerName != "" || flags.forceAdd || flags.dryRun ||
-		flags.check || flags.verbose || flags.reportFile != "" || flags.auditFile != ""
+	return configValidationHasOperationFlags(flags) || configValidationHasBehaviourFlags(flags)
+}
+
+// configValidationHasOperationFlags covers the flags naming what to update and where to write.
+func configValidationHasOperationFlags(flags *cliFlags) bool {
+	return flags.pattern != "" || flags.configFile != "" || flags.moduleSource != "" ||
+		flags.toVersion != "" || flags.terraformVersion != "" || flags.providerName != "" ||
+		flags.branch != "" || flags.ignoreModules != "" || flags.reportFile != "" || flags.auditFile != ""
+}
+
+// configValidationHasBehaviourFlags covers the filters and switches that only affect an update.
+func configValidationHasBehaviourFlags(flags *cliFlags) bool {
+	return len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 ||
+		flags.forceAdd || flags.dryRun || flags.check || flags.verbose
 }
 
 // findMatchingFiles finds all files matching the pattern
@@ -703,10 +782,9 @@ func findMatchingFiles(flags *cliFlags) []string {
 
 // runConfigFileMode handles config file mode operations.
 func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
-	config, err := loadConfig(flags.configFile)
+	config, err := loadResolvedConfig(flags.configFile, flags.branch)
 	if err != nil {
-		//nolint:staticcheck // The capitalised prefix is user-facing CLI output.
-		return 0, fmt.Errorf("Error loading config file: %w", err)
+		return 0, err
 	}
 
 	var terraformUpdates, terraformErrors, providerUpdates, providerErrors, moduleUpdates, moduleErrors int

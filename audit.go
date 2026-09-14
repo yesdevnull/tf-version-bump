@@ -138,12 +138,13 @@ func (audit *auditReport) recordModuleBlock(filename string, block *hclwrite.Blo
 }
 
 // moduleAuditSkipFor applies the updater's precedence: a local source, then ignore_modules, then
-// the version filters, which a block without a version never meets.
+// the version filters, which a block without a version never meets. ignore_modules matches on the
+// branch-resolved patterns but reports the entries as the config writes them.
 func moduleAuditSkipFor(name, source string, actual *string, update *ModuleUpdate) *moduleAuditSkip {
 	switch {
 	case isLocalModule(source):
 		return &moduleAuditSkip{Filter: "local_source", Values: []string{}}
-	case shouldIgnoreModule(name, update.IgnoreModules):
+	case shouldIgnoreModule(name, update.resolvedIgnoreModules):
 		return &moduleAuditSkip{Filter: "ignore_modules", Values: update.IgnoreModules}
 	case actual == nil:
 		return nil
@@ -172,9 +173,9 @@ func auditedAttribute(attr *hclwrite.Attribute, expected string) (actual *string
 // before reading Terraform files, never writes them, and replaces an existing audit only once
 // every file has been audited.
 func runAuditMode(files []string, flags *cliFlags) error {
-	config, err := loadConfig(flags.configFile)
+	config, err := loadResolvedConfig(flags.configFile, flags.branch)
 	if err != nil {
-		return fmt.Errorf("Error loading config file: %w", err) //nolint:staticcheck // User-facing CLI diagnostic.
+		return err
 	}
 	inputFiles := commandInputFiles(files, flags.configFile)
 	prepared, err := prepareJSONOutput(auditOutput, flags.auditFile, inputFiles)

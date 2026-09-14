@@ -2,13 +2,26 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
 func auditValue(value string) *string {
 	return &value
+}
+
+// auditConfig builds a config the way the command does, resolving branch-scoped ignore_modules
+// before anything reads them, so tests cannot pass through a path production never takes.
+func auditConfig(t *testing.T, branch string, modules ...ModuleUpdate) *Config {
+	t.Helper()
+	config := &Config{Modules: modules}
+	if err := resolveBranchIgnoreModules(config.Modules, branch); err != nil {
+		t.Fatalf("resolveBranchIgnoreModules: %v", err)
+	}
+	return config
 }
 
 // auditJSON renders audit values the way -audit-file writes them, so failures show readable
@@ -179,7 +192,7 @@ var auditVPCUpdate = ModuleUpdate{
 
 func TestBuildAudit_RecordsModulesInTheUpdatersFilterPrecedence(t *testing.T) {
 	moduleFile := writeTestFile(t, t.TempDir(), "main.tf", auditModuleFixture)
-	config := &Config{Modules: []ModuleUpdate{auditVPCUpdate, {Source: "./modules/network", Version: "1.0.0"}}}
+	config := auditConfig(t, "", auditVPCUpdate, ModuleUpdate{Source: "./modules/network", Version: "1.0.0"})
 
 	audit, err := buildAudit([]string{moduleFile}, config)
 	if err != nil {
@@ -229,7 +242,8 @@ func TestBuildAudit_RecordsABlockOncePerMatchingConfigEntry(t *testing.T) {
 func TestBuildAudit_AgreesWithTheUpdaterOnModulesItWouldChange(t *testing.T) {
 	moduleFile := writeTestFile(t, t.TempDir(), "main.tf", auditModuleFixture)
 
-	audit, err := buildAudit([]string{moduleFile}, &Config{Modules: []ModuleUpdate{auditVPCUpdate}})
+	config := auditConfig(t, "", auditVPCUpdate)
+	audit, err := buildAudit([]string{moduleFile}, config)
 	if err != nil {
 		t.Fatalf("buildAudit: %v", err)
 	}
@@ -241,9 +255,10 @@ func TestBuildAudit_AgreesWithTheUpdaterOnModulesItWouldChange(t *testing.T) {
 	}
 
 	var changedBlocks []int
+	update := &config.Modules[0]
 	warnings := captureStderr(t, func() {
-		_, changedBlocks, err = updateModuleVersionWithCount(moduleFile, auditVPCUpdate.Source, auditVPCUpdate.Version,
-			auditVPCUpdate.From, auditVPCUpdate.IgnoreVersions, auditVPCUpdate.IgnoreModules, false, true, false, "text")
+		_, changedBlocks, err = updateModuleVersionWithCount(moduleFile, update.Source, update.Version,
+			update.From, update.IgnoreVersions, update.resolvedIgnoreModules, false, true, false, "text")
 	})
 	if err != nil {
 		t.Fatalf("updateModuleVersionWithCount: %v", err)
@@ -255,5 +270,67 @@ func TestBuildAudit_AgreesWithTheUpdaterOnModulesItWouldChange(t *testing.T) {
 
 	if len(auditChanges) != 1 || auditChanges[0] != "vpc" || len(changedBlocks) != 1 || changedBlocks[0] != 0 {
 		t.Fatalf("audit changes %v and updater changed blocks %v, want only the first block, vpc", auditChanges, changedBlocks)
+	}
+}
+
+// A branch-scoped entry must reach both paths identically. If it did not, the audit would report
+// a deliberately excluded module as out of date on the very branch that excludes it.
+func TestBuildAudit_AgreesWithTheUpdaterOnBranchScopedIgnoreModules(t *testing.T) {
+	const fixture = "module \"shared_vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"4.2.0\"\n}\n"
+	const entry = "state/staging/example-thing/shared_vpc"
+
+	tests := []struct {
+		name, branch string
+		wantSkip     *moduleAuditSkip
+		wantChanged  []int
+	}{
+		{name: "scoped branch skips the module", branch: "state/staging/example-thing", wantSkip: &moduleAuditSkip{Filter: "ignore_modules", Values: []string{entry}}},
+		{name: "other branch updates the module", branch: "state/nonproduction/example-thing", wantChanged: []int{0}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			moduleFile := writeTestFile(t, t.TempDir(), "main.tf", fixture)
+			config := auditConfig(t, tt.branch, ModuleUpdate{Source: "terraform-aws-modules/vpc/aws", Version: "5.0.0", IgnoreModules: []string{entry}})
+
+			audit, err := buildAudit([]string{moduleFile}, config)
+			if err != nil {
+				t.Fatalf("buildAudit: %v", err)
+			}
+			want := []moduleAuditEntry{{
+				File: moduleFile, Name: "shared_vpc", Source: "terraform-aws-modules/vpc/aws",
+				Actual: auditValue("4.2.0"), Expected: "5.0.0", Skip: tt.wantSkip,
+			}}
+			if got, wantJSON := auditJSON(t, audit.Modules), auditJSON(t, want); got != wantJSON {
+				t.Fatalf("modules = %s, want %s", got, wantJSON)
+			}
+
+			update := &config.Modules[0]
+			_, changedBlocks, err := updateModuleVersionWithCount(moduleFile, update.Source, update.Version,
+				update.From, update.IgnoreVersions, update.resolvedIgnoreModules, false, true, false, "text")
+			if err != nil {
+				t.Fatalf("updateModuleVersionWithCount: %v", err)
+			}
+			if !slices.Equal(changedBlocks, tt.wantChanged) {
+				t.Fatalf("updater changed blocks %v, want %v", changedBlocks, tt.wantChanged)
+			}
+		})
+	}
+}
+
+func TestCommandAuditRequiresBranchForScopedIgnoreModules(t *testing.T) {
+	dir := t.TempDir()
+	moduleFile := writeTestFile(t, dir, "main.tf", "module \"shared_vpc\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	configFile := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n    ignore_modules:\n      - state/staging/example-thing/shared_vpc\n")
+	auditFile := filepath.Join(dir, "audit.json")
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", moduleFile, "-config", configFile, "-audit-file", auditFile})
+
+	want := "Error: ignore pattern 'state/staging/example-thing/shared_vpc' is scoped to a branch, so the -branch flag is required\n"
+	if result.exitCode != 1 || result.diagnostics != want {
+		t.Fatalf("result = %#v, want diagnostic %q and exit 1", result, want)
+	}
+	if _, err := os.Stat(auditFile); !os.IsNotExist(err) {
+		t.Fatalf("audit file stat error = %v, want the audit not to be written", err)
 	}
 }

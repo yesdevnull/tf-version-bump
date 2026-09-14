@@ -120,7 +120,7 @@ It can also include:
 
 - `from`: one exact current-version string or a list of them
 - `ignore_versions`: one exact current-version string or a list of them
-- `ignore_modules`: a list of module block labels or `*` patterns
+- `ignore_modules`: a list of module block labels or `*` patterns, each optionally scoped to a branch
 
 ### Basic update
 
@@ -195,12 +195,53 @@ modules:
 Patterns are case-sensitive and apply to the label in `module "label"`. `*` matches zero or more
 characters. A value without `*` is an exact match.
 
+### Branch-scoped module names
+
+An entry can be limited to particular branches by prefixing it with a branch pattern. Terraform
+module names cannot contain `/`, so the final `/` separates the branch pattern from the module
+pattern:
+
+```yaml
+modules:
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "5.0.0"
+    ignore_modules:
+      - "legacy-vpc"                              # every branch
+      - "state/staging/example-thing/shared-vpc"  # one branch
+      - "state/staging/*/shared-*"                # branch and module wildcards
+```
+
+The branch pattern uses the same wildcard rules as the module pattern, so `*` spans `/` instead of
+stopping at a path segment. A trailing `/*` is therefore the module pattern rather than a branch
+glob: every module on any `state/staging/…` branch is `state/staging/*/*`. No `/`-separated part
+may be empty; `state/staging/`, `/vpc`, and `state//vpc` are rejected when the config is loaded or
+validated.
+
+Supply the branch with the `-branch` flag, which the command never infers from Git. It takes the
+short branch name, not `refs/heads/…` or `origin/…`:
+
+```bash
+tf-version-bump -pattern "**/*.tf" -config versions.yml -branch "$(git branch --show-current)"
+```
+
+`git branch --show-current` is deliberate: it prints nothing on a detached checkout, so the command
+stops with the error below. `git rev-parse --abbrev-ref HEAD` prints `HEAD` there, which names no
+branch, so a literal `-branch HEAD` is rejected, as is any value beginning `refs/` such as
+`$GITHUB_REF`.
+
+A config containing a branch-scoped entry fails when `-branch` is missing, rather than silently
+dropping the exclusion and updating a module the config set out to protect. Configs that use only
+unscoped entries do not need `-branch`.
+
+`-audit-file` resolves these entries identically, so the audit and an update agree on which modules
+are excluded. See [the version audit](USAGE.md#machine-readable-version-audit).
+
 ### Filter precedence
 
 For a module whose source matches the entry:
 
 1. Local sources are skipped.
-2. `ignore_modules` is applied.
+2. `ignore_modules` is applied, after branch-scoped entries are resolved against `-branch`.
 3. A missing version is skipped unless the command uses `-force-add` and the source is a registry
    module.
 4. `ignore_versions` is applied.
@@ -228,6 +269,7 @@ tf-version-bump \
 - `-verbose` explains module skips caused by module or version filters.
 - `-output md` uses backticks instead of single quotes in messages.
 - `-force-add` adds missing version attributes to matching registry modules.
+- `-branch` supplies the branch name that branch-scoped `ignore_modules` entries are matched against.
 
 Direct operation flags and filters cannot accompany `-config`: `-module`, `-provider`,
 `-terraform-version`, `-to`, `-from`, `-ignore-version`, and `-ignore-modules` are rejected.
