@@ -128,6 +128,35 @@ fixture_commit() {
 
 # An origin whose default branch holds the control config, a shallow control clone of it (as
 # actions/checkout makes), and a seed repository that pushes state branches.
+write_report_config() {
+    cat >"$1" <<'EOF'
+terraform_version: ">= 1.10"
+providers:
+  - name: aws
+    version: "~> 6.0"
+modules:
+  - source: terraform-aws-modules/vpc/aws
+    version: "5.0.0"
+    ignore_modules:
+      - "legacy_*"
+EOF
+}
+
+
+# One entry scoped to the fixture branch and one scoped to a different branch, so a single
+# collection covers both the matching and the non-matching case.
+write_branch_scoped_report_config() {
+    cat >"$1" <<'EOF'
+modules:
+  - source: terraform-aws-modules/vpc/aws
+    version: "5.0.0"
+    ignore_modules:
+      - "state/nonproduction/alpha/shared"
+      - "state/staging/beta/other"
+EOF
+}
+
+
 setup_report_fixture() {
     FIXTURE_ROOT=$(mktemp -d "$TEST_ROOT/fixture.XXXXXX")
     FIXTURE_REMOTE="$FIXTURE_ROOT/origin.git"
@@ -139,17 +168,7 @@ setup_report_fixture() {
     mkdir -p "$FIXTURE_RUNNER_TEMP" "$FIXTURE_SEED/.github/tf-version-bump"
     "$TEST_GIT" init --quiet --bare --initial-branch=main "$FIXTURE_REMOTE"
     "$TEST_GIT" init --quiet --initial-branch=main "$FIXTURE_SEED"
-    cat >"$FIXTURE_SEED/.github/tf-version-bump/test.yml" <<'EOF'
-terraform_version: ">= 1.10"
-providers:
-  - name: aws
-    version: "~> 6.0"
-modules:
-  - source: terraform-aws-modules/vpc/aws
-    version: "5.0.0"
-    ignore_modules:
-      - "legacy_*"
-EOF
+    "${1:-write_report_config}" "$FIXTURE_SEED/.github/tf-version-bump/test.yml"
     "$TEST_GIT" -C "$FIXTURE_SEED" add -- .github/tf-version-bump/test.yml
     fixture_commit "$FIXTURE_SEED" 'test: create report control fixture'
     "$TEST_GIT" -C "$FIXTURE_SEED" remote add origin "$FIXTURE_REMOTE"
@@ -237,6 +256,49 @@ write_documented_beta_branch() {
     write_beta_branch "$1"
     mkdir "$1/docs"
     printf '# Notes\n' >"$1/docs/README.md"
+}
+
+
+write_scoped_ignore_branch() {
+    cat >"$1/main.tf" <<'EOF'
+module "shared" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "4.2.0"
+}
+
+module "other" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "4.2.0"
+}
+EOF
+}
+
+
+test_collect_scopes_ignored_modules_to_each_branch() {
+    # Regression: collect must pass -branch, or the tool rejects the scoped entries and the branch
+    # is recorded as unreadable. The entry scoped elsewhere proves the branch is matched rather
+    # than merely supplied.
+    setup_report_fixture write_branch_scoped_report_config
+    add_state_branch state/nonproduction/alpha write_scoped_ignore_branch
+
+    assert_silent_success 'collecting a branch-scoped config' "$FIXTURE_ROOT/stdout" \
+        "$FIXTURE_ROOT/stderr" run_collect
+    assert_silent_success 'reporting a branch-scoped config' "$FIXTURE_ROOT/report.stdout" \
+        "$FIXTURE_ROOT/report.stderr" run_report_subcommand report
+
+    grep -qxF '"SKIP","state/nonproduction/alpha","module","terraform-aws-modules/vpc/aws","shared","main.tf","4.2.0","5.0.0","skipped by ignore_modules (state/nonproduction/alpha/shared, state/staging/beta/other)"' \
+        "$FIXTURE_OUTPUT/version-report.csv" \
+        || fail "the entry scoped to this branch was not skipped: $(<"$FIXTURE_OUTPUT/version-report.csv")"
+    grep -qxF '"FAIL","state/nonproduction/alpha","module","terraform-aws-modules/vpc/aws","other","main.tf","4.2.0","5.0.0","version differs"' \
+        "$FIXTURE_OUTPUT/version-report.csv" \
+        || fail "the entry scoped to another branch was applied here: $(<"$FIXTURE_OUTPUT/version-report.csv")"
+
+    # The legacy report ignores the config's filters, so the protected module is still a failure.
+    assert_silent_success 'the legacy report for a branch-scoped config' "$FIXTURE_ROOT/legacy.stdout" \
+        "$FIXTURE_ROOT/legacy.stderr" run_report_subcommand legacy
+    [[ "$(grep -cxF '"FAIL","terraform-aws-modules/vpc/aws","version mismatch: act. 4.2.0 exp. 5.0.0","state/nonproduction/alpha"' \
+        "$FIXTURE_OUTPUT/legacy-report.csv")" == 2 ]] \
+        || fail "the legacy report did not list both modules: $(<"$FIXTURE_OUTPUT/legacy-report.csv")"
 }
 
 
@@ -688,6 +750,7 @@ if [[ $# -eq 0 ]]; then
     tests=(test_collect_records_each_branch_root_and_audit test_collect_records_missing_and_empty_roots
         test_collect_records_unreadable_branches_and_continues test_collect_rejects_invalid_inputs
         test_collect_records_duplicate_roots_as_a_branch_error test_collect_records_a_broken_symlink_root
+        test_collect_scopes_ignored_modules_to_each_branch
         test_report_writes_the_improved_csv_and_summary test_report_succeeds_when_every_branch_was_read
         test_report_keeps_multi_line_values_on_one_table_row test_report_lists_every_root_with_repository_relative_paths
         test_legacy_writes_the_existing_report_format test_legacy_reports_all_passed_and_missing_roots
