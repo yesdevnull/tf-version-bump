@@ -227,10 +227,11 @@ is written, as it fails the update run.
 Branch-scoped `ignore_modules` entries work with this example. Both the update job and the version
 report pass the state branch as `-branch`, so an entry such as
 `state/staging/example-thing/shared-vpc` excludes that module on that branch alone: the update job
-leaves it untouched and the report records it as `SKIP`, naming `ignore_modules`. A configuration
-whose scoped entry cannot be resolved fails the run rather than bumping the module it protects. To
-leave a whole branch out of both updates and this report instead, use a `!` exclusion (see
-[Install](#install)).
+leaves it untouched and the version report records it as `SKIP`, naming `ignore_modules`. The legacy
+report ignores the config's filters, so it still lists that module as `FAIL`. A malformed scoped
+entry such as `state//shared-vpc` fails configuration validation, so the configuration check stops
+it before an update runs. To leave a whole branch out of both updates and this report instead, use a
+`!` exclusion (see [Install](#install)).
 
 Both CSVs keep values exactly as written. A value beginning with `=`, `+`, `-` or `@`, such as the
 valid Terraform pin `= 5.0.0`, may be evaluated as a formula by a spreadsheet that opens the file

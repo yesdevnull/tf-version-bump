@@ -1023,6 +1023,44 @@ EOF
         || fail 'candidate differs from validated module'
 }
 
+test_processing_scopes_ignored_modules_to_the_state_branch() {
+    # Regression: the updater must receive -branch, or the tool rejects the scoped entry and
+    # processing fails. Passing a branch the entry does not name would bump the protected module.
+    setup_processing_workspace
+    cat >"$PROCESS_TARGET_CHECKOUT/root/main.tf" <<'EOF'
+terraform { required_version = ">= 1.0" }
+
+module "protected" {
+  source   = "hashicorp/dir/template"
+  version  = "1.0.1"
+  base_dir = path.module
+}
+
+module "sibling" {
+  source   = "hashicorp/dir/template"
+  version  = "1.0.1"
+  base_dir = path.module
+}
+EOF
+    printf '%s\n' 'modules:' '  - source: hashicorp/dir/template' '    version: "1.0.2"' \
+        '    ignore_modules:' "      - \"$PROCESS_STATE_BRANCH/protected\"" \
+        >"$PROCESS_CONTROL_CHECKOUT/.github/tf-version-bump/test.yml"
+    "$TEST_GIT" -C "$PROCESS_CONTROL_CHECKOUT" add -- .github/tf-version-bump/test.yml
+    fixture_commit "$PROCESS_CONTROL_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: scope an ignored module to the state branch'
+    "$TEST_GIT" -C "$PROCESS_TARGET_CHECKOUT" add -- root/main.tf
+    fixture_commit "$PROCESS_TARGET_CHECKOUT" 'Processing Test' 'processing-test@example.invalid' 'test: add a protected module and a sibling sharing its source'
+    assert_silent_success 'branch-scoped ignore_modules' "$PROCESS_TMP_ROOT/stdout" "$PROCESS_TMP_ROOT/stderr" run_processing
+    "$TEST_GIT" clone --quiet "$PROCESS_TARGET_CHECKOUT" "$PROCESS_TMP_ROOT/applied"
+    "$TEST_GIT" -C "$PROCESS_TMP_ROOT/applied" apply --index "$PROCESS_RESULT_DIR/candidate.patch"
+    local applied="$PROCESS_TMP_ROOT/applied/root/main.tf" protected_version sibling_version
+    protected_version=$(awk '/^module "protected"/,/^}/' "$applied" | awk -F'"' '/version/ {print $2}')
+    sibling_version=$(awk '/^module "sibling"/,/^}/' "$applied" | awk -F'"' '/version/ {print $2}')
+    [[ "$protected_version" == 1.0.1 ]] \
+        || fail "the entry scoped to this branch did not protect its module: $(<"$applied")"
+    [[ "$sibling_version" == 1.0.2 ]] \
+        || fail "the sibling module sharing the source was not bumped: $(<"$applied")"
+}
+
 test_processing_validates_unchanged_candidates() {
     local mode
     for mode in valid invalid; do
@@ -1795,6 +1833,7 @@ fi
 if [[ $# -eq 0 ]]; then
     tests=(test_processing_container_setup_captures_pull_progress test_processing_combines_update_init_format_validate
         test_processing_updates_dependent_roots_before_init
+        test_processing_scopes_ignored_modules_to_the_state_branch
         test_processing_validates_unchanged_candidates test_processing_init_upgrade_is_opt_in
         test_workflow_runs_three_jobs_with_current_attempt_results
         test_processing_records_real_update_and_format_failures test_processing_rejects_invalid_inputs_before_updates
