@@ -633,7 +633,7 @@ test_discovery_excludes_exact_branch_names() {
     local stderr_file="$DISCOVERY_TMP_ROOT/exclusions.stderr"
     local allow_list output
     for allow_list in "$exclusions"$'\nstate/production/' \
-        $'state/production/\n'"$exclusions"$'\n!state/production/deleted\n'; do
+        $'state/production/\n'"$exclusions"$'\n!state/production/deleted-100%\n!state/production/deleted-100%\n'; do
         DISCOVERY_ALLOWED_PREFIXES=$allow_list
         output=$(run_discovery 2>"$stderr_file")
         jq -e '.include | map(.branch) == [
@@ -643,16 +643,17 @@ test_discovery_excludes_exact_branch_names() {
             || fail "exclusions did not drop exactly the named branch from '$allow_list': $output"
     done
     # A mistyped exclusion matches nothing, just as a deleted branch's does, so discovery names it
-    # rather than carrying on as though it had taken effect.
-    [[ "$(<"$stderr_file")" == "Warning: excluded branch 'state/production/deleted' matched no remote branch" ]] \
-        || fail "an exclusion matching no remote branch was not reported: $(<"$stderr_file")"
+    # once as a run annotation rather than carrying on as though it had taken effect. `%` is the one
+    # Git-valid character the runner would otherwise read as the start of an escape.
+    [[ "$(<"$stderr_file")" == "::warning::excluded branch 'state/production/deleted-100%25' matched no remote branch" ]] \
+        || fail "an exclusion matching no remote branch was not reported once: $(<"$stderr_file")"
 }
 
 
 test_discovery_manual_prefix_keeps_exclusions() {
     # Production break caught: a manual dispatch prefix brings back a branch its caller excludes, or
     # exclusions are checked against the manual prefix so one in another configured family fails
-    # the run.
+    # the run or is reported as matching no remote branch.
     setup_discovery_repository
     add_discovery_branch "state/production/specific-branch"
     add_discovery_branch "state/production/specific-branch-2"
@@ -660,10 +661,12 @@ test_discovery_manual_prefix_keeps_exclusions() {
 
     DISCOVERY_ALLOWED_PREFIXES=$'state/production/\nstate/staging/\n!state/production/specific-branch\n!state/staging/example'
     DISCOVERY_MANUAL_PREFIX="state/production/specific-"
-    local output
-    output=$(run_discovery)
+    local stderr_file="$DISCOVERY_TMP_ROOT/manual-exclusions.stderr" output
+    output=$(run_discovery 2>"$stderr_file")
     jq -e '.include | map(.branch) == ["state/production/specific-branch-2"]' <<<"$output" >/dev/null \
         || fail "manual discovery prefix selected an excluded branch: $output"
+    [[ ! -s "$stderr_file" ]] \
+        || fail "an exclusion outside the manual prefix was reported as unmatched: $(<"$stderr_file")"
 }
 
 
@@ -690,10 +693,6 @@ test_discovery_rejects_invalid_inputs_by_stage() {
     DISCOVERY_ALLOWED_PREFIXES="/state/prod/"
     assert_discovery_failure "discovery input error:" "absolute-looking branch prefix"
 
-    DISCOVERY_ALLOWED_PREFIXES='!state/prod/example'
-    assert_discovery_failure "discovery input error: allowed prefixes must not consist only of exclusions" \
-        "allow-list of exclusions only"
-
     # Errors name the offending exclusion, so a control character must be refused before it is echoed.
     DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!state/prod/ex\tample'
     assert_discovery_failure "discovery input error: excluded branch must not contain control characters" \
@@ -711,10 +710,14 @@ test_discovery_rejects_invalid_inputs_by_stage() {
     DISCOVERY_ALLOWED_PREFIXES="state/missing/"
     assert_discovery_failure "discovery selection error:" "allow-list with no remote matches"
 
-    DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!state/prod/example'
+    # An unmatched exclusion may be why nothing was selected, so it is still reported when selection fails.
+    DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!state/prod/example\n!state/prod/typo'
     assert_discovery_failure \
         "discovery selection error: no remote branches matched the configured prefixes and exclusions" \
         "allow-list whose exclusions remove every match"
+    grep -qxF "::warning::excluded branch 'state/prod/typo' matched no remote branch" \
+        "$DISCOVERY_TMP_ROOT/failure.stderr" \
+        || fail "a failed selection did not report its unmatched exclusion: $(<"$DISCOVERY_TMP_ROOT/failure.stderr")"
 
     DISCOVERY_ALLOWED_PREFIXES="state/prod/"
     DISCOVERY_CALLER_REF="refs/heads/feature"

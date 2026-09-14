@@ -157,10 +157,13 @@ while IFS=$'\t' read -r oid ref; do
 done <"$remote_heads_file"
 rm -f -- "$remote_heads_file"
 # An exclusion for a deleted branch must not stop the run, but a mistyped one looks identical, so
-# name it on stderr, which leaves the matrix on stdout intact.
+# name it once as a run annotation. The runner reads workflow commands from stderr as well, which
+# leaves the matrix on stdout intact. It unescapes `%25`, so `%` is escaped; Git forbids the other
+# characters a command message would need escaped.
 for branch in "${excluded_branches[@]}"; do
-    [[ -n "${matched_exclusions[$branch]-}" ]] \
-        || echo "Warning: excluded branch '$branch' matched no remote branch" >&2
+    [[ -z "${matched_exclusions[$branch]-}" ]] || continue
+    matched_exclusions[$branch]=1
+    echo "::warning::excluded branch '${branch//'%'/%25}' matched no remote branch" >&2
 done
 
 [[ ${#branch_records[@]} -gt 0 ]] \
