@@ -44,7 +44,7 @@ allowed_branch_prefixes: |
   !state/production/specific-branch
 ```
 
-An exclusion names one exact branch, with no wildcards, so `state/production/specific-branch-2` is still selected. Every line beginning with `!` is an exclusion, wherever it appears in the list, and exclusions apply to manual runs too. An exclusion must fall under one of the caller's prefixes, or discovery fails before any branch is processed. One that matches no remote branch, such as a deleted or mistyped branch, is ignored with a warning in the discover step's log. Excluding a branch leaves its open update pull request, failure issue and `update_` branch untouched; close or delete them by hand. Keep the list a literal block scalar (`|`) so each line stays one entry; unquoted, YAML reads a value beginning with `!` as a tag. Add the same line, in the same position, to the version report's matrix (see [below](#version-report)).
+An exclusion names one exact branch (wildcard characters fail validation), so `state/production/specific-branch-2` is still selected. Every line beginning with `!` is an exclusion, wherever it appears in the list, and exclusions apply to manual runs too. An exclusion must fall under one of the caller's prefixes, or discovery fails before any branch is processed. One that matches no remote branch, such as a deleted or mistyped branch, is ignored with a warning annotation on the workflow run. Excluding a branch leaves its open update pull request, failure issue and `update_` branch untouched; close or delete them by hand. Keep the list a literal block scalar (`|`) so each line stays one entry; unquoted, YAML reads a value beginning with `!` as a tag. Add the same line to the version report's matrix, keeping the two lists identical (see [below](#version-report)).
 
 Allow the workflow's `contents`, `pull-requests` and `issues` write permissions. Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** before live publication.
 
@@ -230,7 +230,8 @@ such as `state/staging/example-thing/shared-vpc` is read as a plain module name 
 The update job would open a pull request bumping the very module the entry protects, the
 configuration check would not stop it, and the report would show the module as a version mismatch.
 Scoped entries become safe here once the pin bump and the `-branch "$PROCESS_STATE_BRANCH"` wiring
-land together. To leave a whole branch out instead, use a `!` exclusion (see [Install](#install)).
+land together. To leave a whole branch out of both updates and this report instead, use a `!`
+exclusion (see [Install](#install)).
 
 Both CSVs keep values exactly as written. A value beginning with `=`, `+`, `-` or `@`, such as the
 valid Terraform pin `= 5.0.0`, may be evaluated as a formula by a spreadsheet that opens the file
