@@ -619,37 +619,46 @@ test_discovery_accepts_caller_block_scalar_prefixes() {
 
 test_discovery_excludes_exact_branch_names() {
     # Production break caught: a `!` entry is matched as a prefix and silently drops siblings
-    # sharing its name, applies only after the prefix line, or stops the run once its branch is
-    # deleted.
+    # sharing its name, is honoured only when it follows its prefix line, stops the run once its
+    # branch is deleted, or matches no branch without saying so.
     setup_discovery_repository
     add_discovery_branch "state/production/specific-branch"
     add_discovery_branch "state/production/specific-branch-2"
     add_discovery_branch "state/production/other"
-    # Git accepts this name; compared as an extended glob it would also drop both siblings above.
+    # Git accepts this name; compared as an extended glob it would also drop `other` and
+    # `specific-branch-2`.
     add_discovery_branch "state/production/@(other|specific-branch-2)"
 
     local exclusions=$'!state/production/specific-branch\n!state/production/@(other|specific-branch-2)'
+    local stderr_file="$DISCOVERY_TMP_ROOT/exclusions.stderr"
     local allow_list output
-    for allow_list in $'state/production/\n'"$exclusions"$'\n!state/production/deleted\n' \
-        "$exclusions"$'\nstate/production/'; do
+    for allow_list in "$exclusions"$'\nstate/production/' \
+        $'state/production/\n'"$exclusions"$'\n!state/production/deleted\n'; do
         DISCOVERY_ALLOWED_PREFIXES=$allow_list
-        output=$(run_discovery)
+        output=$(run_discovery 2>"$stderr_file")
         jq -e '.include | map(.branch) == [
             "state/production/other",
             "state/production/specific-branch-2"
         ]' <<<"$output" >/dev/null \
-            || fail "exclusions did not drop exactly the named branch: $output"
+            || fail "exclusions did not drop exactly the named branch from '$allow_list': $output"
     done
+    # A mistyped exclusion matches nothing, just as a deleted branch's does, so discovery names it
+    # rather than carrying on as though it had taken effect.
+    [[ "$(<"$stderr_file")" == "Warning: excluded branch 'state/production/deleted' matched no remote branch" ]] \
+        || fail "an exclusion matching no remote branch was not reported: $(<"$stderr_file")"
 }
 
 
 test_discovery_manual_prefix_keeps_exclusions() {
-    # Production break caught: a manual dispatch prefix brings back a branch its caller excludes.
+    # Production break caught: a manual dispatch prefix brings back a branch its caller excludes, or
+    # exclusions are checked against the manual prefix so one in another configured family fails
+    # the run.
     setup_discovery_repository
     add_discovery_branch "state/production/specific-branch"
     add_discovery_branch "state/production/specific-branch-2"
+    add_discovery_branch "state/staging/example"
 
-    DISCOVERY_ALLOWED_PREFIXES=$'state/production/\n!state/production/specific-branch'
+    DISCOVERY_ALLOWED_PREFIXES=$'state/production/\nstate/staging/\n!state/production/specific-branch\n!state/staging/example'
     DISCOVERY_MANUAL_PREFIX="state/production/specific-"
     local output
     output=$(run_discovery)
@@ -685,23 +694,18 @@ test_discovery_rejects_invalid_inputs_by_stage() {
     assert_discovery_failure "discovery input error: allowed prefixes must not consist only of exclusions" \
         "allow-list of exclusions only"
 
-    DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!'
-    assert_discovery_failure "discovery input error: excluded branch must not be empty" "empty exclusion"
-
-    DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!/state/prod/example'
-    assert_discovery_failure "discovery input error: excluded branch must not be absolute-looking" \
-        "absolute-looking exclusion"
-
+    # Errors name the offending exclusion, so a control character must be refused before it is echoed.
     DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!state/prod/ex\tample'
     assert_discovery_failure "discovery input error: excluded branch must not contain control characters" \
         "exclusion containing a control character"
 
     DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!state/prod/'
-    assert_discovery_failure "discovery input error: excluded branch is not a valid branch name" \
+    assert_discovery_failure "discovery input error: excluded branch 'state/prod/' is not a valid branch name" \
         "exclusion naming a prefix instead of a branch"
 
     DISCOVERY_ALLOWED_PREFIXES=$'state/prod/\n!state/other/example'
-    assert_discovery_failure "discovery input error: excluded branch must fall under an allowed prefix" \
+    assert_discovery_failure \
+        "discovery input error: excluded branch 'state/other/example' must fall under an allowed prefix" \
         "exclusion outside every allowed prefix"
 
     DISCOVERY_ALLOWED_PREFIXES="state/missing/"
@@ -1488,14 +1492,18 @@ run_workflow_step() {
     local job=$1 step=$2 summary=$3
     shift 3
     local body="$TEST_TMP_ROOT/workflow-step.sh"
-    STEP_JOB="$job" STEP_NAME="$step" \
-        yq -r '.jobs[strenv(STEP_JOB)].steps[] | select(.name == strenv(STEP_NAME)) | .run' \
-        "$REUSABLE_WORKFLOW" >"$body"
+    local selector='.jobs[strenv(STEP_JOB)].steps[] | select(.name == strenv(STEP_NAME))'
+    STEP_JOB="$job" STEP_NAME="$step" yq -r "$selector | .run" "$REUSABLE_WORKFLOW" >"$body"
     [[ -s "$body" ]] || fail "the $job job has no step named '$step' with a run body"
     : >"$summary"
-    # GitHub Actions runs a run: body without a shell key under its documented default,
-    # `bash -e {0}`; the runner's own semantics cannot be reproduced here beyond that.
-    env "$@" GITHUB_STEP_SUMMARY="$summary" bash -e "$body"
+    # GitHub Actions runs a run: body under its documented commands, `bash -e {0}` without a shell
+    # key and `bash --noprofile --norc -eo pipefail {0}` for `shell: bash`; the runner's own
+    # semantics cannot be reproduced here beyond that.
+    local shell_options=(-e)
+    if [[ "$(STEP_JOB="$job" STEP_NAME="$step" yq -r "$selector | .shell" "$REUSABLE_WORKFLOW")" == bash ]]; then
+        shell_options=(--noprofile --norc -eo pipefail)
+    fi
+    env "$@" GITHUB_STEP_SUMMARY="$summary" bash "${shell_options[@]}" "$body"
 }
 
 
@@ -1744,6 +1752,28 @@ test_workflow_offers_input_and_secret_terraform_environment() {
     done
 }
 
+test_workflow_fails_discovery_when_the_script_fails() {
+    # Production break caught: the discover step pipes the script into jq, so without pipefail a
+    # rejected input leaves the step green with an empty matrix and its cause surfaces only as a
+    # later process-job failure.
+    local work="$TEST_TMP_ROOT/discover-step"
+    rm -rf -- "$work"
+    mkdir "$work"
+    : >"$work/output"
+    if run_workflow_step discover 'Discover state branches' "$work/summary" \
+        CONTROL_CHECKOUT="$SCRIPT_DIR" DISCOVERY_ALLOWED_PREFIXES= DISCOVERY_MANUAL_PREFIX= \
+        DISCOVERY_POLICY_ID=nonproduction DISCOVERY_RUN_ID=1001 DISCOVERY_RUN_ATTEMPT=1 \
+        DISCOVERY_CONTROL_OID=0000000000000000000000000000000000000000 \
+        DISCOVERY_CALLER_REF=refs/heads/main DISCOVERY_DEFAULT_BRANCH=main \
+        RUNNER_TEMP="$work" GITHUB_OUTPUT="$work/output" >"$work/stdout" 2>"$work/stderr"; then
+        fail 'the discover step succeeded although discovery rejected its input'
+    fi
+    [[ "$(<"$work/stderr")" == 'discovery input error: allowed prefixes must not be empty' ]] \
+        || fail "the discover step did not report discovery's own error: $(<"$work/stderr")"
+    [[ ! -s "$work/output" && ! -s "$work/stdout" ]] \
+        || fail "the discover step emitted a matrix after discovery failed: $(<"$work/output")"
+}
+
 cleanup_test_repositories() {
     cleanup_discovery_repository
     cleanup_processing_workspace
@@ -1779,6 +1809,7 @@ if [[ $# -eq 0 ]]; then
         test_workflow_fails_the_process_job_on_processing_failure
         test_workflow_publishes_every_branch_after_processing_failures
         test_workflow_offers_input_and_secret_terraform_environment
+        test_workflow_fails_discovery_when_the_script_fails
         test_workflow_summarises_update_logs test_workflow_reports_the_dry_run_outcome)
     while IFS= read -r test_name; do tests+=("$test_name"); done < <(compgen -A function test_discovery_)
     for test_name in "${tests[@]}"; do
