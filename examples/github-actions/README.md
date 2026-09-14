@@ -2,7 +2,7 @@
 
 This copyable example updates Terraform dependencies across selected branches and opens or refreshes a pull request for each changed branch. It uses three jobs:
 
-1. **Discover** selects branches by literal prefix, less any excluded branches, and records their commit IDs.
+1. **Discover** selects branches by literal prefix, skipping any excluded branch, and records their commit IDs.
 2. **Process** updates each branch in a disposable checkout, runs `terraform init`, optionally formats the candidate, then runs `terraform validate`.
 3. **Publish** checks the result and patch, then manages the update branch, pull request and failure issue.
 
@@ -44,7 +44,7 @@ allowed_branch_prefixes: |
   !state/production/specific-branch
 ```
 
-An exclusion names one exact branch, so `state/production/specific-branch-2` is still selected. It applies wherever it appears in the list, and to manual runs too. It must fall under one of the caller's prefixes, or discovery fails before any branch is processed; an exclusion whose branch no longer exists is ignored. Excluding a branch leaves any open update pull request or failure issue for it untouched, so close them by hand. Keep the list a block scalar (`|`), because YAML reads a bare value beginning with `!` as a tag. The version report repeats each caller's list, so add the exclusion there too.
+An exclusion names one exact branch, with no wildcards, so `state/production/specific-branch-2` is still selected. Every line beginning with `!` is an exclusion, wherever it appears in the list, and exclusions apply to manual runs too. An exclusion must fall under one of the caller's prefixes, or discovery fails before any branch is processed. One that matches no remote branch, such as a deleted or mistyped branch, is ignored with a warning in the discover step's log. Excluding a branch leaves its open update pull request, failure issue and `update_` branch untouched; close or delete them by hand. Keep the list a literal block scalar (`|`) so each line stays one entry; unquoted, YAML reads a value beginning with `!` as a tag. Add the same line, in the same position, to the version report's matrix (see [below](#version-report)).
 
 Allow the workflow's `contents`, `pull-requests` and `issues` write permissions. Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** before live publication.
 
@@ -230,7 +230,7 @@ such as `state/staging/example-thing/shared-vpc` is read as a plain module name 
 The update job would open a pull request bumping the very module the entry protects, the
 configuration check would not stop it, and the report would show the module as a version mismatch.
 Scoped entries become safe here once the pin bump and the `-branch "$PROCESS_STATE_BRANCH"` wiring
-land together.
+land together. To leave a whole branch out instead, use a `!` exclusion (see [Install](#install)).
 
 Both CSVs keep values exactly as written. A value beginning with `=`, `+`, `-` or `@`, such as the
 valid Terraform pin `= 5.0.0`, may be evaluated as a formula by a spreadsheet that opens the file

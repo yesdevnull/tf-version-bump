@@ -80,6 +80,7 @@ jobs:
           DISCOVERY_CONTROL_OID: ${{ github.sha }}
           DISCOVERY_CALLER_REF: ${{ github.ref }}
           DISCOVERY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
         run: |
           matrix=$("$CONTROL_CHECKOUT/.github/scripts/discover-state-branches.sh" | jq -c .)
           printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"

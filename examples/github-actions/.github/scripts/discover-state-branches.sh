@@ -53,11 +53,11 @@ validate_excluded_branch() {
 
     validate_branch_text "$branch" "excluded branch"
     git check-ref-format "refs/heads/$branch" >/dev/null 2>&1 \
-        || fail_discovery input "excluded branch is not a valid branch name"
+        || fail_discovery input "excluded branch '$branch' is not a valid branch name"
     for prefix in "${allowed_prefixes[@]}"; do
         [[ "$branch" != "$prefix"* ]] || return 0
     done
-    fail_discovery input "excluded branch must fall under an allowed prefix"
+    fail_discovery input "excluded branch '$branch' must fall under an allowed prefix"
 }
 
 branch_is_excluded() {
@@ -141,9 +141,11 @@ if ! git -C "$control_checkout" ls-remote --heads --refs origin >"$remote_heads_
 fi
 
 branch_records=()
+declare -A matched_exclusions=()
 while IFS=$'\t' read -r oid ref; do
     branch=${ref#refs/heads/}
     if branch_is_excluded "$branch"; then
+        matched_exclusions[$branch]=1
         continue
     fi
     for prefix in "${selection_prefixes[@]}"; do
@@ -154,6 +156,12 @@ while IFS=$'\t' read -r oid ref; do
     done
 done <"$remote_heads_file"
 rm -f -- "$remote_heads_file"
+# An exclusion for a deleted branch must not stop the run, but a mistyped one looks identical, so
+# name it on stderr, which leaves the matrix on stdout intact.
+for branch in "${excluded_branches[@]}"; do
+    [[ -n "${matched_exclusions[$branch]-}" ]] \
+        || echo "Warning: excluded branch '$branch' matched no remote branch" >&2
+done
 
 [[ ${#branch_records[@]} -gt 0 ]] \
     || fail_discovery selection "no remote branches matched the configured prefixes and exclusions"
