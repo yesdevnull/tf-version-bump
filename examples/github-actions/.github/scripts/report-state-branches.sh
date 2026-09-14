@@ -198,7 +198,7 @@ install_tool() {
 # inside collect_branch's if condition, where errexit does not apply, so every step checks
 # its own status.
 collect_root() {
-    local worktree=$1 root=$2 config=$3 canonical_roots=$4
+    local worktree=$1 root=$2 config=$3 branch=$4 canonical_roots=$5
     local path="$worktree/$root" canonical audit="$WORK_ROOT/audit.json"
     if [[ ! -e "$path" && ! -L "$path" ]]; then
         jq -cn --arg root "$root" \
@@ -221,7 +221,7 @@ collect_root() {
     rm -f -- "$audit"
     if [[ -z "$(find "$canonical" -maxdepth 1 -name '*.tf' -type f -print -quit)" ]]; then
         printf '%s\n' '{"schema_version": 1, "terraform": [], "providers": [], "modules": []}' >"$audit"
-    elif ! (cd "$worktree" && "$TOOL" -pattern "$root/*.tf" -config "$config" -audit-file "$audit") \
+    elif ! (cd "$worktree" && "$TOOL" -pattern "$root/*.tf" -config "$config" -branch "$branch" -audit-file "$audit") \
         >"$WORK_ROOT/audit.log" 2>&1; then
         local failure
         failure=$(tail -n 1 "$WORK_ROOT/audit.log")
@@ -240,8 +240,8 @@ collect_root() {
 
 # Prints a JSON array of one branch's root records, or one error line on stderr and returns 1.
 collect_branch() {
-    local commit=$1 config=$2
-    shift 2
+    local branch=$1 commit=$2 config=$3
+    shift 3
     local worktree="$WORK_ROOT/worktree" root
     local roots_file="$WORK_ROOT/roots.jsonl" canonical_roots="$WORK_ROOT/canonical-roots"
     : >"$roots_file"
@@ -252,7 +252,7 @@ collect_branch() {
         || { echo "could not check out commit $commit: $(tail -n 1 "$WORK_ROOT/git.log")" >&2; return 1; }
     worktree=$(realpath "$worktree") || return 1
     for root in "$@"; do
-        collect_root "$worktree" "$root" "$config" "$canonical_roots" >>"$roots_file" || return 1
+        collect_root "$worktree" "$root" "$config" "$branch" "$canonical_roots" >>"$roots_file" || return 1
     done
     jq -s . "$roots_file"
 }
@@ -297,7 +297,7 @@ collect() {
     local branch commit error records="$WORK_ROOT/branches.jsonl"
     : >"$records"
     while IFS=$'\t' read -r branch commit; do
-        if collect_branch "$commit" "$config" "${roots[@]}" >"$WORK_ROOT/branch.json" 2>"$WORK_ROOT/branch.error"; then
+        if collect_branch "$branch" "$commit" "$config" "${roots[@]}" >"$WORK_ROOT/branch.json" 2>"$WORK_ROOT/branch.error"; then
             jq -c --arg branch "$branch" --arg commit "$commit" \
                 '{branch: $branch, commit: $commit, error: null, roots: .}' "$WORK_ROOT/branch.json" >>"$records"
         else
