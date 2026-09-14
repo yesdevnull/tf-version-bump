@@ -172,8 +172,9 @@ An entry may be branch-scoped as `<branch-pattern>/<module-pattern>`. `splitIgno
 cannot contain one; `sanitizeModuleUpdates` rejects an empty part so `-validate-config` catches the
 mistake. `resolveBranchIgnoreModules` (main.go) then records the patterns applicable to `-branch` in
 `ModuleUpdate.resolvedIgnoreModules`, leaving `IgnoreModules` as the config writes it. Filtering
-reads the resolved list; the audit's `skip.values` reports the configured one, so a reader sees
-which entry caused a skip. The branch part reuses `matchPattern`, so `*` spans `/`.
+reads the resolved list; the audit's `skip.values` lists every configured entry as written,
+including entries scoped to other branches, just as the other filters list their full configured
+values. The branch part reuses `matchPattern`, so `*` spans `/`.
 
 **Both readers must go through `loadResolvedConfig`.** It is the only place that pairs `loadConfig`
 with `resolveBranchIgnoreModules`, so `runConfigFileMode` and `runAuditMode` cannot drift into
@@ -183,10 +184,12 @@ audit, so drift would mark deliberately excluded modules as out of date. Tests t
 
 A branch-scoped entry without `-branch` is a hard error: silently dropping the exclusion would bump
 a module the config protects. For the same reason `-branch HEAD` is rejected, because
-`git rev-parse --abbrev-ref HEAD` prints it on a detached checkout; the docs recommend
-`git branch --show-current`, which is empty there. The tool never reads the branch from Git — the
-caller supplies it (the state-branch automation has it as `PROCESS_STATE_BRANCH`, and its
-processing checkout is detached anyway).
+`git rev-parse --abbrev-ref HEAD` prints it on a detached checkout, and so is any value beginning
+`refs/`, because `GITHUB_REF` holds a full ref such as `refs/heads/main`. `origin/` is deliberately
+allowed: remotes can have any name, and a local branch may start with `origin/`. The docs recommend
+`git branch --show-current`, which is empty on a detached checkout. The tool never reads the branch
+from Git — the caller supplies it (the state-branch automation has it as `PROCESS_STATE_BRANCH`,
+and its processing checkout is detached anyway).
 
 ### Config shape (`config.go`)
 

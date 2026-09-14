@@ -277,8 +277,8 @@ func parseFlags() *cliFlags {
 	flags.branch = strings.TrimSpace(flags.branch)
 	// Both of these name no branch, so every branch-scoped ignore pattern would be dropped
 	// silently. 'git rev-parse --abbrev-ref HEAD' prints HEAD on a detached checkout, and
-	// GITHUB_REF holds a full ref. Git stores a branch called 'refs/heads/main' under
-	// 'refs/heads/refs/heads/main', so the prefix cannot belong to a real branch name.
+	// GITHUB_REF holds a full ref such as 'refs/heads/main'. Git permits a branch name that
+	// starts with 'refs/', but a real branch is not realistically named that way.
 	if flags.branch == "HEAD" {
 		fatalf("Error: -branch must be a branch name, not 'HEAD'. Use 'git branch --show-current', which is empty on a detached checkout")
 	}
@@ -705,13 +705,13 @@ func configValidationHasConflicts(flags *cliFlags) bool {
 func configValidationHasOperationFlags(flags *cliFlags) bool {
 	return flags.pattern != "" || flags.configFile != "" || flags.moduleSource != "" ||
 		flags.toVersion != "" || flags.terraformVersion != "" || flags.providerName != "" ||
-		flags.branch != "" || flags.ignoreModules != "" || flags.reportFile != "" || flags.auditFile != ""
+		flags.reportFile != "" || flags.auditFile != ""
 }
 
-// configValidationHasBehaviourFlags covers the filters and switches that only affect an update.
+// configValidationHasBehaviourFlags covers the filters and switches that change how an update or audit runs.
 func configValidationHasBehaviourFlags(flags *cliFlags) bool {
-	return len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 ||
-		flags.forceAdd || flags.dryRun || flags.check || flags.verbose
+	return len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" ||
+		flags.branch != "" || flags.forceAdd || flags.dryRun || flags.check || flags.verbose
 }
 
 // findMatchingFiles finds all files matching the pattern
