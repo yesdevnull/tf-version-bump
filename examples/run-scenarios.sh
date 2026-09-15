@@ -55,6 +55,15 @@ prepare_scenario() {
     cp -- "$repository_root/examples/scenarios/$1/main.tf" "$repository_root/examples/scenarios/$1/config.yml" "$workspace/$1/"
 }
 
+# Runs the built binary with its output in <workspace>/<log>.stdout and .stderr, and fails with that
+# stderr when the binary exits non-zero, because the workspace and its logs are removed on exit.
+run_binary() {
+    local log=$1
+    shift
+    "$binary" "$@" >"$workspace/$log.stdout" 2>"$workspace/$log.stderr" \
+        || fail "$log run exited non-zero: $(<"$workspace/$log.stderr")"
+}
+
 # Applies a scenario's config again, passing any extra flags, and fails unless the run leaves the
 # Terraform bytes and modification time unchanged and reports that nothing needed updating.
 assert_second_run_changes_nothing() {
@@ -63,8 +72,7 @@ assert_second_run_changes_nothing() {
     cp -- "$workspace/$name/main.tf" "$workspace/$name-first.tf"
     touch -t 200001010000 "$workspace/$name/main.tf"
     first_modification_time=$(file_modification_time "$workspace/$name/main.tf")
-    "$binary" -pattern "$workspace/$name/main.tf" -config "$workspace/$name/config.yml" "$@" \
-        >"$workspace/$name-second.stdout" 2>"$workspace/$name-second.stderr"
+    run_binary "$name-second" -pattern "$workspace/$name/main.tf" -config "$workspace/$name/config.yml" "$@"
     second_modification_time=$(file_modification_time "$workspace/$name/main.tf")
     cmp -s "$workspace/$name/main.tf" "$workspace/$name-first.tf" \
         || fail "second $name run changed Terraform bytes"
@@ -86,24 +94,21 @@ fi
 force_add_directory="$workspace/force-add"
 prepare_scenario force-add
 
-"$binary" -pattern "$force_add_directory/main.tf" -config "$force_add_directory/config.yml" \
-    >"$workspace/force-add-skip.stdout" 2>"$workspace/force-add-skip.stderr"
+run_binary force-add-skip -pattern "$force_add_directory/main.tf" -config "$force_add_directory/config.yml"
 cmp -s "$force_add_directory/main.tf" "$repository_root/examples/scenarios/force-add/main.tf" \
     || fail "force-add scenario changed the module without -force-add"
 grep -F "has no version attribute, skipping" \
     "$workspace/force-add-skip.stderr" >/dev/null \
     || fail "force-add scenario did not report the default missing-version warning"
 
-"$binary" -pattern "$force_add_directory/main.tf" -config "$force_add_directory/config.yml" \
-    -force-add >"$workspace/force-add.stdout" 2>"$workspace/force-add.stderr"
+run_binary force-add -pattern "$force_add_directory/main.tf" -config "$force_add_directory/config.yml" -force-add
 grep -F 'version = "5.0.0"' "$force_add_directory/main.tf" >/dev/null \
     || fail "force-add scenario did not add the configured module version"
 
 idempotency_directory="$workspace/idempotency"
 prepare_scenario idempotency
 
-"$binary" -pattern "$idempotency_directory/main.tf" -config "$idempotency_directory/config.yml" \
-    >"$workspace/idempotency-first.stdout" 2>"$workspace/idempotency-first.stderr"
+run_binary idempotency-first -pattern "$idempotency_directory/main.tf" -config "$idempotency_directory/config.yml"
 grep -F 'required_version = ">= 1.5"' "$idempotency_directory/main.tf" >/dev/null \
     || fail "idempotency scenario did not update Terraform required_version"
 grep -F 'version = "~> 5.0"' "$idempotency_directory/main.tf" >/dev/null \
@@ -116,8 +121,7 @@ assert_second_run_changes_nothing idempotency
 provider_directory="$workspace/provider-targeting"
 prepare_scenario provider-targeting
 
-"$binary" -pattern "$provider_directory/main.tf" -config "$provider_directory/config.yml" -force-add \
-    >"$workspace/provider-first.stdout" 2>"$workspace/provider-first.stderr"
+run_binary provider-targeting-first -pattern "$provider_directory/main.tf" -config "$provider_directory/config.yml" -force-add
 cmp -s "$provider_directory/main.tf" \
     "$repository_root/examples/scenarios/provider-targeting/expected.tf.golden" \
     || fail "provider-targeting scenario did not produce the exact expected provider configuration"
@@ -127,8 +131,7 @@ assert_second_run_changes_nothing provider-targeting -force-add
 same_source_directory="$workspace/same-source-ranges"
 prepare_scenario same-source-ranges
 
-"$binary" -pattern "$same_source_directory/main.tf" -config "$same_source_directory/config.yml" \
-    >"$workspace/same-source-first.stdout" 2>"$workspace/same-source-first.stderr"
+run_binary same-source-ranges-first -pattern "$same_source_directory/main.tf" -config "$same_source_directory/config.yml"
 cmp -s "$same_source_directory/main.tf" \
     "$repository_root/examples/scenarios/same-source-ranges/expected.tf.golden" \
     || fail "same-source-ranges scenario did not produce the exact expected module versions"
