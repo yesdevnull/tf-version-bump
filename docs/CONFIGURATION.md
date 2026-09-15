@@ -115,7 +115,7 @@ modules:
     version: "5.0.0"
 ```
 
-Every non-local module with that exact source is updated when it already has a literal `version` attribute. `-force-add` can add a missing attribute only when the source is a registry module.
+Every non-local module with that exact source is updated when it already has a `version` attribute, whether its value is a literal or an expression such as `var.module_version`, which is replaced with the target string. See [Module updates](USAGE.md#module-updates). `-force-add` can add a missing attribute only when the source is a registry module.
 
 ### One source version
 
@@ -192,7 +192,7 @@ modules:
 
 The branch pattern uses the same wildcard rules as the module pattern, so `*` spans `/` instead of stopping at a path segment. A trailing `/*` is therefore the module pattern rather than a branch glob: every module on any `state/staging/…` branch is `state/staging/*/*`. No `/`-separated part may be empty; `state/staging/`, `/vpc`, and `state//vpc` are rejected when the config is loaded or validated.
 
-Supply the branch with the `-branch` flag, which the command never infers from Git. It takes the short branch name, not `refs/heads/…` or `origin/…`:
+Supply the branch with the `-branch` flag, which the command never infers from Git. It takes the short branch name, rather than a full ref such as `refs/heads/…`. A remote-tracking name such as `origin/main` is accepted, because a local branch may be named that way, but it is rarely the branch you mean:
 
 ```bash
 tf-version-bump -pattern "**/*.tf" -config versions.yml -branch "$(git branch --show-current)"
