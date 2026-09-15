@@ -365,16 +365,26 @@ func loadResolvedConfig(configFile, branch string) (*Config, error) {
 	return config, nil
 }
 
-// processFiles processes all matching files and applies module updates.
+// processFiles applies the module updates to every matching file in order. Each file is parsed once,
+// so an update meets the changes earlier updates made to it, in a dry run as in a real run. A file
+// that cannot be read or written still counts as one error per update.
 func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (totalUpdates, totalErrors int) {
 	for _, file := range files {
+		parsed, readErr := readTerraformFile(file)
 		// Index rather than copy: gocritic's rangeValCopy rejects ranging over ModuleUpdate by value.
 		for i := range updates {
 			update := &updates[i]
-			updated, changedBlocks, err := updateModuleVersionWithCount(file, update.Source, update.Version, update.From, update.IgnoreVersions, update.resolvedIgnoreModules, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
+			if readErr != nil {
+				log.Printf("Error processing %s: %v", file, readErr)
+				totalErrors++
+				continue
+			}
+			updated, changedBlocks, err := applyModuleVersion(parsed, update.Source, update.Version, update.From, update.IgnoreVersions, update.resolvedIgnoreModules, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				totalErrors++
+				// The failed write left the file unchanged, so later updates start from it again.
+				parsed, readErr = readTerraformFile(file)
 				continue
 			}
 			if updated {
@@ -1316,29 +1326,52 @@ func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
 //   - changedBlocks: indexes of module blocks whose version values differ from the target
 //   - error: Any error encountered during file reading, parsing, or writing
 func updateModuleVersionWithCount(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, changedBlocks []int, err error) {
-	// Get original file permissions to preserve them when writing
+	file, err := readTerraformFile(filename)
+	if err != nil {
+		return false, nil, err
+	}
+	return applyModuleVersion(file, moduleSource, version, fromVersions, ignoreVersions, ignorePatterns, forceAdd, dryRun, verbose, outputFormat)
+}
+
+// terraformFile is a Terraform file parsed once, with the permission bits a write must preserve.
+type terraformFile struct {
+	name string
+	mode os.FileMode
+	hcl  *hclwrite.File
+}
+
+func readTerraformFile(filename string) (*terraformFile, error) {
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
-		return false, nil, fmt.Errorf("failed to stat file: %w", err)
+		return nil, fmt.Errorf("failed to stat file: %w", err)
 	}
-	originalMode := fileInfo.Mode()
 
-	// Read the file
 	src, err := os.ReadFile(filename)
 	if err != nil {
-		return false, nil, fmt.Errorf("failed to read file: %w", err)
+		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
-	// Parse the file with hclwrite
 	file, diags := hclwrite.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return false, nil, fmt.Errorf("failed to parse HCL: %s", diags.Error())
+		return nil, fmt.Errorf("failed to parse HCL: %s", diags.Error())
 	}
 
-	updated = false
-	changedBlocks = nil
+	return &terraformFile{name: filename, mode: fileInfo.Mode(), hcl: file}, nil
+}
+
+// write formats the file and replaces its contents, keeping the original permission bits.
+func (file *terraformFile) write() error {
+	if err := os.WriteFile(file.name, hclwrite.Format(file.hcl.Bytes()), file.mode.Perm()); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+	return nil
+}
+
+// applyModuleVersion applies one module update to a parsed file, changing it in memory so a later
+// update to the same file meets this one's result, and writes the file unless dryRun is set.
+func applyModuleVersion(file *terraformFile, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, changedBlocks []int, err error) {
 	opts := moduleUpdateOptions{
-		filename:       filename,
+		filename:       file.name,
 		moduleSource:   moduleSource,
 		version:        version,
 		fromVersions:   fromVersions,
@@ -1349,8 +1382,7 @@ func updateModuleVersionWithCount(filename, moduleSource, version string, fromVe
 		outputFormat:   outputFormat,
 	}
 
-	// Iterate through all blocks in the file
-	for blockIndex, block := range file.Body().Blocks() {
+	for blockIndex, block := range file.hcl.Body().Blocks() {
 		blockUpdated, blockChanged := updateModuleBlockResult(block, &opts)
 		if blockUpdated {
 			updated = true
@@ -1360,12 +1392,9 @@ func updateModuleVersionWithCount(filename, moduleSource, version string, fromVe
 		}
 	}
 
-	// If we made changes, write the file back (unless in dry-run mode)
 	if updated && !dryRun {
-		output := hclwrite.Format(file.Bytes())
-		// Preserve original file permissions
-		if err := os.WriteFile(filename, output, originalMode.Perm()); err != nil {
-			return false, nil, fmt.Errorf("failed to write file: %w", err)
+		if err := file.write(); err != nil {
+			return false, nil, err
 		}
 	}
 

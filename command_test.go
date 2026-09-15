@@ -623,6 +623,32 @@ func TestCommandConfigDryRunOutputContract(t *testing.T) {
 	}
 }
 
+// A run applies a source's config entries in order, so a dry run must report every step a real run
+// takes, including an entry whose from names an earlier entry's target.
+func TestCommandConfigDryRunChainsEntriesForOneSource(t *testing.T) {
+	dir := t.TempDir()
+	input := "module \"vpc\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+	file := writeTestFile(t, dir, "main.tf", input)
+	config := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n    from: 1.0.0\n  - source: example/module\n    version: 3.0.0\n    from: 2.0.0\n")
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config, "-dry-run"})
+
+	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n" +
+		"Running in dry-run mode - no files will be modified\n" +
+		"→ Would update module source 'example/module' from version(s) [1.0.0] to '2.0.0' in " + file + "\n" +
+		"→ Would update module source 'example/module' from version(s) [2.0.0] to '3.0.0' in " + file + "\n\n" +
+		"==================================================\n" +
+		"Config File Update Summary\n" +
+		"==================================================\n" +
+		"Modules: would apply 2 update(s)\n"
+	if result.stdout != wantStdout || result.diagnostics != "" || result.exitCode != -1 {
+		t.Fatalf("result = %#v, want stdout %q and normal return", result, wantStdout)
+	}
+	if got := readTestFile(t, file); got != input {
+		t.Fatalf("dry run changed content to %q, want %q", got, input)
+	}
+}
+
 func TestCommandWritesExactUpdatedBlockCounts(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "main.tf", `terraform {
