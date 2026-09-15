@@ -650,23 +650,25 @@ func TestCommandConfigDryRunChainsEntriesForOneSource(t *testing.T) {
 }
 
 // A failed write may not have reached the file, so later entries start from the file on disk rather
-// than the unsaved change: a chained entry is judged against the version the file still holds.
+// than the unsaved change: the chained entry is judged against the version the file still holds, and
+// an entry for another source is still applied. The third entry fails to write for the same reason,
+// so abandoning the file after the first failure would report one error instead of two.
 func TestCommandConfigFailedWriteRestartsLaterEntriesFromDisk(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root can write read-only files")
 	}
 	dir := t.TempDir()
-	input := "module \"vpc\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+	input := "module \"vpc\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n\nmodule \"bucket\" {\n  source  = \"other/module\"\n  version = \"1.0.0\"\n}\n"
 	file := writeTestFile(t, dir, "main.tf", input)
 	if err := os.Chmod(file, 0o400); err != nil {
 		t.Fatal(err)
 	}
-	config := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n    from: 1.0.0\n  - source: example/module\n    version: 3.0.0\n    from: 2.0.0\n")
+	config := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n    from: 1.0.0\n  - source: example/module\n    version: 3.0.0\n    from: 2.0.0\n  - source: other/module\n    version: 2.0.0\n    from: 1.0.0\n")
 
 	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config})
 
-	wantDiagnostics := "Error processing " + file + ": failed to write file: open " + file + ": permission denied\n" +
-		"1 module update error(s)\n"
+	writeFailure := "Error processing " + file + ": failed to write file: open " + file + ": permission denied\n"
+	wantDiagnostics := writeFailure + writeFailure + "2 module update error(s)\n"
 	if result.diagnostics != wantDiagnostics || result.exitCode != 1 || strings.Contains(result.stdout, "✓") {
 		t.Fatalf("result = %#v, want diagnostics %q, no success lines and exit 1", result, wantDiagnostics)
 	}
