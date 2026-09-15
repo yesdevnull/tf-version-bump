@@ -215,25 +215,71 @@ func TestBuildAudit_RecordsModulesInTheUpdatersFilterPrecedence(t *testing.T) {
 	}
 }
 
-func TestBuildAudit_RecordsABlockOncePerMatchingConfigEntry(t *testing.T) {
+// A run applies a source's entries in YAML order, so each entry meets the value the entries before
+// it leave, and a skipped entry leaves that value unchanged.
+func TestBuildAudit_JudgesEachEntryAgainstTheValueEarlierEntriesLeave(t *testing.T) {
 	moduleFile := writeTestFile(t, t.TempDir(), "main.tf", "module \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"4.2.0\"\n}\n")
-	config := &Config{Modules: []ModuleUpdate{
-		{Source: "terraform-aws-modules/vpc/aws", Version: "4.9.0", From: FromVersions{"4.2.0"}},
-		{Source: "terraform-aws-modules/vpc/aws", Version: "5.0.0", From: FromVersions{"4.9.0"}},
-	}}
+	vpc := "terraform-aws-modules/vpc/aws"
+	config := auditConfig(t, "",
+		ModuleUpdate{Source: vpc, Version: "9.9.9", IgnoreModules: []string{"vpc"}},
+		ModuleUpdate{Source: vpc, Version: "4.9.0", From: FromVersions{"4.2.0"}},
+		ModuleUpdate{Source: vpc, Version: "5.0.0", From: FromVersions{"4.9.0"}},
+		ModuleUpdate{Source: vpc, Version: "5.0.0"},
+	)
 
 	audit, err := buildAudit([]string{moduleFile}, config)
 	if err != nil {
 		t.Fatalf("buildAudit: %v", err)
 	}
 
-	vpc := "terraform-aws-modules/vpc/aws"
 	want := []moduleAuditEntry{
+		{File: moduleFile, Name: "vpc", Source: vpc, Actual: auditValue("4.2.0"), Expected: "9.9.9", Skip: &moduleAuditSkip{Filter: "ignore_modules", Values: []string{"vpc"}}},
 		{File: moduleFile, Name: "vpc", Source: vpc, Actual: auditValue("4.2.0"), Expected: "4.9.0"},
-		{File: moduleFile, Name: "vpc", Source: vpc, Actual: auditValue("4.2.0"), Expected: "5.0.0", Skip: &moduleAuditSkip{Filter: "from", Values: []string{"4.9.0"}}},
+		{File: moduleFile, Name: "vpc", Source: vpc, Actual: auditValue("4.9.0"), Expected: "5.0.0"},
+		{File: moduleFile, Name: "vpc", Source: vpc, Actual: auditValue("5.0.0"), Expected: "5.0.0", Matches: true},
 	}
 	if got, wantJSON := auditJSON(t, audit.Modules), auditJSON(t, want); got != wantJSON {
 		t.Fatalf("modules = %s, want %s", got, wantJSON)
+	}
+}
+
+// The updater rewrites a block once per entry that reaches it, so the audit must agree about every
+// entry of a chained config, not only the first.
+func TestBuildAudit_AgreesWithTheUpdaterOnChainedEntries(t *testing.T) {
+	moduleFile := writeTestFile(t, t.TempDir(), "main.tf", "module \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"~> 3.0\"\n}\n")
+	vpc := "terraform-aws-modules/vpc/aws"
+	config := auditConfig(t, "",
+		ModuleUpdate{Source: vpc, Version: "~> 4.0", From: FromVersions{"~> 3.0"}},
+		ModuleUpdate{Source: vpc, Version: "~> 5.0", From: FromVersions{"~> 4.0"}},
+		ModuleUpdate{Source: vpc, Version: "~> 6.0", From: FromVersions{"~> 3.0"}},
+	)
+
+	audit, err := buildAudit([]string{moduleFile}, config)
+	if err != nil {
+		t.Fatalf("buildAudit: %v", err)
+	}
+	var auditChanges []int
+	for index, entry := range audit.Modules {
+		if entry.Actual != nil && !entry.Matches && entry.Skip == nil {
+			auditChanges = append(auditChanges, index)
+		}
+	}
+
+	var updaterChanges []int
+	for index := range config.Modules {
+		update := &config.Modules[index]
+		_, changedBlocks, err := updateModuleVersionWithCount(moduleFile, update.Source, update.Version,
+			update.From, update.IgnoreVersions, update.resolvedIgnoreModules, false, false, false, "text")
+		if err != nil {
+			t.Fatalf("updateModuleVersionWithCount: %v", err)
+		}
+		if len(changedBlocks) > 0 {
+			updaterChanges = append(updaterChanges, index)
+		}
+	}
+
+	if !slices.Equal(auditChanges, updaterChanges) || !slices.Equal(updaterChanges, []int{0, 1}) {
+		t.Fatalf("audit changes entries %v and updater changes entries %v, want both to be [0 1]", auditChanges, updaterChanges)
 	}
 }
 
