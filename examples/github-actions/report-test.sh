@@ -126,8 +126,6 @@ fixture_commit() {
 }
 
 
-# An origin whose default branch holds the control config, a shallow control clone of it (as
-# actions/checkout makes), and a seed repository that pushes state branches.
 write_report_config() {
     cat >"$1" <<'EOF'
 terraform_version: ">= 1.10"
@@ -157,6 +155,8 @@ EOF
 }
 
 
+# An origin whose default branch holds the control config, a shallow control clone of it (as
+# actions/checkout makes), and a seed repository that pushes state branches.
 setup_report_fixture() {
     FIXTURE_ROOT=$(mktemp -d "$TEST_ROOT/fixture.XXXXXX")
     FIXTURE_REMOTE="$FIXTURE_ROOT/origin.git"
