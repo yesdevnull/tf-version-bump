@@ -1023,30 +1023,13 @@ func updateTerraformVersion(filename, version string, dryRun bool) (bool, error)
 
 // updateTerraformVersionWithCount updates required_version and identifies changed terraform blocks.
 func updateTerraformVersionWithCount(filename, version string, dryRun bool) (updated bool, changedBlocks []int, err error) {
-	// Get original file permissions to preserve them when writing
-	fileInfo, err := os.Stat(filename)
+	file, err := readTerraformFile(filename)
 	if err != nil {
-		return false, nil, fmt.Errorf("failed to stat file: %w", err)
-	}
-	originalMode := fileInfo.Mode()
-
-	// Read the file
-	src, err := os.ReadFile(filename)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to read file: %w", err)
+		return false, nil, err
 	}
 
-	// Parse the file with hclwrite
-	file, diags := hclwrite.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
-	if diags.HasErrors() {
-		return false, nil, fmt.Errorf("failed to parse HCL: %s", diags.Error())
-	}
-
-	// Track if we made any changes
-	updated = false
-	changedBlocks = nil
 	// Iterate through all blocks in the file
-	for blockIndex, block := range file.Body().Blocks() {
+	for blockIndex, block := range file.hcl.Body().Blocks() {
 		if block.Type() != "terraform" {
 			continue
 		}
@@ -1062,10 +1045,8 @@ func updateTerraformVersionWithCount(filename, version string, dryRun bool) (upd
 
 	// If we made changes, write the file back (unless in dry-run mode)
 	if updated && !dryRun {
-		output := hclwrite.Format(file.Bytes())
-		// Preserve original file permissions
-		if err := os.WriteFile(filename, output, originalMode.Perm()); err != nil {
-			return false, nil, fmt.Errorf("failed to write file: %w", err)
+		if err := file.write(); err != nil {
+			return false, nil, err
 		}
 	}
 
@@ -1095,30 +1076,13 @@ func updateTerraformVersionWithCount(filename, version string, dryRun bool) (upd
 //   - changedBlocks: locations of provider blocks whose version values differ from the target
 //   - error: Any error encountered during file reading, parsing, or writing
 func updateProviderVersionWithCount(filename, providerName, version string, dryRun bool) (updated bool, changedBlocks []string, err error) {
-	// Get original file permissions to preserve them when writing
-	fileInfo, err := os.Stat(filename)
+	file, err := readTerraformFile(filename)
 	if err != nil {
-		return false, nil, fmt.Errorf("failed to stat file: %w", err)
+		return false, nil, err
 	}
-	originalMode := fileInfo.Mode()
-
-	// Read the file
-	src, err := os.ReadFile(filename)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to read file: %w", err)
-	}
-
-	// Parse the file with hclwrite
-	file, diags := hclwrite.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
-	if diags.HasErrors() {
-		return false, nil, fmt.Errorf("failed to parse HCL: %s", diags.Error())
-	}
-
-	updated = false
-	changedBlocks = nil
 
 	// Iterate through all blocks in the file
-	for blockIndex, block := range file.Body().Blocks() {
+	for blockIndex, block := range file.hcl.Body().Blocks() {
 		blockUpdated, blockChanges := updateProviderTerraformBlockResult(block, providerName, version)
 		updated = updated || blockUpdated
 		for _, blockChange := range blockChanges {
@@ -1128,10 +1092,8 @@ func updateProviderVersionWithCount(filename, providerName, version string, dryR
 
 	// If we made changes, write the file back (unless in dry-run mode)
 	if updated && !dryRun {
-		output := hclwrite.Format(file.Bytes())
-		// Preserve original file permissions
-		if err := os.WriteFile(filename, output, originalMode.Perm()); err != nil {
-			return false, nil, fmt.Errorf("failed to write file: %w", err)
+		if err := file.write(); err != nil {
+			return false, nil, err
 		}
 	}
 
