@@ -184,6 +184,8 @@ func markdownHeadingAnchors(contents string) map[string]struct{} {
 	return anchors
 }
 
+// markdownLinesOutsideTopLevelFences returns one entry per source line, blanking fence markers and
+// fenced lines so each entry keeps its line number and text either side of a fence never adjoins.
 func markdownLinesOutsideTopLevelFences(contents string) []string {
 	var rendered []string
 	var fenceCharacter byte
@@ -195,6 +197,7 @@ func markdownLinesOutsideTopLevelFences(contents string) []string {
 			if isFence {
 				fenceCharacter = character
 				fenceLength = length
+				rendered = append(rendered, "")
 				continue
 			}
 			rendered = append(rendered, line)
@@ -205,9 +208,96 @@ func markdownLinesOutsideTopLevelFences(contents string) []string {
 			fenceCharacter = 0
 			fenceLength = 0
 		}
+		rendered = append(rendered, "")
 	}
 
 	return rendered
+}
+
+// Markdown renders a paragraph, list item or quote as flowing text, so each belongs on one source
+// line; prose broken at a fixed width makes every edit reflow the lines around it.
+func TestDocumentationProseIsNotHardWrapped(t *testing.T) {
+	for _, document := range markdownTestFiles(t) {
+		contents, err := os.ReadFile(document)
+		if err != nil {
+			t.Fatalf("read %s: %v", document, err)
+		}
+		for _, line := range hardWrappedLines(string(contents)) {
+			t.Errorf("%s:%d continues the prose on the line before it; join the two lines", document, line)
+		}
+	}
+}
+
+// markdownStructure matches lines that are Markdown structure rather than prose: headings, table
+// rows, HTML, GitHub alert markers, link reference definitions and thematic breaks.
+const markdownStructure = `#{1,6}(?:\s|$)|\||<|\[![A-Za-z]+\]\s*$|\[[^\]]+\]:\s|(?:[-*_]\s*){3,}$`
+
+var (
+	markdownStructurePattern  = regexp.MustCompile(`^\s*(?:` + markdownStructure + `)`)
+	markdownBlockStartPattern = regexp.MustCompile(`^\s*(?:` + markdownStructure + `|[-*+]\s|\d{1,9}[.)]\s)`)
+)
+
+// hardWrappedLines returns the 1-based numbers of lines that continue the prose of the line before
+// them, within the same blockquote depth, instead of starting a new block.
+func hardWrappedLines(contents string) []int {
+	var wrapped []int
+	lines := markdownLinesOutsideTopLevelFences(contents)
+	for index := 1; index < len(lines); index++ {
+		previousDepth, previous := markdownQuoteContent(lines[index-1])
+		depth, line := markdownQuoteContent(lines[index])
+		if depth != previousDepth || strings.TrimSpace(previous) == "" || strings.TrimSpace(line) == "" {
+			continue
+		}
+		if markdownBlockStartPattern.MatchString(line) || markdownStructurePattern.MatchString(previous) {
+			continue
+		}
+		// A trailing backslash or two spaces is an explicit line break, not wrapping.
+		if strings.HasSuffix(previous, "\\") || strings.HasSuffix(previous, "  ") {
+			continue
+		}
+		wrapped = append(wrapped, index+1)
+	}
+	return wrapped
+}
+
+// markdownQuoteContent returns a line's blockquote depth and the text inside its '>' markers.
+func markdownQuoteContent(line string) (depth int, content string) {
+	content = line
+	for {
+		trimmed := strings.TrimLeft(content, " ")
+		if !strings.HasPrefix(trimmed, ">") {
+			return depth, content
+		}
+		depth++
+		content = strings.TrimPrefix(trimmed[1:], " ")
+	}
+}
+
+func TestHardWrappedLines(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents string
+		want     []int
+	}{
+		{name: "wrapped paragraph", contents: "First half\nsecond half.\n", want: []int{2}},
+		{name: "separate paragraphs", contents: "One.\n\nTwo.\n"},
+		{name: "wrapped list item", contents: "- First half\n  second half.\n", want: []int{2}},
+		{name: "list items", contents: "- One\n- Two\n  - Nested\n1. Three\n"},
+		{name: "table", contents: "| A | B |\n|---|---|\n| 1 | 2 |\n"},
+		{name: "heading then text", contents: "# Title\nText.\n"},
+		{name: "fenced lines", contents: "Text:\n```text\nline one\nline two\n```\nMore text.\n"},
+		{name: "wrapped quote", contents: "> First half\n> second half.\n", want: []int{2}},
+		{name: "alert marker", contents: "> [!WARNING]\n> Text.\n"},
+		{name: "explicit line break", contents: "First line\\\nSecond line\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hardWrappedLines(tt.contents); !slices.Equal(got, tt.want) {
+				t.Fatalf("hardWrappedLines = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
 func markdownFence(line string) (character byte, length int, remainder string, ok bool) {

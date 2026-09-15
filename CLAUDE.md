@@ -1,23 +1,14 @@
 # CLAUDE.md - AI Assistant Guide for tf-version-bump
 
-Guidance for AI assistants working on this codebase. User-facing docs begin in
-[README.md](README.md) and continue under [`docs/`](docs); for a shorter agent primer see
-[AGENTS.md](AGENTS.md).
+Guidance for AI assistants working on this codebase. User-facing docs begin in [README.md](README.md) and continue under [`docs/`](docs); for a shorter agent primer see [AGENTS.md](AGENTS.md).
 
 ## Project Overview
 
-**tf-version-bump** is a Go CLI that updates Terraform module versions, `required_version` in
-terraform blocks, and provider versions in `required_providers`, across files matched by a glob.
-It parses HCL with HashiCorp's `hclwrite`; comments and structure survive while whitespace may be
-normalised when a changed file is formatted.
+**tf-version-bump** is a Go CLI that updates Terraform module versions, `required_version` in terraform blocks, and provider versions in `required_providers`, across files matched by a glob. It parses HCL with HashiCorp's `hclwrite`; comments and structure survive while whitespace may be normalised when a changed file is formatted.
 
-This repository is an experiment for generative AI coding tools. It may contain bugs or incomplete
-features. Keep changes under version control and test them.
+This repository is an experiment for generative AI coding tools. It may contain bugs or incomplete features. Keep changes under version control and test them.
 
-**Stack**: Go 1.25+ (CI pins 1.26.8), `hashicorp/hcl/v2`,
-`hashicorp/terraform-registry-address`, `zclconf/go-cty`, `yaml.v3`, and
-`bmatcuk/doublestar/v4`. Dependency versions live in `go.mod` — don't restate them here or in
-AGENTS.md; they drift.
+**Stack**: Go 1.25+ (CI pins 1.26.8), `hashicorp/hcl/v2`, `hashicorp/terraform-registry-address`, `zclconf/go-cty`, `yaml.v3`, and `bmatcuk/doublestar/v4`. Dependency versions live in `go.mod` — don't restate them here or in AGENTS.md; they drift.
 
 ## Layout
 
@@ -59,77 +50,43 @@ make actionlint && make shellcheck
 go build -o tf-version-bump .
 ```
 
-**golangci-lint must match CI's version, currently v2.12** (see `.github/workflows/lint.yml`;
-`.golangci.yml` is `version: "2"` schema). It enables a curated linter set rather than the
-defaults, sets `gocyclo` min-complexity to 15, and lints test files too. Bump the version here
-when the workflow pins a new one.
+**golangci-lint must match CI's version, currently v2.12** (see `.github/workflows/lint.yml`; `.golangci.yml` is `version: "2"` schema). It enables a curated linter set rather than the defaults, sets `gocyclo` min-complexity to 15, and lints test files too. Bump the version here when the workflow pins a new one.
 
 ```bash
 curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.12
 ```
 
-**shellcheck must match CI's pinned version, currently 0.11.0** (see `.github/workflows/lint.yml`,
-which verifies the release archive's SHA-256). actionlint also runs shellcheck over workflow
-`run:` blocks using the first shellcheck on PATH, so a different local version can disagree with
-CI in either direction. Bump the version and digest together.
+**shellcheck must match CI's pinned version, currently 0.11.0** (see `.github/workflows/lint.yml`, which verifies the release archive's SHA-256). actionlint also runs shellcheck over workflow `run:` blocks using the first shellcheck on PATH, so a different local version can disagree with CI in either direction. Bump the version and digest together.
 
 ## Gotchas
 
-**Globbing uses `doublestar`, not `filepath.Glob`.** `findMatchingFiles` deliberately calls
-`doublestar.Glob` against an `fs.FS`, because `filepath.Glob` has no recursive wildcard — it
-treats `**` as a plain `*` that never crosses a separator. Don't "simplify" this back to the
-stdlib. With doublestar, `**` spans zero or more directories, so `**/*.tf` matches `top.tf`,
-`a/mid.tf` and `a/b/deep.tf`.
+**Globbing uses `doublestar`, not `filepath.Glob`.** `findMatchingFiles` deliberately calls `doublestar.Glob` against an `fs.FS`, because `filepath.Glob` has no recursive wildcard — it treats `**` as a plain `*` that never crosses a separator. Don't "simplify" this back to the stdlib. With doublestar, `**` spans zero or more directories, so `**/*.tf` matches `top.tf`, `a/mid.tf` and `a/b/deep.tf`.
 
-**The glob filesystem and options carry real weight — don't drop them.** `findMatchingFiles`
-uses `visibleDirFS` and two options, each fixing a way `**` can misbehave once it genuinely
-recurses:
+**The glob filesystem and options carry real weight — don't drop them.** `findMatchingFiles` uses `visibleDirFS` and two options, each fixing a way `**` can misbehave once it genuinely recurses:
 
-- `visibleDirFS` — wildcard traversal skips dot-directories, so `**/*.tf` never descends into
-  `.terraform/modules` (whose vendored copies `terraform init` regenerates, making any bump
-  written there silently vanish). Because the non-glob base is resolved first, an explicit
-  `.terraform/**/*.tf` still matches. This is deliberately shell-like; there is no custom
-  exclusion list.
-- `WithNoFollow` — without it a directory symlink matches the same physical file twice, and a
-  symlink cycle matches it until the OS hits its link limit.
-- `WithFilesOnly` — without it `-pattern "modules/**"` returns directories, which get counted
-  as files and then fail with "is a directory".
+- `visibleDirFS` — wildcard traversal skips dot-directories, so `**/*.tf` never descends into `.terraform/modules` (whose vendored copies `terraform init` regenerates, making any bump written there silently vanish). Because the non-glob base is resolved first, an explicit `.terraform/**/*.tf` still matches. This is deliberately shell-like; there is no custom exclusion list.
+- `WithNoFollow` — without it a directory symlink matches the same physical file twice, and a symlink cycle matches it until the OS hits its link limit.
+- `WithFilesOnly` — without it `-pattern "modules/**"` returns directories, which get counted as files and then fail with "is a directory".
 
-Note this means the tool cannot protect a user who `cd`s into `.terraform` and globs from
-there; that is treated as deliberate, exactly as a shell would.
+Note this means the tool cannot protect a user who `cd`s into `.terraform` and globs from there; that is treated as deliberate, exactly as a shell would.
 
-**HCL attribute tokens include their quotes.** Use the `trimQuotes` helper when reading an
-attribute's value; don't compare against raw token bytes.
+**HCL attribute tokens include their quotes.** Use the `trimQuotes` helper when reading an attribute's value; don't compare against raw token bytes.
 
-**Never string-manipulate HCL.** Always go through the `hclwrite` API, or formatting and
-comments are lost. `hclwrite.Format()` may adjust whitespace — that's expected.
+**Never string-manipulate HCL.** Always go through the `hclwrite` API, or formatting and comments are lost. `hclwrite.Format()` may adjust whitespace — that's expected.
 
-**Local modules are skipped by design.** `isLocalModule` treats `./`, `../` and `/` sources as
-local; Terraform gives them no version attribute, so there is nothing to bump.
+**Local modules are skipped by design.** `isLocalModule` treats `./`, `../` and `/` sources as local; Terraform gives them no version attribute, so there is nothing to bump.
 
-**Don't run concurrent instances over the same files.** There is no file locking and writes are
-not atomic. Files are processed in memory, so very large files (>100MB) are impractical.
+**Don't run concurrent instances over the same files.** There is no file locking and writes are not atomic. Files are processed in memory, so very large files (>100MB) are impractical.
 
 ## Architecture
 
 ### Update flow
 
-`main()` → `validateOperationModes` → either standalone config validation or
-`findMatchingFiles` → `runAuditMode` (`-audit-file`: `buildAudit`, never writes Terraform files) or
-`runUpdateMode` → `runConfigFileMode` (YAML) / `runCLIMode` (one direct operation).
-Each update mode dispatches to one of three update paths:
-`updateModuleVersionWithCount`, `updateTerraformVersion`, or `updateProviderVersionWithCount`.
+`main()` → `validateOperationModes` → either standalone config validation or `findMatchingFiles` → `runAuditMode` (`-audit-file`: `buildAudit`, never writes Terraform files) or `runUpdateMode` → `runConfigFileMode` (YAML) / `runCLIMode` (one direct operation). Each update mode dispatches to one of three update paths: `updateModuleVersionWithCount`, `updateTerraformVersion`, or `updateProviderVersionWithCount`.
 
-`updateModuleVersionWithCount` reads and parses the file, then bundles its many
-parameters into a `moduleUpdateOptions` struct and delegates per-block work to
-`updateModuleBlockResult` → `shouldSkipModuleVersion`. Add new per-module filtering there rather
-than growing the parameter list.
+`updateModuleVersionWithCount` reads and parses the file, then bundles its many parameters into a `moduleUpdateOptions` struct and delegates per-block work to `updateModuleBlockResult` → `shouldSkipModuleVersion`. Add new per-module filtering there rather than growing the parameter list.
 
-Provider updates are the fiddliest path: `required_providers` entries can be either a nested
-block or an object expression, so `updateProviderVersionWithCount` branches through
-`updateProviderBlockSyntaxResult` and `updateProviderAttributeVersionResult` /
-`providerAttributeObject` / `replaceProviderObjectVersion`. Attribute-object updates replace only
-the version expression's byte range so other expressions such as `configuration_aliases` remain.
+Provider updates are the fiddliest path: `required_providers` entries can be either a nested block or an object expression, so `updateProviderVersionWithCount` branches through `updateProviderBlockSyntaxResult` and `updateProviderAttributeVersionResult` / `providerAttributeObject` / `replaceProviderObjectVersion`. Attribute-object updates replace only the version expression's byte range so other expressions such as `configuration_aliases` remain.
 
 ### Standard hclwrite pattern
 
@@ -163,39 +120,17 @@ Evaluated across `updateModuleBlockResult` and `shouldSkipModuleVersion`:
 
 ### Ignore-pattern matching
 
-Custom wildcard matcher (`shouldIgnoreModule` → `matchPattern`), matching module **names**,
-not sources. `*` means zero or more characters: `vpc` (exact), `legacy-*` (prefix),
-`*-test` (suffix), `*-vpc-*` (contains).
+Custom wildcard matcher (`shouldIgnoreModule` → `matchPattern`), matching module **names**, not sources. `*` means zero or more characters: `vpc` (exact), `legacy-*` (prefix), `*-test` (suffix), `*-vpc-*` (contains).
 
-An entry may be branch-scoped as `<branch-pattern>/<module-pattern>`. `splitIgnoreModuleEntry`
-(config.go) divides it at the **last** `/`, which is unambiguous because Terraform module names
-cannot contain one; `sanitizeModuleUpdates` rejects an empty part so `-validate-config` catches the
-mistake. `resolveBranchIgnoreModules` (main.go) then records the patterns applicable to `-branch` in
-`ModuleUpdate.resolvedIgnoreModules`, leaving `IgnoreModules` as the config writes it. Filtering
-reads the resolved list; the audit's `skip.values` lists every configured entry as written,
-including entries scoped to other branches, just as the other filters list their full configured
-values. The branch part reuses `matchPattern`, so `*` spans `/`.
+An entry may be branch-scoped as `<branch-pattern>/<module-pattern>`. `splitIgnoreModuleEntry` (config.go) divides it at the **last** `/`, which is unambiguous because Terraform module names cannot contain one; `sanitizeModuleUpdates` rejects an empty part so `-validate-config` catches the mistake. `resolveBranchIgnoreModules` (main.go) then records the patterns applicable to `-branch` in `ModuleUpdate.resolvedIgnoreModules`, leaving `IgnoreModules` as the config writes it. Filtering reads the resolved list; the audit's `skip.values` lists every configured entry as written, including entries scoped to other branches, just as the other filters list their full configured values. The branch part reuses `matchPattern`, so `*` spans `/`.
 
-**Both readers must go through `loadResolvedConfig`.** It is the only place that pairs `loadConfig`
-with `resolveBranchIgnoreModules`, so `runConfigFileMode` and `runAuditMode` cannot drift into
-disagreeing about which modules are excluded — the state-branch version report is built on the
-audit, so drift would mark deliberately excluded modules as out of date. Tests that build a
-`Config` literal must resolve it too (see `auditConfig` in audit_test.go).
+**Both readers must go through `loadResolvedConfig`.** It is the only place that pairs `loadConfig` with `resolveBranchIgnoreModules`, so `runConfigFileMode` and `runAuditMode` cannot drift into disagreeing about which modules are excluded — the state-branch version report is built on the audit, so drift would mark deliberately excluded modules as out of date. Tests that build a `Config` literal must resolve it too (see `auditConfig` in audit_test.go).
 
-A branch-scoped entry without `-branch` is a hard error: silently dropping the exclusion would bump
-a module the config protects. For the same reason `-branch HEAD` is rejected, because
-`git rev-parse --abbrev-ref HEAD` prints it on a detached checkout, and so is any value beginning
-`refs/`, because `GITHUB_REF` holds a full ref such as `refs/heads/main`. `origin/` is deliberately
-allowed: remotes can have any name, and a local branch may start with `origin/`. The docs recommend
-`git branch --show-current`, which is empty on a detached checkout. The tool never reads the branch
-from Git — the caller supplies it (the state-branch automation has it as `PROCESS_STATE_BRANCH`,
-and its processing checkout is detached anyway).
+A branch-scoped entry without `-branch` is a hard error: silently dropping the exclusion would bump a module the config protects. For the same reason `-branch HEAD` is rejected, because `git rev-parse --abbrev-ref HEAD` prints it on a detached checkout, and so is any value beginning `refs/`, because `GITHUB_REF` holds a full ref such as `refs/heads/main`. `origin/` is deliberately allowed: remotes can have any name, and a local branch may start with `origin/`. The docs recommend `git branch --show-current`, which is empty on a detached checkout. The tool never reads the branch from Git — the caller supplies it (the state-branch automation has it as `PROCESS_STATE_BRANCH`, and its processing checkout is detached anyway).
 
 ### Config shape (`config.go`)
 
-Parsed with `KnownFields(true)` — unknown YAML keys are an error. `FromVersions` has a custom
-`UnmarshalYAML` accepting either a string or a list. Values are whitespace-trimmed and empties
-dropped (`trimNonEmptyStrings`).
+Parsed with `KnownFields(true)` — unknown YAML keys are an error. `FromVersions` has a custom `UnmarshalYAML` accepting either a string or a list. Values are whitespace-trimmed and empties dropped (`trimNonEmptyStrings`).
 
 ```go
 type ModuleUpdate struct {
@@ -213,40 +148,19 @@ Adding a config field means updating `schema/config-schema.json` too.
 
 ### Errors and output
 
-File-level errors log and continue to the next file; bad flags, invalid globs, no file matches,
-and an unparseable config are fatal (`fatalf`). Warnings go to stderr prefixed `Warning:` for
-local modules, missing version attributes without `-force-add`, and non-registry sources where
-`-force-add` cannot add a version. Filtered modules are printed only with `-verbose`. Prefer
-skipping over guessing.
+File-level errors log and continue to the next file; bad flags, invalid globs, no file matches, and an unparseable config are fatal (`fatalf`). Warnings go to stderr prefixed `Warning:` for local modules, missing version attributes without `-force-add`, and non-registry sources where `-force-add` cannot add a version. Filtered modules are printed only with `-verbose`. Prefer skipping over guessing.
 
-Success is prefixed `✓`; dry-run lines use `→` with the verb "Would update". User-facing values are wrapped with
-`quote(s, format)`: `'vpc'` for `text` output, `` `vpc` `` for `md`. Thread `outputFormat`
-through rather than hardcoding quotes.
+Success is prefixed `✓`; dry-run lines use `→` with the verb "Would update". User-facing values are wrapped with `quote(s, format)`: `'vpc'` for `text` output, `` `vpc` `` for `md`. Thread `outputFormat` through rather than hardcoding quotes.
 
-`-report-file` is the machine-readable automation contract. It writes schema version 2 JSON with
-exact counts of unique Terraform, module, and provider blocks whose version values changed across
-the complete command. Keep human summaries and the report separate: existing summaries count
-source/file operations, while the report counts individual changed blocks. Dry-run reports contain
-zero counts because no file values changed.
+`-report-file` is the machine-readable automation contract. It writes schema version 2 JSON with exact counts of unique Terraform, module, and provider blocks whose version values changed across the complete command. Keep human summaries and the report separate: existing summaries count source/file operations, while the report counts individual changed blocks. Dry-run reports contain zero counts because no file values changed.
 
-`-audit-file` is the read-only comparison contract. In config mode it writes schema version 1 JSON
-listing each configured Terraform, provider and module version value the selected files declare,
-its current and expected values, whether they already match and, for modules, the first filter that
-would skip an update. The audit and the updater share `moduleVersionFilter` and the
-`attributeHasStringValue` comparison; keep the audit in step with any change to update filtering.
-Unlike the update modes, a selected file that cannot be read or parsed stops the audit: the command
-exits 1 and writes nothing, leaving any existing audit untouched.
+`-audit-file` is the read-only comparison contract. In config mode it writes schema version 1 JSON listing each configured Terraform, provider and module version value the selected files declare, its current and expected values, whether they already match and, for modules, the first filter that would skip an update. The audit and the updater share `moduleVersionFilter` and the `attributeHasStringValue` comparison; keep the audit in step with any change to update filtering. Unlike the update modes, a selected file that cannot be read or parsed stops the audit: the command exits 1 and writes nothing, leaving any existing audit untouched.
 
-`-check` uses the existing dry-run update paths but has a separate automation exit contract. The
-mode runners' update-operation total reaches `main` through `runUpdateMode`: a processing error
-exits 1, a successful check with a positive total exits 2, and a successful check with no eligible
-update returns normally with status 0. Check mode rejects `-dry-run` and `-report-file`, so it never
-writes Terraform or report files.
+`-check` uses the existing dry-run update paths but has a separate automation exit contract. The mode runners' update-operation total reaches `main` through `runUpdateMode`: a processing error exits 1, a successful check with a positive total exits 2, and a successful check with no eligible update returns normally with status 0. Check mode rejects `-dry-run` and `-report-file`, so it never writes Terraform or report files.
 
 ## Testing
 
-Follow TDD. Tests are commonly table-driven with `t.Run` subtests; prefer `t.TempDir()` for new
-filesystem tests. Name them `Test<Function>_<Scenario>`.
+Follow TDD. Tests are commonly table-driven with `t.Run` subtests; prefer `t.TempDir()` for new filesystem tests. Name them `Test<Function>_<Scenario>`.
 
 Final test layout by concern:
 
@@ -285,22 +199,14 @@ Copy files from `examples/` to a temporary directory before manual write-mode te
 
 ## CI
 
-CI/Build and Lint run for every push and pull request targeting `main`, so their
-required status checks are always reported.
+CI/Build and Lint run for every push and pull request targeting `main`, so their required status checks are always reported.
 
-- **Test** — matrix of Go 1.25.14 (the go.mod floor) and 1.26.8, `-race` + coverage. The
-  version-independent steps (branch automation, GitHub Actions POC checks, Codecov upload) run
-  once, on the 1.26.8 leg flagged `primary` in the matrix.
+- **Test** — matrix of Go 1.25.14 (the go.mod floor) and 1.26.8, `-race` + coverage. The version-independent steps (branch automation, GitHub Actions POC checks, Codecov upload) run once, on the 1.26.8 leg flagged `primary` in the matrix.
 - **Build** — needs Test; cross-compiles 6 targets (linux/darwin/windows × amd64/arm64)
 - **Lint** — golangci-lint, then `make actionlint` and `make shellcheck` with pinned shellcheck
-- **Documentation** — a separate path-filtered workflow runs `make docs-check` for Markdown,
-  schema, maintained example, and documentation-test changes
+- **Documentation** — a separate path-filtered workflow runs `make docs-check` for Markdown, schema, maintained example, and documentation-test changes
 - **CodeQL** and **Release** (GoReleaser + SLSA, tag-triggered) run separately
 
 ## Conventions
 
-CLI flags and the YAML config format are user-facing contracts — don't break them.
-The JSON Schema accepts common Terraform constraint syntax (`1.0.0`, `~> 3.0`,
-`>= 1.5, < 2.0`, pre-release, build metadata), but the runtime YAML loader does not execute that
-schema. Keep the dependency list minimal.
-Use Australian/British spelling in prose and comments.
+CLI flags and the YAML config format are user-facing contracts — don't break them. The JSON Schema accepts common Terraform constraint syntax (`1.0.0`, `~> 3.0`, `>= 1.5, < 2.0`, pre-release, build metadata), but the runtime YAML loader does not execute that schema. Keep the dependency list minimal. Use Australian/British spelling in prose and comments.

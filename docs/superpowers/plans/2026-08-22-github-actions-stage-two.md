@@ -318,14 +318,9 @@ jq -e '.classification == "no-change" and .terraform_fmt == true and
 
 - [ ] **Step 3: Add real recursive formatting tests**
 
-Add `test_processing_formats_nested_files_from_every_root()` with two declared roots and an
-unformatted nested `.tf` file under each root. Set `PROCESS_TERRAFORM_FMT=true`, run preparation,
-and assert the call log contains one `terraform -chdir=root-a fmt -recursive` invocation and one
-`terraform -chdir=root-b fmt -recursive` invocation,
-`format.patch` exists, and the sorted formatting paths contain both nested files exactly once.
+Add `test_processing_formats_nested_files_from_every_root()` with two declared roots and an unformatted nested `.tf` file under each root. Set `PROCESS_TERRAFORM_FMT=true`, run preparation, and assert the call log contains one `terraform -chdir=root-a fmt -recursive` invocation and one `terraform -chdir=root-b fmt -recursive` invocation, `format.patch` exists, and the sorted formatting paths contain both nested files exactly once.
 
-Add `test_processing_formatting_without_diff_omits_patch()` using already formatted files and
-assert `formatting.ran == true`, `formatting.changed_files == []`, and no `format.patch` exists.
+Add `test_processing_formatting_without_diff_omits_patch()` using already formatted files and assert `formatting.ran == true`, `formatting.changed_files == []`, and no `format.patch` exists.
 
 - [ ] **Step 4: Add formatting cancellation and bounded failure tests**
 
@@ -342,17 +337,11 @@ jq -e '.classification == "no-change" and
 [[ ! -e "$PROCESS_PREPARATION_BUNDLE_DIR/format.patch" ]]
 ```
 
-Create a formatter that returns status `9` only for `fmt -recursive` and assert a `branch-format`
-manifest with `failure.stage == "terraform fmt"`, the declared root, status `9`, retained bounded
-logs, and no patches.
+Create a formatter that returns status `9` only for `fmt -recursive` and assert a `branch-format` manifest with `failure.stage == "terraform fmt"`, the declared root, status `9`, retained bounded logs, and no patches.
 
 - [ ] **Step 5: Add stage-path and tamper tests**
 
-Cover a nested path outside every root, a path beneath `.terraform`, a symlink, an executable mode,
-invalid UTF-8, an undeclared path, a changed digest, a tampered update patch, and a tampered format
-patch. Each case must fail without producing a verified result. Include one valid file present in
-both stage lists and assert its update-stage digest differs from and is checked before its final
-digest.
+Cover a nested path outside every root, a path beneath `.terraform`, a symlink, an executable mode, invalid UTF-8, an undeclared path, a changed digest, a tampered update patch, and a tampered format patch. Each case must fail without producing a verified result. Include one valid file present in both stage lists and assert its update-stage digest differs from and is checked before its final digest.
 
 - [ ] **Step 6: Run the workflow harness to prove formatting is absent**
 
@@ -370,26 +359,20 @@ terraform_fmt:
   default: false
 ```
 
-Pass it to preparation as `PROCESS_TERRAFORM_FMT: ${{ inputs.terraform_fmt }}`. In
-`prepare_bundle_contract()`, require the environment value and accept only `true` or `false`.
+Pass it to preparation as `PROCESS_TERRAFORM_FMT: ${{ inputs.terraform_fmt }}`. In `prepare_bundle_contract()`, require the environment value and accept only `true` or `false`.
 
-After every update and upgrade initialisation succeeds, compute the aggregate update tree. If it
-differs from the base and formatting is true, run for each declared root in order:
+After every update and upgrade initialisation succeeds, compute the aggregate update tree. If it differs from the base and formatting is true, run for each declared root in order:
 
 ```bash
 run_before_preparation_deadline "$PREPARATION_DATA_ROOT/format-$root_index.log" \
     terraform -chdir="$terraform_root" fmt -recursive
 ```
 
-On failure, write `branch-format` with stage `terraform fmt`, the relative root, the exact command,
-and the observed status before raising the bounded processing error.
+On failure, write `branch-format` with stage `terraform fmt`, the relative root, the exact command, and the observed status before raising the bounded processing error.
 
 - [ ] **Step 8: Add reusable tree and metadata helpers**
 
-Add `capture_checkout_tree()` and `changed_files_json_between_trees()` rather than duplicating the
-raw-diff logic. `changed_files_json_between_trees()` must read `git diff --raw -z --no-renames`,
-take the target blob OID from each raw record, calculate the file SHA-256 with `git cat-file blob`,
-and validate every path with the supplied stage policy before emitting sorted JSON records.
+Add `capture_checkout_tree()` and `changed_files_json_between_trees()` rather than duplicating the raw-diff logic. `changed_files_json_between_trees()` must read `git diff --raw -z --no-renames`, take the target blob OID from each raw record, calculate the file SHA-256 with `git cat-file blob`, and validate every path with the supplied stage policy before emitting sorted JSON records.
 
 Use one temporary index for the update tree and another for the final tree. Generate:
 
@@ -400,15 +383,11 @@ git -C "$PREPARATION_TARGET_CHECKOUT" diff --binary --full-index --no-color \
     "$update_tree" "$final_tree" >"$PREPARATION_BUNDLE_STAGE/format.patch"
 ```
 
-Remove an empty format patch. If `base_tree == final_tree`, remove both patches, clear all lists,
-and classify the final bundle as no-change while retaining `formatting.ran: true`.
+Remove an empty format patch. If `base_tree == final_tree`, remove both patches, clear all lists, and classify the final bundle as no-change while retaining `formatting.ran: true`.
 
 - [ ] **Step 9: Add the recursive formatting path policy**
 
-Keep `path_is_declared_direct_file()` semantics for update/init. Add a formatting predicate that
-requires a `.tf` path beneath at least one canonical declared root, rejects every `.terraform`
-component, and calls the existing regular-file, symlink, mode, UTF-8, newline, and checkout-boundary
-checks. Deduplicate overlapping-root results by exact Git path.
+Keep `path_is_declared_direct_file()` semantics for update/init. Add a formatting predicate that requires a `.tf` path beneath at least one canonical declared root, rejects every `.terraform` component, and calls the existing regular-file, symlink, mode, UTF-8, newline, and checkout-boundary checks. Deduplicate overlapping-root results by exact Git path.
 
 - [ ] **Step 10: Apply and verify both patches during validation**
 
@@ -425,15 +404,13 @@ verify_final_candidate
 VALIDATION_CANDIDATE_STATUS=$(git -C "$VALIDATION_TARGET_CHECKOUT" status --porcelain=v1 --untracked-files=all)
 ```
 
-The update check compares intermediate paths/modes/digests before the formatting patch can replace
-them; the final check compares the complete base-to-final state.
+The update check compares intermediate paths/modes/digests before the formatting patch can replace them; the final check compares the complete base-to-final state.
 
 - [ ] **Step 11: Run preparation and validation tests**
 
 Run: `make test-github-actions`
 
-Expected: PASS for disabled, skipped, recursive, unchanged, cancellation, failure, path-policy,
-tamper, and overlapping-root formatting cases.
+Expected: PASS for disabled, skipped, recursive, unchanged, cancellation, failure, path-policy, tamper, and overlapping-root formatting cases.
 
 - [ ] **Step 12: Commit optional formatting preparation**
 
@@ -459,16 +436,11 @@ Verify the commit signature before continuing.
 
 - [ ] **Step 1: Extend the reconciliation success fixture to two stages**
 
-Create an update candidate that changes `root/main.tf`, capture `update.patch` and its intermediate
-digest, then format that file and `root/nested/child.tf`, capture `format.patch`, and populate
-`updates`, `formatting`, and `final_changed_files`. Apply both patches to `FIXTURE_CHECKOUT` before
-`run_verify` so the fixture matches the combined-job contract.
+Create an update candidate that changes `root/main.tf`, capture `update.patch` and its intermediate digest, then format that file and `root/nested/child.tf`, capture `format.patch`, and populate `updates`, `formatting`, and `final_changed_files`. Apply both patches to `FIXTURE_CHECKOUT` before `run_verify` so the fixture matches the combined-job contract.
 
 - [ ] **Step 2: Add strict verified-result variant tests**
 
-Assert every verified classification has `preparation_manifest_sha256`; success/no-change and
-branch-validation have `validation_outcome_sha256`; preparation failures and automation forbid the
-outcome digest. Assert the verified directory contains exactly:
+Assert every verified classification has `preparation_manifest_sha256`; success/no-change and branch-validation have `validation_outcome_sha256`; preparation failures and automation forbid the outcome digest. Assert the verified directory contains exactly:
 
 ```text
 manifest.json
@@ -476,23 +448,17 @@ update.patch
 format.patch
 ```
 
-for a two-stage success, only `manifest.json` plus `update.patch` for one-stage success, and only
-`manifest.json` for no-change or any failure. Add rejection cases for every unexpected entry and
-unknown manifest field.
+for a two-stage success, only `manifest.json` plus `update.patch` for one-stage success, and only `manifest.json` for no-change or any failure. Add rejection cases for every unexpected entry and unknown manifest field.
 
 - [ ] **Step 3: Add post-Terraform recheck tests**
 
-Mutate each of the control checkout, preparation manifest, update patch, format patch, validation
-outcome, intermediate metadata, final metadata, and already-applied checkout after validation.
-Assert `verify` rejects every row and leaves no verified-result directory.
+Mutate each of the control checkout, preparation manifest, update patch, format patch, validation outcome, intermediate metadata, final metadata, and already-applied checkout after validation. Assert `verify` rejects every row and leaves no verified-result directory.
 
-The test describes accidental-mutation detection only; it must not claim same-runner protection
-against malicious provider code.
+The test describes accidental-mutation detection only; it must not claim same-runner protection against malicious provider code.
 
 - [ ] **Step 4: Add commit topology and subject tests**
 
-For each count tuple `(1,1)`, `(0,1)`, `(1,0)`, and `(0,0)`, run dry-run publication and assert the
-first commit subject is respectively:
+For each count tuple `(1,1)`, `(0,1)`, `(1,0)`, and `(0,0)`, run dry-run publication and assert the first commit subject is respectively:
 
 ```text
 chore: bump Terraform provider and module versions
@@ -501,22 +467,15 @@ chore: bump Terraform module versions
 chore: update Terraform configuration
 ```
 
-For a format patch, assert `HEAD` has subject `chore: run Terraform fmt`, `HEAD^` has the dynamic
-update subject, both commits carry the existing ownership/base trailers, and the final tree equals
-the verified final metadata. For no format patch, assert exactly one new commit.
+For a format patch, assert `HEAD` has subject `chore: run Terraform fmt`, `HEAD^` has the dynamic update subject, both commits carry the existing ownership/base trailers, and the final tree equals the verified final metadata. For no format patch, assert exactly one new commit.
 
 - [ ] **Step 5: Add pull-request body tests**
 
-Capture the body passed to `gh pr create` and `gh pr edit`. Assert it contains exact module/provider
-counts, `Dependency and lock-file changes (N)`, `Formatting changes (N)` or `None`, and HTML-safe
-code-formatted paths. Include one hostile path and one path present in both lists; the latter must
-appear once in each section.
+Capture the body passed to `gh pr create` and `gh pr edit`. Assert it contains exact module/provider counts, `Dependency and lock-file changes (N)`, `Formatting changes (N)` or `None`, and HTML-safe code-formatted paths. Include one hostile path and one path present in both lists; the latter must appear once in each section.
 
 - [ ] **Step 6: Add automation no-op tests**
 
-Create a schema-version-2 `automation` preparation, run verification without an outcome or patch,
-and assert the result contains the preparation digest, diagnostic failure, and raw run URL. Run
-publication with Git/GitHub sentinel executables and assert it returns without invoking either.
+Create a schema-version-2 `automation` preparation, run verification without an outcome or patch, and assert the result contains the preparation digest, diagnostic failure, and raw run URL. Run publication with Git/GitHub sentinel executables and assert it returns without invoking either.
 
 - [ ] **Step 7: Run reconciliation tests to prove the old verifier is incomplete**
 
@@ -526,21 +485,13 @@ Expected: FAIL on already-applied checkout verification, format-patch copying, c
 
 - [ ] **Step 8: Recheck the already-applied candidate after Terraform**
 
-Require `RECONCILE_CONTROL_CHECKOUT`, verify its HEAD equals the control OID and its complete status
-is clean, and verify the target checkout has the exact declared final state. After that check, reset
-the disposable target checkout to the exact base and replay `update.patch` and optional
-`format.patch` in order, checking intermediate then final metadata again. This reset is confined to
-the disposable validation checkout and occurs only after Terraform mutation detection.
+Require `RECONCILE_CONTROL_CHECKOUT`, verify its HEAD equals the control OID and its complete status is clean, and verify the target checkout has the exact declared final state. After that check, reset the disposable target checkout to the exact base and replay `update.patch` and optional `format.patch` in order, checking intermediate then final metadata again. This reset is confined to the disposable validation checkout and occurs only after Terraform mutation detection.
 
 Retain the existing exact path, mode, UTF-8, symlink, digest, identity, and allowed-file checks.
 
 - [ ] **Step 9: Emit the complete verified-result contract**
 
-Refactor `write_verified_result()` to atomically create the exact file set and build the manifest
-from the checked preparation/outcome. Copy the seven identity fields and
-`preparation_manifest_sha256` for all classes; copy the outcome digest only where allowed; copy
-stage metadata and patches only for success; preserve bounded failure plus raw run URL for
-branch/automation failures. Reject all unknown classifications and fields.
+Refactor `write_verified_result()` to atomically create the exact file set and build the manifest from the checked preparation/outcome. Copy the seven identity fields and `preparation_manifest_sha256` for all classes; copy the outcome digest only where allowed; copy stage metadata and patches only for success; preserve bounded failure plus raw run URL for branch/automation failures. Reject all unknown classifications and fields.
 
 - [ ] **Step 10: Construct deterministic staged commits**
 
@@ -563,17 +514,11 @@ update_commit_subject() {
 }
 ```
 
-Apply and commit `update.patch` first using this subject. If present, apply and commit
-`format.patch` second with `chore: run Terraform fmt`. Preserve the existing deterministic author,
-committer, date, unsigned automation policy, ownership/base trailers, local verification,
-exact-lease push, compensation, and dry-run behaviour.
+Apply and commit `update.patch` first using this subject. If present, apply and commit `format.patch` second with `chore: run Terraform fmt`. Preserve the existing deterministic author, committer, date, unsigned automation policy, ownership/base trailers, local verification, exact-lease push, compensation, and dry-run behaviour.
 
 - [ ] **Step 11: Render counts and split encoded paths**
 
-Build the managed PR body only from the verified manifest. Use the existing `html_code()` helper for
-every dynamic value. Render the module/provider counts followed by an update section and formatting
-section; derive each displayed file count with jq `length`, and render `None` when the formatting
-list is empty. Do not consult preparation or validation directories in publication.
+Build the managed PR body only from the verified manifest. Use the existing `html_code()` helper for every dynamic value. Render the module/provider counts followed by an update section and formatting section; derive each displayed file count with jq `length`, and render `None` when the formatting list is empty. Do not consult preparation or validation directories in publication.
 
 - [ ] **Step 12: Run reconciliation and full example tests**
 
@@ -617,17 +562,11 @@ Change the expected job keys to:
 keys == ["discover", "prepare", "publish", "validate"]
 ```
 
-Assert `publish.needs == ["discover", "validate"]`, there is no `validation-*` artefact, validation
-calls both helper modes, validation uploads `verified-*`, and publication downloads it. Remove all
-checkout and secret-boundary expectations for a `verify` job. Continue to assert Terraform setup is
-absent from publication and persisted credentials are false in preparation/validation.
+Assert `publish.needs == ["discover", "validate"]`, there is no `validation-*` artefact, validation calls both helper modes, validation uploads `verified-*`, and publication downloads it. Remove all checkout and secret-boundary expectations for a `verify` job. Continue to assert Terraform setup is absent from publication and persisted credentials are false in preparation/validation.
 
 - [ ] **Step 2: Add always-run workflow control tests**
 
-Assert the candidate-validation step has `continue-on-error: true`; reconciliation, verified upload,
-and final classification use `if: ${{ always() }}`; publication retains
-`if: ${{ always() && needs.discover.result == 'success' }}`. Assert bounded branch failures pass the
-final classification, while `automation` exits non-zero only after the verified artefact exists.
+Assert the candidate-validation step has `continue-on-error: true`; reconciliation, verified upload, and final classification use `if: ${{ always() }}`; publication retains `if: ${{ always() && needs.discover.result == 'success' }}`. Assert bounded branch failures pass the final classification, while `automation` exits non-zero only after the verified artefact exists.
 
 - [ ] **Step 3: Add caller opt-in tests**
 
@@ -647,31 +586,21 @@ Expected: FAIL because `verify` and the validation artefact still exist and call
 
 - [ ] **Step 5: Move trusted reconciliation into validation**
 
-Keep the existing validation checkouts. Replace validation artefact upload with local outcome
-staging beneath `RUNNER_TEMP`. After the continue-on-error processing step, add an always-run step
-that invokes:
+Keep the existing validation checkouts. Replace validation artefact upload with local outcome staging beneath `RUNNER_TEMP`. After the continue-on-error processing step, add an always-run step that invokes:
 
 ```yaml
 run: '"$CONTROL_CHECKOUT/.github/scripts/reconcile-state-branch.sh" verify'
 ```
 
-Provide the common identity, control checkout, preparation bundle, optional local outcome,
-already-applied target checkout, verified-result destination, and trusted run URL. Upload
-`verified-*` immediately afterward under `if: ${{ always() }}`.
+Provide the common identity, control checkout, preparation bundle, optional local outcome, already-applied target checkout, verified-result destination, and trusted run URL. Upload `verified-*` immediately afterward under `if: ${{ always() }}`.
 
 - [ ] **Step 6: Add the final validation classification gate**
 
-Under `if: ${{ always() }}`, require the verified manifest and accept `success`, `no-change`,
-`branch-update`, `branch-init`, `branch-format`, or `branch-validation`. Exit non-zero for
-`automation` after confirming its verified result exists. Any missing or malformed result also exits
-non-zero.
+Under `if: ${{ always() }}`, require the verified manifest and accept `success`, `no-change`, `branch-update`, `branch-init`, `branch-format`, or `branch-validation`. Exit non-zero for `automation` after confirming its verified result exists. Any missing or malformed result also exits non-zero.
 
 - [ ] **Step 7: Remove the verify job and validation artefact**
 
-Delete the complete `verify` job and the validation artefact upload/download steps. Change
-publication to `needs: [discover, validate]`; retain its always-run condition so bounded failures and
-the uploaded automation no-op reach publication. Do not add job outputs: matrix copies cannot safely
-publish per-entry values through one shared job-output name.
+Delete the complete `verify` job and the validation artefact upload/download steps. Change publication to `needs: [discover, validate]`; retain its always-run condition so bounded failures and the uploaded automation no-op reach publication. Do not add job outputs: matrix copies cannot safely publish per-entry values through one shared job-output name.
 
 - [ ] **Step 8: Enable formatting in both supplied callers**
 
@@ -711,16 +640,13 @@ Verify the commit signature before continuing.
 
 - [ ] **Step 1: Add documentation contract assertions**
 
-Extend the existing documentation checks in `examples/github-actions/test.sh` to require the exact
-input name/default, rc.9 pin, four job names, two commit subjects, split PR sections, block counts,
-recursive configured-root semantics, trusted-provider warning, and `branch-format` description.
+Extend the existing documentation checks in `examples/github-actions/test.sh` to require the exact input name/default, rc.9 pin, four job names, two commit subjects, split PR sections, block counts, recursive configured-root semantics, trusted-provider warning, and `branch-format` description.
 
 - [ ] **Step 2: Run documentation checks to prove the guides are stale**
 
 Run: `make docs-check`
 
-Expected: FAIL if the assertions live in Go documentation tests; otherwise run
-`make test-github-actions` and expect the new Bash documentation assertions to fail.
+Expected: FAIL if the assertions live in Go documentation tests; otherwise run `make test-github-actions` and expect the new Bash documentation assertions to fail.
 
 - [ ] **Step 3: Update the copyable example README**
 
@@ -737,9 +663,7 @@ Document:
 
 - [ ] **Step 4: Update advanced usage**
 
-Keep the overview concise but mirror the four-job topology, formatting input/default, caller opt-in,
-trusted-provider limitation, two-commit result, PR tracking, and rc.9 pin. Remove statements that
-claim a separate fresh verification checkout or a validation artefact.
+Keep the overview concise but mirror the four-job topology, formatting input/default, caller opt-in, trusted-provider limitation, two-commit result, PR tracking, and rc.9 pin. Remove statements that claim a separate fresh verification checkout or a validation artefact.
 
 - [ ] **Step 5: Run the full example harness**
 
@@ -781,8 +705,7 @@ Expected: exit 0 with no output.
 
 Run: `/Users/dan/.codex/bin/codex-git status --short`
 
-Expected: only the intended documentation changes; ignored `coverage.out` is absent from the status,
-and no binary or unrelated file appears.
+Expected: only the intended documentation changes; ignored `coverage.out` is absent from the status, and no binary or unrelated file appears.
 
 - [ ] **Step 10: Commit documentation**
 
@@ -808,16 +731,11 @@ Verify the commit signature before continuing.
 
 - [ ] **Step 1: Invoke the required test-cleanup skill in a separate subagent**
 
-Run the `test-cleanup` skill against `main...HEAD`. Instruct the cleanup reviewer to preserve every
-distinct schema variant, path-policy rejection, stage ordering, failure lifecycle, commit topology,
-and workflow trust-boundary test. It may remove only tests whose behaviour is already exercised by a
-stronger real integration case.
+Run the `test-cleanup` skill against `main...HEAD`. Instruct the cleanup reviewer to preserve every distinct schema variant, path-policy rejection, stage ordering, failure lifecycle, commit topology, and workflow trust-boundary test. It may remove only tests whose behaviour is already exercised by a stronger real integration case.
 
 - [ ] **Step 2: Review the cleanup diff independently**
 
-Reject any change that lowers coverage, converts a real integration assertion into a stub assertion,
-or removes pristine-output checking. Accept only deletions or consolidations with an identified
-stronger owner test.
+Reject any change that lowers coverage, converts a real integration assertion into a stub assertion, or removes pristine-output checking. Accept only deletions or consolidations with an identified stronger owner test.
 
 - [ ] **Step 3: Run the affected harness after cleanup**
 
@@ -848,27 +766,19 @@ If cleanup correctly recommends no changes, record that outcome in the execution
 
 - [ ] **Step 1: Run the requesting-code-review skill**
 
-Invoke `superpowers:requesting-code-review` on the complete branch against `main`. Require reviewers
-to check the approved spec, same-runner trust statement, schema presence rules, stage patch
-integrity, matrix failure flow, write-credential boundary, exact commit topology, PR encoding, and
-real integration coverage.
+Invoke `superpowers:requesting-code-review` on the complete branch against `main`. Require reviewers to check the approved spec, same-runner trust statement, schema presence rules, stage patch integrity, matrix failure flow, write-credential boundary, exact commit topology, PR encoding, and real integration coverage.
 
 - [ ] **Step 2: Run peer adversarial review**
 
-Invoke `$par` on the complete branch. Save and report the consolidated findings file produced by the
-skill. Do not implement disputed or architectural findings without Dan's decision.
+Invoke `$par` on the complete branch. Save and report the consolidated findings file produced by the skill. Do not implement disputed or architectural findings without Dan's decision.
 
 - [ ] **Step 3: Address every approved finding with TDD**
 
-Use `superpowers:receiving-code-review`. For each approved behaviour defect, add a failing regression
-test, run it to observe the expected failure, implement the smallest root-cause fix, rerun the focused
-test, then rerun `make test-github-actions`. Commit each coherent correction with the Codex Git
-wrapper and verify its signature.
+Use `superpowers:receiving-code-review`. For each approved behaviour defect, add a failing regression test, run it to observe the expected failure, implement the smallest root-cause fix, rerun the focused test, then rerun `make test-github-actions`. Commit each coherent correction with the Codex Git wrapper and verify its signature.
 
 - [ ] **Step 4: Verify the findings file**
 
-Invoke `$verify` against the saved tf-version-bump findings file. Require every item to be resolved
-and no collateral issues before continuing.
+Invoke `$verify` against the saved tf-version-bump findings file. Require every item to be resolved and no collateral issues before continuing.
 
 - [ ] **Step 5: Run final verification from a clean worktree**
 
@@ -885,8 +795,7 @@ go build ./...
 /Users/dan/.codex/bin/codex-git status --short --branch
 ```
 
-Expected: every command exits 0; test output is pristine; Git reports no worktree changes and only
-the intended topic-branch commits ahead of `main`.
+Expected: every command exits 0; test output is pristine; Git reports no worktree changes and only the intended topic-branch commits ahead of `main`.
 
 - [ ] **Step 6: Verify every branch commit signature**
 
@@ -896,11 +805,8 @@ Run:
 /Users/dan/.codex/bin/codex-git log --show-signature --format=fuller main..HEAD
 ```
 
-Expected: every commit reports a good signature from the GenAI key; stop without pushing if any
-signature is missing or invalid.
+Expected: every commit reports a good signature from the GenAI key; stop without pushing if any signature is missing or invalid.
 
 - [ ] **Step 7: Use the finishing-development-branch skill**
 
-Invoke `superpowers:finishing-a-development-branch`, present the verified integration options to
-Dan, and do not push, create a PR, rebase-merge, tag, or publish another release without his explicit
-instruction.
+Invoke `superpowers:finishing-a-development-branch`, present the verified integration options to Dan, and do not push, create a PR, rebase-merge, tag, or publish another release without his explicit instruction.

@@ -33,13 +33,11 @@
 
 - [ ] **Step 1: Refresh and verify main**
 
-Pull `main` with rebase through the Codex wrapper, verify the release tag resolves to the current
-commit, and confirm the worktree is clean.
+Pull `main` with rebase through the Codex wrapper, verify the release tag resolves to the current commit, and confirm the worktree is clean.
 
 - [ ] **Step 2: Create an isolated topic worktree**
 
-Create a descriptively named branch and worktree using the worktree skill. Run `go test ./...` as the
-baseline.
+Create a descriptively named branch and worktree using the worktree skill. Run `go test ./...` as the baseline.
 
 ### Task 2: Change strict harness expectations first
 
@@ -53,34 +51,25 @@ baseline.
 
 - [ ] **Step 1: Update the release constants and valid report fixture**
 
-Change the harness release URL/version/digest to the independently verified rc.10 values. Change
-the controlled valid report to exact JSON keys `schema_version`, `terraform_blocks_updated`,
-`module_blocks_updated`, and `provider_blocks_updated`, with schema version 2.
+Change the harness release URL/version/digest to the independently verified rc.10 values. Change the controlled valid report to exact JSON keys `schema_version`, `terraform_blocks_updated`, `module_blocks_updated`, and `provider_blocks_updated`, with schema version 2.
 
 - [ ] **Step 2: Add report-contract failure rows**
 
-Require rejection of schema version 1, a missing Terraform count, a negative Terraform count, a
-fractional Terraform count, and an extra key. Retain the existing malformed/missing/module/provider
-contract rows.
+Require rejection of schema version 1, a missing Terraform count, a negative Terraform count, a fractional Terraform count, and an extra key. Retain the existing malformed/missing/module/provider contract rows.
 
-The production mutations caught are accepting the old schema, ignoring malformed new counts, or
-weakening the exact-key boundary.
+The production mutations caught are accepting the old schema, ignoring malformed new counts, or weakening the exact-key boundary.
 
 - [ ] **Step 3: Change the config-workflow structural assertion**
 
-Require the validation step to call `-validate-config` for both control files and contain no
-temporary Terraform fixture, `-pattern`, `-config`, or `-dry-run`. Retain the immutable archive,
-checksum-before-extraction, reported-version, read-only permission, and no-secret assertions.
+Require the validation step to call `-validate-config` for both control files and contain no temporary Terraform fixture, `-pattern`, `-config`, or `-dry-run`. Retain the immutable archive, checksum-before-extraction, reported-version, read-only permission, and no-secret assertions.
 
-The production mutation caught is falling back to update-mode validation or gaining write-capable
-workflow behaviour.
+The production mutation caught is falling back to update-mode validation or gaining write-capable workflow behaviour.
 
 - [ ] **Step 4: Run the focused harness and verify RED**
 
 Run: `make test-github-actions`
 
-Expected: FAIL at the report and config-validation expectations because production still consumes
-rc.9/schema v1 and creates a fixture dry run.
+Expected: FAIL at the report and config-validation expectations because production still consumes rc.9/schema v1 and creates a fixture dry run.
 
 ### Task 3: Migrate the POC atomically to rc.10
 
@@ -97,26 +86,21 @@ rc.9/schema v1 and creates a fixture dry run.
 
 - [ ] **Step 1: Update the report reader minimally**
 
-Require exactly the four schema-v2 keys and validate all three counts as non-negative integers.
-Continue adding only module/provider counts to the existing preparation manifest.
+Require exactly the four schema-v2 keys and validate all three counts as non-negative integers. Continue adding only module/provider counts to the existing preparation manifest.
 
 - [ ] **Step 2: Replace fixture dry runs with standalone validation**
 
-Remove temporary fixture creation and loop over both configs with
-`"$TF_VERSION_BUMP_BINARY" -validate-config "$config"`. Keep download cleanup under `always()` and
-update every filename/version occurrence to rc.10.
+Remove temporary fixture creation and loop over both configs with `"$TF_VERSION_BUMP_BINARY" -validate-config "$config"`. Keep download cleanup under `always()` and update every filename/version occurrence to rc.10.
 
 - [ ] **Step 3: Update caller pins and operator documentation**
 
-Use rc.10 and its verified digest in both callers. Update the README release statement and explain
-that pull requests validate only the YAML runtime contract without selecting Terraform files.
+Use rc.10 and its verified digest in both callers. Update the README release statement and explain that pull requests validate only the YAML runtime contract without selecting Terraform files.
 
 - [ ] **Step 4: Run focused and full harness verification**
 
 Run: `make test-github-actions`
 
-Expected: PASS, including real rc.10 download, checksum/version verification, strict schema-v2
-reports, direct config validation, Docker-backed Terraform processing, and actionlint.
+Expected: PASS, including real rc.10 download, checksum/version verification, strict schema-v2 reports, direct config validation, Docker-backed Terraform processing, and actionlint.
 
 Run: `make docs-check`
 
@@ -124,8 +108,7 @@ Expected: PASS.
 
 - [ ] **Step 5: Commit the migration**
 
-Stage only the Actions example scripts, workflows, tests, and README. Commit with subject
-`chore: migrate Actions example to rc.10`.
+Stage only the Actions example scripts, workflows, tests, and README. Commit with subject `chore: migrate Actions example to rc.10`.
 
 ### Task 4: Clean up, review, verify, and merge the second pull request
 
@@ -138,13 +121,11 @@ Stage only the Actions example scripts, workflows, tests, and README. Commit wit
 
 - [ ] **Step 1: Run mandatory test cleanup**
 
-Invoke the `test-cleanup` skill in a fresh subagent. Classify all test changes, run the Actions
-harness, and commit only subtractive test changes if warranted.
+Invoke the `test-cleanup` skill in a fresh subagent. Classify all test changes, run the Actions harness, and commit only subtractive test changes if warranted.
 
 - [ ] **Step 2: Request adversarial review and resolve findings**
 
-Review the complete diff, verify findings technically, and fix confirmed problems with failing tests
-first. Re-run cleanup only if review adds substantial tests.
+Review the complete diff, verify findings technically, and fix confirmed problems with failing tests first. Re-run cleanup only if review adds substantial tests.
 
 - [ ] **Step 3: Run fresh full verification**
 
@@ -164,10 +145,8 @@ Expected: every command exits 0 with pristine output and coverage remains at lea
 
 - [ ] **Step 4: Verify signatures, push, and create the pull request**
 
-Confirm all branch commits are correctly signed, push through the Codex wrapper, open the PR, and
-wait for all required checks.
+Confirm all branch commits are correctly signed, push through the Codex wrapper, open the PR, and wait for all required checks.
 
 - [ ] **Step 5: Rebase-merge and refresh local main**
 
-Rebase-merge after checks pass, pull local `main` with rebase, and verify the merged tree and clean
-status. No additional release is required.
+Rebase-merge after checks pass, pull local `main` with rebase, and verify the merged tree and clean status. No additional release is required.

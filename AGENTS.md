@@ -187,8 +187,7 @@ GitHub Actions runs on every push/PR:
 - **Test**: matrix of Go 1.25.14 (go.mod floor) and 1.26.8, race detection, coverage upload
 - **Build**: 6 platforms (Linux/macOS/Windows × amd64/arm64)
 - **Lint**: golangci-lint, then `make actionlint` and `make shellcheck` with pinned shellcheck
-- **Documentation**: `make docs-check` for Markdown, schema, maintained example, and
-  documentation-test changes
+- **Documentation**: `make docs-check` for Markdown, schema, maintained example, and documentation-test changes
 
 ## Version Filtering Logic
 
@@ -202,17 +201,9 @@ Priority order in `updateModuleVersion()`:
 
 ## Quick Tips
 
-✓ **Always read files before modifying** - Use Read tool first
-✓ **Run tests with race detector** - `go test -race`
-✓ **Use dry-run** - Preview changes before applying
-✓ **Check coverage** - `make test-coverage`
-✓ **Follow existing patterns** - Match the codebase style
-✓ **Update docs** - Keep the README, detailed guides, and agent documentation in sync
+✓ **Always read files before modifying** - Use Read tool first ✓ **Run tests with race detector** - `go test -race` ✓ **Use dry-run** - Preview changes before applying ✓ **Check coverage** - `make test-coverage` ✓ **Follow existing patterns** - Match the codebase style ✓ **Update docs** - Keep the README, detailed guides, and agent documentation in sync
 
-✗ **Never break HCL format** - Use `hclwrite` API only
-✗ **Don't skip linting** - CI will fail
-✗ **Don't change public API** - CLI flags are user-facing
-✗ **Don't commit binaries** - They're gitignored
+✗ **Never break HCL format** - Use `hclwrite` API only ✗ **Don't skip linting** - CI will fail ✗ **Don't change public API** - CLI flags are user-facing ✗ **Don't commit binaries** - They're gitignored
 
 ## Dependencies
 

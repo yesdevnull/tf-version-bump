@@ -30,8 +30,7 @@ Review and commit the copied files. The example supplies separate callers for:
 - **Non-production:** `state/nonproduction/`, `state/staging/`, `aws-state/nonproduction/` and `aws-state/staging/`.
 - **Production:** `state/production/` and `aws-state/production/`.
 
-The same copy adds `tf-version-bump-report.yml`, a read-only version report described
-[below](#version-report).
+The same copy adds `tf-version-bump-report.yml`, a read-only version report described [below](#version-report).
 
 Both callers run only from the default branch. Their schedules are Monday 04:17 and Sunday 04:43 respectively in `Australia/Melbourne`. They also run when their control configuration changes, and can be started manually. A manual `branch_prefix` can narrow the configured prefixes but cannot select another branch family.
 
@@ -52,8 +51,7 @@ Create an Actions secret named `TF_API_TOKEN` with read access to your HCP Terra
 
 ## Supply environment variables
 
-`terraform init`, `fmt` and `validate` receive whatever you supply here; nothing else in the
-workflow does. Non-sensitive entries go in the `terraform_env` input, one `NAME=VALUE` per line:
+`terraform init`, `fmt` and `validate` receive whatever you supply here; nothing else in the workflow does. Non-sensitive entries go in the `terraform_env` input, one `NAME=VALUE` per line:
 
 ```yaml
 terraform_env: |
@@ -61,21 +59,11 @@ terraform_env: |
   TF_VAR_environment=production
 ```
 
-Input values are not masked in logs. Put anything sensitive in the optional `TERRAFORM_ENV`
-Actions secret instead, in the same `NAME=VALUE` shape; both supplied callers already pass it
-through.
+Input values are not masked in logs. Put anything sensitive in the optional `TERRAFORM_ENV` Actions secret instead, in the same `NAME=VALUE` shape; both supplied callers already pass it through.
 
-Both sources take one `NAME=VALUE` per line, so a multi-line value is written on one line with
-escapes: `\n` becomes a real newline and `\\` becomes a single literal backslash. Any other
-backslash sequence is passed through unchanged, so `\t` stays as a backslash followed by `t`. A
-literal carriage return in an entry is rejected.
+Both sources take one `NAME=VALUE` per line, so a multi-line value is written on one line with escapes: `\n` becomes a real newline and `\\` becomes a single literal backslash. Any other backslash sequence is passed through unchanged, so `\t` stays as a backslash followed by `t`. A literal carriage return in an entry is rejected.
 
-Terraform commands can need extra variables, such as a token for another private registry or
-credentials for a module source during `terraform init`. As an example of a multi-line value,
-GitHub App authentication for the `integrations/github` provider reads `GITHUB_APP_ID`,
-`GITHUB_APP_INSTALLATION_ID` and `GITHUB_APP_PEM_FILE`, and the last holds the private key's PEM
-contents rather than a path, so the `TERRAFORM_ENV` secret looks like this (key body abbreviated)
-and Terraform receives the key with real newlines:
+Terraform commands can need extra variables, such as a token for another private registry or credentials for a module source during `terraform init`. As an example of a multi-line value, GitHub App authentication for the `integrations/github` provider reads `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID` and `GITHUB_APP_PEM_FILE`, and the last holds the private key's PEM contents rather than a path, so the `TERRAFORM_ENV` secret looks like this (key body abbreviated) and Terraform receives the key with real newlines:
 
 ```text
 GITHUB_APP_ID=12332432
@@ -83,41 +71,11 @@ GITHUB_APP_INSTALLATION_ID=12435523
 GITHUB_APP_PEM_FILE=-----BEGIN RSA PRIVATE KEY-----\nMIIEow...\n-----END RSA PRIVATE KEY-----\n
 ```
 
-Each of the secret's values is registered with `::add-mask::`, which redacts it from the workflow
-console only. A multi-line value is registered as a single mask, so the console may not redact it
-line by line. Every command's output is captured to log files inside the processing artefact, and
-those files are not redacted: the artefact is retained for seven days and can be downloaded by
-anyone with read access to the repository, so a credential a provider echoes into Terraform's
-output appears there in plaintext. Supplied variables at least cannot turn on Terraform's trace
-logging, because `TF_LOG` and `TF_LOG_PATH` are reserved.
+Each of the secret's values is registered with `::add-mask::`, which redacts it from the workflow console only. A multi-line value is registered as a single mask, so the console may not redact it line by line. Every command's output is captured to log files inside the processing artefact, and those files are not redacted: the artefact is retained for seven days and can be downloaded by anyone with read access to the repository, so a credential a provider echoes into Terraform's output appears there in plaintext. Supplied variables at least cannot turn on Terraform's trace logging, because `TF_LOG` and `TF_LOG_PATH` are reserved.
 
-A name may appear only once across both sources. Names the automation or the runner sets are
-rejected, as are names that would redirect the programs Terraform runs or its configuration,
-credentials, logging or plug-in sources.
-The reserved prefixes are `PROCESS_`, `RECONCILE_`, `DISCOVERY_`, `RUNNER_`, `ACTIONS_`, `LD_`,
-`DYLD_`, `TF_CLI_ARGS`, `TF_LOG`, `TF_PLUGIN_CACHE` and `GIT_`. The reserved exact names are
-`PATH`, `IFS`, `ENV`, `BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `TF_DATA_DIR`, `TF_IN_AUTOMATION`,
-`CHECKPOINT_DISABLE`, `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG`, `TF_WORKSPACE`, `HOME`, `TMPDIR`,
-`SSL_CERT_FILE`, `SSL_CERT_DIR`, `GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_OUTPUT`,
-`GITHUB_STEP_SUMMARY`, `GITHUB_STATE` and `TF_TOKEN_app_terraform_io`. The last of those is
-reserved in any letter case or other spelling Terraform maps to the `app.terraform.io` host,
-because it would silently shadow the registry token the workflow injects from the `TF_API_TOKEN`
-secret; `TF_TOKEN_*` names for other registries remain allowed. The five `GITHUB_*` names are the
-runner's own command channels rather than provider configuration, which is why `GITHUB_APP_ID` and
-the provider's other `GITHUB_` variables are accepted while `GITHUB_ENV` is not. Treat the list as best
-effort rather than exhaustive. The structural protection is a separate rule: a file newly created
-during a run is only ever publishable if it is a `.terraform.lock.hcl` directly inside a configured
-Terraform root. A rejected entry never prints its value, and is rejected before any Terraform
-command runs and before any file in the checkout is modified.
+A name may appear only once across both sources. Names the automation or the runner sets are rejected, as are names that would redirect the programs Terraform runs or its configuration, credentials, logging or plug-in sources. The reserved prefixes are `PROCESS_`, `RECONCILE_`, `DISCOVERY_`, `RUNNER_`, `ACTIONS_`, `LD_`, `DYLD_`, `TF_CLI_ARGS`, `TF_LOG`, `TF_PLUGIN_CACHE` and `GIT_`. The reserved exact names are `PATH`, `IFS`, `ENV`, `BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `TF_DATA_DIR`, `TF_IN_AUTOMATION`, `CHECKPOINT_DISABLE`, `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG`, `TF_WORKSPACE`, `HOME`, `TMPDIR`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_OUTPUT`, `GITHUB_STEP_SUMMARY`, `GITHUB_STATE` and `TF_TOKEN_app_terraform_io`. The last of those is reserved in any letter case or other spelling Terraform maps to the `app.terraform.io` host, because it would silently shadow the registry token the workflow injects from the `TF_API_TOKEN` secret; `TF_TOKEN_*` names for other registries remain allowed. The five `GITHUB_*` names are the runner's own command channels rather than provider configuration, which is why `GITHUB_APP_ID` and the provider's other `GITHUB_` variables are accepted while `GITHUB_ENV` is not. Treat the list as best effort rather than exhaustive. The structural protection is a separate rule: a file newly created during a run is only ever publishable if it is a `.terraform.lock.hcl` directly inside a configured Terraform root. A rejected entry never prints its value, and is rejected before any Terraform command runs and before any file in the checkout is modified.
 
-Both supplied callers forward the same repository `TERRAFORM_ENV` secret, so production
-credentials are also available to non-production state-branch jobs. To separate them, either give
-each policy its own secret name — mapping, say, `TERRAFORM_ENV_PRODUCTION` and
-`TERRAFORM_ENV_NONPRODUCTION` onto the reusable workflow's `TERRAFORM_ENV` secret in each caller —
-or hold the secret in a GitHub Environment named for the caller's `automation_policy_id`. A caller
-cannot pass an environment's secrets to a reusable workflow, so the reusable workflow's `process`
-job must then also declare that environment with its job-level `environment` key; GitHub then
-gives the job the environment's secret rather than the one the caller passes.
+Both supplied callers forward the same repository `TERRAFORM_ENV` secret, so production credentials are also available to non-production state-branch jobs. To separate them, either give each policy its own secret name — mapping, say, `TERRAFORM_ENV_PRODUCTION` and `TERRAFORM_ENV_NONPRODUCTION` onto the reusable workflow's `TERRAFORM_ENV` secret in each caller — or hold the secret in a GitHub Environment named for the caller's `automation_policy_id`. A caller cannot pass an environment's secrets to a reusable workflow, so the reusable workflow's `process` job must then also declare that environment with its job-level `environment` key; GitHub then gives the job the environment's secret rather than the one the caller passes.
 
 ## Configure updates
 
@@ -179,11 +137,7 @@ Their body names the result, whether `terraform fmt` ran, the Terraform and tf-v
 | Update, init, fmt or validation failure | Close the marked PR first, then create or refresh the failure issue |
 | Automation failure or missing/invalid result | Stop without changing managed PRs, issues or refs |
 
-A failed candidate fails its `process` job, so the jobs list shows which branches broke. When
-processing wrote a result, the run summary names the branch and its classification, and for an
-update, initialisation, formatting or validation failure the stage and root that failed; a
-failure before the result exists writes no summary. Publication runs either way, so the table
-above still applies.
+A failed candidate fails its `process` job, so the jobs list shows which branches broke. When processing wrote a result, the run summary names the branch and its classification, and for an update, initialisation, formatting or validation failure the stage and root that failed; a failure before the result exists writes no summary. Publication runs either way, so the table above still applies.
 
 Unchanged candidates still run validation. Before any PR or issue reconciliation, the publisher checks that the remote state branch still matches the discovered commit; a moved or missing branch or failed lookup stops reconciliation. Cleanup matches the policy/branch marker and the expected PR head and base. Update refs are retained. GitHub lookup and closure errors stop reconciliation.
 
@@ -191,51 +145,20 @@ Publication uses the built-in `GITHUB_TOKEN`. The helper respects Git's signing 
 
 ## Version report
 
-`tf-version-bump-report.yml` compares every state branch with its policy's control configuration
-without changing anything. It runs on Mondays at 06:17 `Australia/Melbourne`, after both scheduled
-update runs, and can be started manually from the default branch. It has read-only repository
-access, runs no Terraform and receives no secrets.
+`tf-version-bump-report.yml` compares every state branch with its policy's control configuration without changing anything. It runs on Mondays at 06:17 `Australia/Melbourne`, after both scheduled update runs, and can be started manually from the default branch. It has read-only repository access, runs no Terraform and receives no secrets.
 
-One job per policy discovers the policy's branches exactly as the update workflow does, then audits
-each branch's discovered commit with `tf-version-bump -audit-file`. Its matrix repeats each caller's
-branch prefixes and exclusions, config path and Terraform directories; the example's harness fails
-if they differ, so change both together.
+One job per policy discovers the policy's branches exactly as the update workflow does, then audits each branch's discovered commit with `tf-version-bump -audit-file`. Its matrix repeats each caller's branch prefixes and exclusions, config path and Terraform directories; the example's harness fails if they differ, so change both together.
 
-Each job writes two reports to its summary and uploads both as CSV files, with the collected
-`records.json`, in an artefact retained for seven days. A configured module, provider or
-`required_version` that a branch does not declare produces no row for that branch:
+Each job writes two reports to its summary and uploads both as CSV files, with the collected `records.json`, in an artefact retained for seven days. A configured module, provider or `required_version` that a branch does not declare produces no row for that branch:
 
-- **Version report** (`version-report.csv`): one row per check with `status`, `branch`, `kind`,
-  `subject`, `block`, `file`, `actual`, `expected` and `detail` columns. It checks each root's
-  presence, whether `main.tf` and `providers.tf` exist, `required_version`, providers and modules.
-  A value that already matches passes; a module the config's `ignore_modules`, `ignore_versions` or
-  `from` excludes is `SKIP`, naming the filter, as is a module with a local source; a branch that
-  cannot be fetched, parsed or safely read — a symlinked Terraform file, a root outside the
-  checkout, or a duplicate root — is `ERROR`. The summary counts every status and lists each
-  branch's non-passing rows.
-- **Legacy version report** (`legacy-report.csv`): the columns `Result`, `Test`, `Comment` and
-  `State Branch` in an existing report's format, with only FAIL rows in the summary. It checks
-  modules and the two files only, ignores the config's filters, names each module by its source
-  (so blocks sharing a source produce identical rows), writes `none` for a missing version, and
-  supports a single Terraform root.
+- **Version report** (`version-report.csv`): one row per check with `status`, `branch`, `kind`, `subject`, `block`, `file`, `actual`, `expected` and `detail` columns. It checks each root's presence, whether `main.tf` and `providers.tf` exist, `required_version`, providers and modules. A value that already matches passes; a module the config's `ignore_modules`, `ignore_versions` or `from` excludes is `SKIP`, naming the filter, as is a module with a local source; a branch that cannot be fetched, parsed or safely read — a symlinked Terraform file, a root outside the checkout, or a duplicate root — is `ERROR`. The summary counts every status and lists each branch's non-passing rows.
+- **Legacy version report** (`legacy-report.csv`): the columns `Result`, `Test`, `Comment` and `State Branch` in an existing report's format, with only FAIL rows in the summary. It checks modules and the two files only, ignores the config's filters, names each module by its source (so blocks sharing a source produce identical rows), writes `none` for a missing version, and supports a single Terraform root.
 
-Version mismatches never fail the job. A branch that cannot be read fails it after both reports are
-written, so the gap is visible. Discovery runs exactly as in the update workflow, so a policy whose
-prefixes and exclusions select no branch, or more than 256, fails its report job before any report
-is written, as it fails the update run.
+Version mismatches never fail the job. A branch that cannot be read fails it after both reports are written, so the gap is visible. Discovery runs exactly as in the update workflow, so a policy whose prefixes and exclusions select no branch, or more than 256, fails its report job before any report is written, as it fails the update run.
 
-Branch-scoped `ignore_modules` entries work with this example. Both the update job and the version
-report pass the state branch as `-branch`, so an entry such as
-`state/staging/example-thing/shared-vpc` excludes that module on that branch alone: the update job
-leaves it untouched and the version report records it as `SKIP`, naming `ignore_modules`. The legacy
-report ignores the config's filters, so it still lists that module as `FAIL`. A malformed scoped
-entry such as `state//shared-vpc` fails configuration validation, so the configuration check stops
-it before an update runs. To leave a whole branch out of both updates and this report instead, use a
-`!` exclusion (see [Install](#install)).
+Branch-scoped `ignore_modules` entries work with this example. Both the update job and the version report pass the state branch as `-branch`, so an entry such as `state/staging/example-thing/shared-vpc` excludes that module on that branch alone: the update job leaves it untouched and the version report records it as `SKIP`, naming `ignore_modules`. The legacy report ignores the config's filters, so it still lists that module as `FAIL`. A malformed scoped entry such as `state//shared-vpc` fails configuration validation, so the configuration check stops it before an update runs. To leave a whole branch out of both updates and this report instead, use a `!` exclusion (see [Install](#install)).
 
-Both CSVs keep values exactly as written. A value beginning with `=`, `+`, `-` or `@`, such as the
-valid Terraform pin `= 5.0.0`, may be evaluated as a formula by a spreadsheet that opens the file
-directly, so import the CSVs as text instead.
+Both CSVs keep values exactly as written. A value beginning with `=`, `+`, `-` or `@`, such as the valid Terraform pin `= 5.0.0`, may be evaluated as a formula by a spreadsheet that opens the file directly, so import the CSVs as text instead.
 
 ## Run and inspect
 

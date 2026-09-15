@@ -1,10 +1,8 @@
 # Examples
 
-This directory contains sample YAML configurations, Terraform fixtures, runnable behaviour
-scenarios, and maintained automation scripts.
+This directory contains sample YAML configurations, Terraform fixtures, runnable behaviour scenarios, and maintained automation scripts.
 
-Version numbers in these files demonstrate syntax only. They are not recommendations and may not
-be current releases of the referenced modules or providers.
+Version numbers in these files demonstrate syntax only. They are not recommendations and may not be current releases of the referenced modules or providers.
 
 ## YAML configurations
 
@@ -23,11 +21,9 @@ Preview any config from the repository root:
 go run . -pattern "examples/*.tf" -config examples/config-basic.yml -dry-run
 ```
 
-The sample Terraform files do not contain every source listed by every config, so a preview can
-legitimately report fewer updates than the config contains.
+The sample Terraform files do not contain every source listed by every config, so a preview can legitimately report fewer updates than the config contains.
 
-For the YAML contract and filter precedence, see the
-[configuration reference](../docs/CONFIGURATION.md).
+For the YAML contract and filter precedence, see the [configuration reference](../docs/CONFIGURATION.md).
 
 ## Automation cookbook
 
@@ -43,8 +39,7 @@ Preview the human-readable changes without writing:
 tf-version-bump -pattern "**/*.tf" -config versions.yml -dry-run
 ```
 
-For a CI or pre-commit gate, use `-check`. Status 0 means no eligible version value would change,
-status 2 means updates are required, and status 1 means validation or processing failed:
+For a CI or pre-commit gate, use `-check`. Status 0 means no eligible version value would change, status 2 means updates are required, and status 1 means validation or processing failed:
 
 ```bash
 if tf-version-bump -pattern "**/*.tf" -config versions.yml -check; then
@@ -59,8 +54,7 @@ else
 fi
 ```
 
-Status 0 does not prove that every configured target exists or was eligible. Ignored or unmatched
-modules and matching modules skipped for a missing `version` can also produce no eligible update.
+Status 0 does not prove that every configured target exists or was eligible. Ignored or unmatched modules and matching modules skipped for a missing `version` can also produce no eligible update.
 
 ### Pre-commit hook
 
@@ -71,15 +65,9 @@ cp examples/pre-commit-hook.sh .git/hooks/pre-commit
 chmod 755 .git/hooks/pre-commit
 ```
 
-The hook materialises the staged Git index in a temporary directory, runs standalone configuration
-validation there, then uses `-check` without modifying either staged or worktree files. This means a
-partial commit is checked against the exact content Git will commit, not unrelated unstaged edits.
-It exits 0 when no eligible values would change, 2 when updates are required, and 1 when validation
-or processing fails. Git blocks a commit for either non-zero status while keeping the distinction
-visible to people and wrapper automation.
+The hook materialises the staged Git index in a temporary directory, runs standalone configuration validation there, then uses `-check` without modifying either staged or worktree files. This means a partial commit is checked against the exact content Git will commit, not unrelated unstaged edits. It exits 0 when no eligible values would change, 2 when updates are required, and 1 when validation or processing fails. Git blocks a commit for either non-zero status while keeping the distinction visible to people and wrapper automation.
 
-Use environment overrides when the repository uses different paths or an explicitly installed
-binary:
+Use environment overrides when the repository uses different paths or an explicitly installed binary:
 
 ```bash
 TF_VERSION_BUMP_CONFIG=.github/tf-version-bump/versions.yml \
@@ -88,9 +76,7 @@ TF_VERSION_BUMP_BIN=/usr/local/bin/tf-version-bump \
   .git/hooks/pre-commit
 ```
 
-Run `examples/pre-commit-hook.sh --help` for the complete override reference. Environment variables
-must be available to the process that invokes Git; alternatively, set them in a small
-repository-specific wrapper around the maintained hook.
+Run `examples/pre-commit-hook.sh --help` for the complete override reference. Environment variables must be available to the process that invokes Git; alternatively, set them in a small repository-specific wrapper around the maintained hook.
 
 Apply the updates and write exact block counts independently of the human-readable summary:
 
@@ -104,19 +90,11 @@ jq '{terraform_blocks_updated, module_blocks_updated, provider_blocks_updated}' 
   update-report.json
 ```
 
-The report is schema version 2. It counts changed Terraform, module, and provider blocks, not files.
-Dry-run reports contain zero counts because no updates were applied. Check mode rejects
-`-report-file` so it remains entirely write-free.
+The report is schema version 2. It counts changed Terraform, module, and provider blocks, not files. Dry-run reports contain zero counts because no updates were applied. Check mode rejects `-report-file` so it remains entirely write-free.
 
 ## Runnable scenarios
 
-[`scenarios/force-add`](scenarios/force-add) demonstrates the default warning for a registry module
-without `version`, followed by the same config with `-force-add`.
-[`scenarios/idempotency`](scenarios/idempotency) updates Terraform, provider, and module versions,
-then proves that applying the same config again leaves both bytes and modification time unchanged.
-[`scenarios/provider-targeting`](scenarios/provider-targeting) updates one existing provider
-constraint while preserving an unrelated provider and a targeted attribute-style provider without
-a `version`. The module-only `-force-add` flag does not add provider version attributes.
+[`scenarios/force-add`](scenarios/force-add) demonstrates the default warning for a registry module without `version`, followed by the same config with `-force-add`. [`scenarios/idempotency`](scenarios/idempotency) updates Terraform, provider, and module versions, then proves that applying the same config again leaves both bytes and modification time unchanged. [`scenarios/provider-targeting`](scenarios/provider-targeting) updates one existing provider constraint while preserving an unrelated provider and a targeted attribute-style provider without a `version`. The module-only `-force-add` flag does not add provider version attributes.
 
 Run all scenarios against a temporary copy of their fixtures:
 
@@ -124,8 +102,7 @@ Run all scenarios against a temporary copy of their fixtures:
 examples/run-scenarios.sh
 ```
 
-The runner builds the current source once, never changes the checked-in fixtures, and removes its
-temporary workspace when it exits.
+The runner builds the current source once, never changes the checked-in fixtures, and removes its temporary workspace when it exits.
 
 ## Terraform files
 
@@ -137,15 +114,11 @@ temporary workspace when it exits.
 | [`heavily_commented.tf`](heavily_commented.tf) | Comment retention |
 | [`unusual_formatting.tf`](unusual_formatting.tf) | Formatting behaviour when a file is rewritten |
 
-Copy fixtures to a temporary directory before running without `-dry-run` if you want to preserve
-the checked-in examples.
+Copy fixtures to a temporary directory before running without `-dry-run` if you want to preserve the checked-in examples.
 
 ## Branch automation
 
-[`update-branches.sh`](update-branches.sh) applies one module update or YAML config across Git
-branches, creating a commit on each branch without pushing it. Pass `--sign-commits` to ask Git to
-sign each update commit with its configured signing key. Without the flag, the script does not
-request signing, which allows it to run in CI without access to a signing key.
+[`update-branches.sh`](update-branches.sh) applies one module update or YAML config across Git branches, creating a commit on each branch without pushing it. Pass `--sign-commits` to ask Git to sign each update commit with its configured signing key. Without the flag, the script does not request signing, which allows it to run in CI without access to a signing key.
 
 Start with its help and a dry run:
 
@@ -160,9 +133,7 @@ examples/update-branches.sh \
   --dry-run
 ```
 
-The script refuses dirty worktrees, restores the starting branch after successful runs, can fetch
-remote-only branches, and never pushes. See [Advanced usage](../docs/ADVANCED-USAGE.md) before
-using write mode.
+The script refuses dirty worktrees, restores the starting branch after successful runs, can fetch remote-only branches, and never pushes. See [Advanced usage](../docs/ADVANCED-USAGE.md) before using write mode.
 
 Contributors can run its end-to-end checks with:
 
@@ -170,5 +141,4 @@ Contributors can run its end-to-end checks with:
 examples/update-branches_test.sh
 ```
 
-The checks require `ssh-keygen`, build and exercise the real `tf-version-bump` binary in temporary
-Git repositories, and create an ephemeral signing key. They do not contact a remote service.
+The checks require `ssh-keygen`, build and exercise the real `tf-version-bump` binary in temporary Git repositories, and create an ephemeral signing key. They do not contact a remote service.
