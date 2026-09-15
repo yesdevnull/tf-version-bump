@@ -365,9 +365,10 @@ func loadResolvedConfig(configFile, branch string) (*Config, error) {
 	return config, nil
 }
 
-// processFiles applies the module updates to every matching file in order. Each file is parsed once,
-// so an update meets the changes earlier updates made to it, in a dry run as in a real run. A file
-// that cannot be read or written still counts as one error per update.
+// processFiles applies the module updates to every matching file in order, parsing each file once so
+// an update meets the changes earlier updates made to it, in a dry run as in a real run. A file that
+// cannot be read or parsed counts one error per update; a failed write counts one error, and the file
+// is read again for the updates after it.
 func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (totalUpdates, totalErrors int) {
 	for _, file := range files {
 		parsed, readErr := readTerraformFile(file)
@@ -383,7 +384,8 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (tota
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				totalErrors++
-				// The failed write left the file unchanged, so later updates start from it again.
+				// A failed write may not have reached the file, so later updates start from what is
+				// on disk rather than from the in-memory change it did not save.
 				parsed, readErr = readTerraformFile(file)
 				continue
 			}
@@ -1028,7 +1030,6 @@ func updateTerraformVersionWithCount(filename, version string, dryRun bool) (upd
 		return false, nil, err
 	}
 
-	// Iterate through all blocks in the file
 	for blockIndex, block := range file.hcl.Body().Blocks() {
 		if block.Type() != "terraform" {
 			continue
@@ -1043,7 +1044,6 @@ func updateTerraformVersionWithCount(filename, version string, dryRun bool) (upd
 		changedBlocks = append(changedBlocks, blockIndex)
 	}
 
-	// If we made changes, write the file back (unless in dry-run mode)
 	if updated && !dryRun {
 		if err := file.write(); err != nil {
 			return false, nil, err
@@ -1081,7 +1081,6 @@ func updateProviderVersionWithCount(filename, providerName, version string, dryR
 		return false, nil, err
 	}
 
-	// Iterate through all blocks in the file
 	for blockIndex, block := range file.hcl.Body().Blocks() {
 		blockUpdated, blockChanges := updateProviderTerraformBlockResult(block, providerName, version)
 		updated = updated || blockUpdated
@@ -1090,7 +1089,6 @@ func updateProviderVersionWithCount(filename, providerName, version string, dryR
 		}
 	}
 
-	// If we made changes, write the file back (unless in dry-run mode)
 	if updated && !dryRun {
 		if err := file.write(); err != nil {
 			return false, nil, err
