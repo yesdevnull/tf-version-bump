@@ -367,8 +367,8 @@ func loadResolvedConfig(configFile, branch string) (*Config, error) {
 
 // processFiles applies the module updates to every matching file in order, parsing each file once so
 // an update meets the changes earlier updates made to it, in a dry run as in a real run. A file that
-// cannot be read or parsed counts one error per update; a failed write counts one error, and the file
-// is read again for the updates after it.
+// cannot be read or parsed counts one error per update; each failed write counts one error, and the
+// file is read again for the updates after it.
 func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (totalUpdates, totalErrors int) {
 	for _, file := range files {
 		parsed, readErr := readTerraformFile(file)
