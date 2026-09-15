@@ -107,7 +107,7 @@ The audit lists every value the config targets that the files declare:
 - `terraform` has one entry per `terraform` block when the config sets `terraform_version`.
 - `providers` has one entry per `required_providers` declaration, in either syntax, whose local name the config lists.
 - `modules` has one entry per module block and config entry with an equal `source`, so a block that two entries target appears twice.
-- `actual` is the value as written, without its quotes, or `null` when the declaration has no version. A non-literal expression appears as its source text.
+- `actual` is the value the entry would find, without its quotes, or `null` when the declaration has no version. That is the value as written, except that a run applies a source's module entries in order: once an earlier entry would rewrite a block, later entries for that block find the earlier entry's `version`, and `matches` and `skip` are judged against it. A non-literal expression appears as its source text.
 - `matches` is true when the value already evaluates to the expected string, so an update would never change it. A value can also stay unchanged without matching: a skipped module, or an object-syntax provider without `version`, which updates do not add.
 - `skip` names the first filter that would stop an update, in the order the updater applies them: `local_source`, `ignore_modules`, `ignore_versions`, then `from`. A module without a `version` is never skipped by a version filter.
 - `skip.values` lists every configured value for the filter as written, so branch-scoped `ignore_modules` entries appear in full, including those scoped to other branches.
@@ -317,6 +317,8 @@ Config mode applies updates in this order for each selected set of files:
 Use `-force-add`, `-dry-run`, `-check`, `-verbose`, `-branch`, or `-output md` with config mode when required. Add `-audit-file` to compare the files with the config instead of updating them. See [Configuration](CONFIGURATION.md) for the complete YAML contract.
 
 Config summaries count module entry/file applications as `update(s)`, not distinct files. A file matched by two module entries therefore contributes two module updates.
+
+Module entries apply in YAML order, so several entries for one source can move the same block more than once in a run; dry runs, checks and audits follow the same order. See [Several entries for one source](CONFIGURATION.md#several-entries-for-one-source).
 
 ## File selection
 

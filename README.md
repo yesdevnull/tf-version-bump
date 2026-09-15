@@ -107,7 +107,7 @@ Validate the config structure without selecting or changing Terraform files:
 tf-version-bump -validate-config versions.yml
 ```
 
-Config mode is exclusive with `-module`, `-provider`, `-terraform-version`, `-to`, and the module-filter flags. It can still be combined with global behaviour flags such as `-dry-run`, `-check`, `-force-add`, `-verbose`, `-branch`, `-output`, and `-report-file`, subject to the check-mode restrictions below.
+Config mode is exclusive with `-module`, `-provider`, `-terraform-version`, `-to`, and the module-filter flags. It can still be combined with global behaviour flags such as `-dry-run`, `-check`, `-force-add`, `-verbose`, `-branch`, `-output`, `-report-file`, and `-audit-file`, subject to the check-mode and audit restrictions below.
 
 ## Preview and review
 
@@ -212,8 +212,8 @@ See [Usage reference](docs/USAGE.md#file-selection) for the complete matching be
 |------|----------|
 | [Usage reference](docs/USAGE.md) | Every CLI flag, update semantics, glob behaviour, output, and limitations |
 | [Configuration](docs/CONFIGURATION.md) | Complete YAML format, filters, precedence, and examples |
-| [Advanced usage](docs/ADVANCED-USAGE.md) | Automating updates across Git branches |
-| [Examples](examples/README.md) | YAML samples, Terraform fixtures, and the branch automation script |
+| [Advanced usage](docs/ADVANCED-USAGE.md) | Automating updates across Git branches, locally or with the GitHub Actions example |
+| [Examples](examples/README.md) | YAML samples, Terraform fixtures, runnable scenarios, and automation scripts |
 | [Release process](docs/RELEASING.md) | Building, publishing, and verifying release artefacts |
 
 Run `tf-version-bump -help` for the command's built-in flag reference and `tf-version-bump -version` for build metadata.

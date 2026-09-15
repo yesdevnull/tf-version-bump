@@ -33,7 +33,8 @@ tf-version-bump/
 ├── audit.go                 # -audit-file comparison
 ├── *_test.go                # Comprehensive tests (Go tests)
 ├── schema/config-schema.json # YAML validation schema
-├── examples/                # Sample configs, .tf files, and branch automation
+├── examples/                # Sample configs, .tf files, scenarios, and branch and Actions automation
+├── scripts/                 # Lint launchers and the Actions example's release-pin updater
 ├── .github/workflows/       # CI/CD pipelines
 └── docs/                    # Usage, configuration, automation, and release guides
 ```
@@ -96,6 +97,9 @@ make shellcheck                                           # Every tracked shell 
 ## Key Architecture Patterns
 
 ### HCL Processing (main.go)
+
+`main.go` wraps these steps in `readTerraformFile` and `terraformFile.write`; reuse them for any new update path.
+
 ```go
 // 1. Read file
 src, err := os.ReadFile(filename)
@@ -191,7 +195,7 @@ GitHub Actions runs on every push/PR:
 
 ## Version Filtering Logic
 
-Priority order in `updateModuleVersion()`:
+Priority order across `updateModuleBlockResult` and `shouldSkipModuleVersion` in `main.go`:
 1. **Source and locality**: Require an exact source match; skip local sources
 2. **Ignore patterns**: If module name matches `ignore_modules`, skip; an entry may be branch-scoped as `<branch>/<name>` and resolved against `-branch` beforehand
 3. **Missing version**: Skip unless `force-add` is enabled and the source is a registry module
@@ -201,9 +205,18 @@ Priority order in `updateModuleVersion()`:
 
 ## Quick Tips
 
-✓ **Always read files before modifying** - Use Read tool first ✓ **Run tests with race detector** - `go test -race` ✓ **Use dry-run** - Preview changes before applying ✓ **Check coverage** - `make test-coverage` ✓ **Follow existing patterns** - Match the codebase style ✓ **Update docs** - Keep the README, detailed guides, and agent documentation in sync
+- ✓ **Always read files before modifying** - Use Read tool first
+- ✓ **Run tests with race detector** - `go test -race`
+- ✓ **Use dry-run** - Preview changes before applying
+- ✓ **Check coverage** - `make test-coverage`
+- ✓ **Follow existing patterns** - Match the codebase style
+- ✓ **Update docs** - Keep the README, detailed guides, and agent documentation in sync
+- ✓ **Keep Markdown unwrapped** - One line per paragraph; `make docs-check` enforces it
 
-✗ **Never break HCL format** - Use `hclwrite` API only ✗ **Don't skip linting** - CI will fail ✗ **Don't change public API** - CLI flags are user-facing ✗ **Don't commit binaries** - They're gitignored
+- ✗ **Never break HCL format** - Use `hclwrite` API only
+- ✗ **Don't skip linting** - CI will fail
+- ✗ **Don't change public API** - CLI flags are user-facing
+- ✗ **Don't commit binaries** - They're gitignored
 
 ## Dependencies
 
