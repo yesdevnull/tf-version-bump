@@ -98,25 +98,21 @@ make shellcheck                                           # Every tracked shell 
 
 ### HCL Processing (main.go)
 
-`main.go` wraps these steps in `readTerraformFile` and `terraformFile.write`; reuse them for any new update path.
+`main.go` reads and writes every Terraform file through `readTerraformFile` and `terraformFile.write`; reuse them for any new update path.
 
 ```go
-// 1. Read file
-src, err := os.ReadFile(filename)
+// 1. Stat, read and parse; the file keeps its mode for the write
+file, err := readTerraformFile(filename)
 
-// 2. Parse HCL
-file, diags := hclwrite.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
-
-// 3. Navigate and modify
-for _, block := range file.Body().Blocks() {
+// 2. Navigate and modify
+for _, block := range file.hcl.Body().Blocks() {
     if block.Type() == "module" {
         block.Body().SetAttributeValue("version", cty.StringVal(targetVersion))
     }
 }
 
-// 4. Format and write back with the original permission bits
-output := hclwrite.Format(file.Bytes())
-os.WriteFile(filename, output, fileInfo.Mode().Perm())
+// 3. Format and write back with the original permission bits
+err = file.write()
 ```
 
 ### Config Loading (config.go)

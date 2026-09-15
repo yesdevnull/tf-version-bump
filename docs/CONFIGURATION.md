@@ -246,7 +246,7 @@ modules:
 
 A block at `~> 5.0` or `5.1.0` moves to `~> 5.21`, and a block at `~> 4.0` moves to `~> 4.6` unless it is named `legacy_vpc`. A block at any other version, such as `3.19.0`, matches neither `from` list and is left alone. The [`same-source-ranges` scenario](../examples/README.md#runnable-scenarios) runs this config.
 
-A run applies the entries in YAML order, and each entry finds the versions the entries before it wrote. An entry whose `from` lists an earlier entry's target therefore moves the same block again in the same run: with `3.0.0` → `4.0.0` followed by `4.0.0` → `5.0.0`, a block at `3.0.0` ends at `5.0.0`. Listed the other way round, the same two entries take one run per step. `-dry-run`, `-check` and `-audit-file` follow the same order as a real run. Keep each target out of the other entries' `from` lists unless you want that chain.
+A run applies the entries in YAML order, and each entry finds the versions the entries before it set. An entry whose `from` lists an earlier entry's target therefore moves the same block again in the same run: with `3.0.0` → `4.0.0` followed by `4.0.0` → `5.0.0`, a block at `3.0.0` ends at `5.0.0`. Listed the other way round, the same two entries take one run per step. `-dry-run`, `-check` and `-audit-file` follow the same order as a real run. Keep each target out of the other entries' `from` lists unless you want that chain.
 
 ## Config-mode flags
 

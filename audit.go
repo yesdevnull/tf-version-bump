@@ -117,7 +117,8 @@ func (audit *auditReport) recordRequiredProvider(filename string, requiredProvid
 
 // recordModuleBlock records the block once for each config entry with an equal source. A run
 // applies those entries in order, so each entry is judged against the value the entries before it
-// leave: the block's own version until one of them would rewrite it.
+// leave: the block's own version until one of them would rewrite it. -audit-file rejects -force-add,
+// so no entry gives a block without a version one.
 func (audit *auditReport) recordModuleBlock(filename string, block *hclwrite.Block, updates []ModuleUpdate) {
 	source, ok := moduleSourceValue(block)
 	if !ok {
