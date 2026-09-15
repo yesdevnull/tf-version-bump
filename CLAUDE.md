@@ -20,7 +20,8 @@ config.go                # YAML config loading and validation
 audit.go                 # -audit-file: read-only comparison of files with a config
 *_test.go                # split by concern (see Testing)
 schema/config-schema.json # JSON Schema for the YAML config
-examples/                # Sample .tf/.yml files and branch automation
+examples/                # Sample .tf/.yml files, runnable scenarios, branch and Actions automation
+scripts/                 # Lint launchers and the Actions example's release-pin updater
 docs/USAGE.md            # Detailed CLI and behaviour reference
 docs/CONFIGURATION.md    # YAML configuration reference
 docs/ADVANCED-USAGE.md   # Cross-branch automation guide
@@ -38,6 +39,8 @@ make build          # go build -v -o tf-version-bump .
 make clean          # remove binary + coverage artefacts
 make actionlint     # this repo's workflows, then the example's from a temporary repo copy
 make shellcheck     # every tracked *.sh
+make docs-check     # documentation, schema, example config and scenario tests
+make test-github-actions # the Actions example harness (uses Docker)
 ```
 
 Full validation before committing (mirrors CI):
@@ -82,29 +85,32 @@ Note this means the tool cannot protect a user who `cd`s into `.terraform` and g
 
 ### Update flow
 
-`main()` → `validateOperationModes` → either standalone config validation or `findMatchingFiles` → `runAuditMode` (`-audit-file`: `buildAudit`, never writes Terraform files) or `runUpdateMode` → `runConfigFileMode` (YAML) / `runCLIMode` (one direct operation). Each update mode dispatches to one of three update paths: `updateModuleVersionWithCount`, `updateTerraformVersion`, or `updateProviderVersionWithCount`.
+`main()` → `validateOperationModes` → either standalone config validation or `findMatchingFiles` → `runAuditMode` (`-audit-file`: `buildAudit`, never writes Terraform files) or `runUpdateMode` → `runConfigFileMode` (YAML) / `runCLIMode` (one direct operation). Each update mode dispatches to one of three update paths: `processFiles` → `applyModuleVersion` for modules, `processTerraformVersion` → `updateTerraformVersionWithCount`, or `processProviderVersion` → `updateProviderVersionWithCount`.
 
-`updateModuleVersionWithCount` reads and parses the file, then bundles its many parameters into a `moduleUpdateOptions` struct and delegates per-block work to `updateModuleBlockResult` → `shouldSkipModuleVersion`. Add new per-module filtering there rather than growing the parameter list.
+`processFiles` parses each file once with `readTerraformFile`, then applies the module entries to it in YAML order through `applyModuleVersion`, which writes after each change unless in a dry run. Entries for one source therefore chain — an entry whose `from` lists an earlier entry's target moves the block again in the same run — and dry runs and checks report the same chain because the parsed file carries every earlier change. A file that cannot be read or written still counts once per entry, and a failed write re-reads the file for later entries. `updateModuleVersionWithCount` is the single-entry wrapper most module tests call.
+
+`applyModuleVersion` bundles its many parameters into a `moduleUpdateOptions` struct and delegates per-block work to `updateModuleBlockResult` → `shouldSkipModuleVersion`. Add new per-module filtering there rather than growing the parameter list.
 
 Provider updates are the fiddliest path: `required_providers` entries can be either a nested block or an object expression, so `updateProviderVersionWithCount` branches through `updateProviderBlockSyntaxResult` and `updateProviderAttributeVersionResult` / `providerAttributeObject` / `replaceProviderObjectVersion`. Attribute-object updates replace only the version expression's byte range so other expressions such as `configuration_aliases` remain.
 
 ### Standard hclwrite pattern
 
 ```go
-fileInfo, err := os.Stat(filename)          // capture mode first — writes must preserve it
-src, err := os.ReadFile(filename)
-file, diags := hclwrite.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
-if diags.HasErrors() { return false, fmt.Errorf("failed to parse HCL: %s", diags.Error()) }
+file, err := readTerraformFile(filename) // stat, read and parse; keeps the mode write must preserve
+if err != nil { return false, nil, err }
 
-for _, block := range file.Body().Blocks() {
+for _, block := range file.hcl.Body().Blocks() {
     if block.Type() == "module" {
         block.Body().SetAttributeValue("version", cty.StringVal(targetVersion))
     }
 }
 
-output := hclwrite.Format(file.Bytes())
-os.WriteFile(filename, output, fileInfo.Mode().Perm())
+if updated && !dryRun {
+    err = file.write() // hclwrite.Format, then the original permission bits
+}
 ```
+
+All three update paths use `readTerraformFile` and `terraformFile.write`, so their stat, read, parse and write errors read identically.
 
 ### Module update precedence
 
@@ -154,7 +160,7 @@ Success is prefixed `✓`; dry-run lines use `→` with the verb "Would update".
 
 `-report-file` is the machine-readable automation contract. It writes schema version 2 JSON with exact counts of unique Terraform, module, and provider blocks whose version values changed across the complete command. Keep human summaries and the report separate: existing summaries count source/file operations, while the report counts individual changed blocks. Dry-run reports contain zero counts because no file values changed.
 
-`-audit-file` is the read-only comparison contract. In config mode it writes schema version 1 JSON listing each configured Terraform, provider and module version value the selected files declare, its current and expected values, whether they already match and, for modules, the first filter that would skip an update. The audit and the updater share `moduleVersionFilter` and the `attributeHasStringValue` comparison; keep the audit in step with any change to update filtering. Unlike the update modes, a selected file that cannot be read or parsed stops the audit: the command exits 1 and writes nothing, leaving any existing audit untouched.
+`-audit-file` is the read-only comparison contract. In config mode it writes schema version 1 JSON listing each configured Terraform, provider and module version value the selected files declare, its current and expected values, whether they already match and, for modules, the first filter that would skip an update. The audit and the updater share `moduleVersionFilter` and the `attributeHasStringValue` comparison, and `recordModuleBlock` judges a source's entries in YAML order against the version earlier entries would write, as `processFiles` applies them; keep the audit in step with any change to update filtering or ordering. Unlike the update modes, a selected file that cannot be read or parsed stops the audit: the command exits 1 and writes nothing, leaving any existing audit untouched.
 
 `-check` uses the existing dry-run update paths but has a separate automation exit contract. The mode runners' update-operation total reaches `main` through `runUpdateMode`: a processing error exits 1, a successful check with a positive total exits 2, and a successful check with no eligible update returns normally with status 0. Check mode rejects `-dry-run` and `-report-file`, so it never writes Terraform or report files.
 
@@ -171,7 +177,7 @@ Final test layout by concern:
 - `provider_update_test.go` — provider updates and attribute preservation.
 - `audit_test.go` — audit entries, filter precedence, and agreement with the updater.
 - `config_test.go` / `config_schema_test.go` — YAML configuration and schema validation.
-- `documentation_test.go` — local documentation links, schema-backed examples, and constraints.
+- `documentation_test.go` — local documentation links, unwrapped Markdown prose, schema-backed examples, constraints, and runnable scenarios.
 - `command_test.go` — CLI parsing, output, and exit behaviour.
 - `integration_test.go` — cross-file and cross-operation continuation.
 - `release_workflow_test.go` — release workflow artefact validation.
@@ -209,4 +215,4 @@ CI/Build and Lint run for every push and pull request targeting `main`, so their
 
 ## Conventions
 
-CLI flags and the YAML config format are user-facing contracts — don't break them. The JSON Schema accepts common Terraform constraint syntax (`1.0.0`, `~> 3.0`, `>= 1.5, < 2.0`, pre-release, build metadata), but the runtime YAML loader does not execute that schema. Keep the dependency list minimal. Use Australian/British spelling in prose and comments.
+CLI flags and the YAML config format are user-facing contracts — don't break them. The JSON Schema accepts common Terraform constraint syntax (`1.0.0`, `~> 3.0`, `>= 1.5, < 2.0`, pre-release, build metadata), but the runtime YAML loader does not execute that schema. Keep the dependency list minimal. Use Australian/British spelling in prose and comments. Write each Markdown paragraph, list item and quote on one line; `TestDocumentationProseIsNotHardWrapped` fails on hard-wrapped prose.

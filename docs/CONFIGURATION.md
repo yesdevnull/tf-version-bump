@@ -223,6 +223,31 @@ For a module whose source matches the entry:
 
 When `-force-add` handles a missing version, there is no current value to compare with `from` or `ignore_versions`, so the target is added after the name and registry-source checks. Terraform does not support a `version` argument for Git or other non-registry module sources.
 
+### Several entries for one source
+
+The same `source` can appear in more than one entry, each with its own filters. That moves two version lines of a module separately, and can exclude a module name from one line only:
+
+```yaml
+modules:
+  # Keep 5.x constraints and pins on the latest 5.x line.
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "~> 5.21"
+    from:
+      - "~> 5.0"
+      - "5.1.0"
+
+  # Move 4.x constraints to the latest 4.x line, except the legacy VPC.
+  - source: "terraform-aws-modules/vpc/aws"
+    version: "~> 4.6"
+    from: "~> 4.0"
+    ignore_modules:
+      - "legacy_vpc"
+```
+
+A block at `~> 5.0` or `5.1.0` moves to `~> 5.21`, and a block at `~> 4.0` moves to `~> 4.6` unless it is named `legacy_vpc`. A block at any other version, such as `3.19.0`, matches neither `from` list and is left alone. The [`same-source-ranges` scenario](../examples/README.md#runnable-scenarios) runs this config.
+
+A run applies the entries in YAML order, and each entry finds the versions the entries before it wrote. An entry whose `from` lists an earlier entry's target therefore moves the same block again in the same run: with `3.0.0` → `4.0.0` followed by `4.0.0` → `5.0.0`, a block at `3.0.0` ends at `5.0.0`. Listed the other way round, the same two entries take one run per step. `-dry-run`, `-check` and `-audit-file` follow the same order as a real run. Keep each target out of the other entries' `from` lists unless you want that chain.
+
 ## Config-mode flags
 
 These global flags can accompany `-config`:
@@ -241,6 +266,9 @@ tf-version-bump \
 - `-output md` uses backticks instead of single quotes in messages.
 - `-force-add` adds missing version attributes to matching registry modules.
 - `-branch` supplies the branch name that branch-scoped `ignore_modules` entries are matched against.
+- `-check` previews like `-dry-run` but exits 2 when updates are required.
+- `-report-file` writes exact changed-block counts as JSON after a successful update.
+- `-audit-file` writes each configured value's current and expected version as JSON instead of updating; it cannot be combined with `-dry-run`, `-check`, `-report-file` or `-force-add`.
 
 Direct operation flags and filters cannot accompany `-config`: `-module`, `-provider`, `-terraform-version`, `-to`, `-from`, `-ignore-version`, and `-ignore-modules` are rejected.
 

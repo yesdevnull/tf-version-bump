@@ -94,7 +94,7 @@ The report is schema version 2. It counts changed Terraform, module, and provide
 
 ## Runnable scenarios
 
-[`scenarios/force-add`](scenarios/force-add) demonstrates the default warning for a registry module without `version`, followed by the same config with `-force-add`. [`scenarios/idempotency`](scenarios/idempotency) updates Terraform, provider, and module versions, then proves that applying the same config again leaves both bytes and modification time unchanged. [`scenarios/provider-targeting`](scenarios/provider-targeting) updates one existing provider constraint while preserving an unrelated provider and a targeted attribute-style provider without a `version`. The module-only `-force-add` flag does not add provider version attributes.
+[`scenarios/force-add`](scenarios/force-add) demonstrates the default warning for a registry module without `version`, followed by the same config with `-force-add`. [`scenarios/idempotency`](scenarios/idempotency) updates Terraform, provider, and module versions, then proves that applying the same config again leaves both bytes and modification time unchanged. [`scenarios/provider-targeting`](scenarios/provider-targeting) updates one existing provider constraint while preserving an unrelated provider and a targeted attribute-style provider without a `version`. The module-only `-force-add` flag does not add provider version attributes. [`scenarios/same-source-ranges`](scenarios/same-source-ranges) uses two entries for the same module source to move a 5.x range and a 4.x range separately, excluding one module by name from the 4.x move and leaving a block that matches neither range alone, then proves that a second run changes nothing.
 
 Run all scenarios against a temporary copy of their fixtures:
 
@@ -142,3 +142,7 @@ examples/update-branches_test.sh
 ```
 
 The checks require `ssh-keygen`, build and exercise the real `tf-version-bump` binary in temporary Git repositories, and create an ephemeral signing key. They do not contact a remote service.
+
+## GitHub Actions automation
+
+[`github-actions`](github-actions/README.md) is a copyable GitHub Actions example that updates Terraform state branches on a schedule, opens a pull request for each changed branch, and reports every branch's versions against its config. Contributors can run its local harness, which uses Docker, with `make test-github-actions`. See [Advanced usage](../docs/ADVANCED-USAGE.md#github-actions-state-branch-automation-poc) for an overview.
