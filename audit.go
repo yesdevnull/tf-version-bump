@@ -115,7 +115,9 @@ func (audit *auditReport) recordRequiredProvider(filename string, requiredProvid
 	}
 }
 
-// recordModuleBlock records the block once for each config entry with an equal source.
+// recordModuleBlock records the block once for each config entry with an equal source. A run
+// applies those entries in order, so each entry is judged against the value the entries before it
+// leave: the block's own version until one of them would rewrite it.
 func (audit *auditReport) recordModuleBlock(filename string, block *hclwrite.Block, updates []ModuleUpdate) {
 	source, ok := moduleSourceValue(block)
 	if !ok {
@@ -123,6 +125,7 @@ func (audit *auditReport) recordModuleBlock(filename string, block *hclwrite.Blo
 	}
 	name := moduleBlockName(block)
 	versionAttribute := block.Body().GetAttribute("version")
+	var rewrittenVersion *string
 	// Index rather than copy: gocritic's hugeParam rejects passing a ModuleUpdate by value.
 	for i := range updates {
 		update := &updates[i]
@@ -130,10 +133,17 @@ func (audit *auditReport) recordModuleBlock(filename string, block *hclwrite.Blo
 			continue
 		}
 		actual, matches := auditedAttribute(versionAttribute, update.Version)
+		if rewrittenVersion != nil {
+			actual, matches = rewrittenVersion, *rewrittenVersion == update.Version
+		}
+		skip := moduleAuditSkipFor(name, source, actual, update)
 		audit.Modules = append(audit.Modules, moduleAuditEntry{
-			File: filename, Name: name, Source: source, Actual: actual, Expected: update.Version, Matches: matches,
-			Skip: moduleAuditSkipFor(name, source, actual, update),
+			File: filename, Name: name, Source: source, Actual: actual, Expected: update.Version, Matches: matches, Skip: skip,
 		})
+		if actual != nil && !matches && skip == nil {
+			version := update.Version
+			rewrittenVersion = &version
+		}
 	}
 }
 
