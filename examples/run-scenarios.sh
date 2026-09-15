@@ -55,13 +55,24 @@ prepare_scenario() {
     cp -- "$repository_root/examples/scenarios/$1/main.tf" "$repository_root/examples/scenarios/$1/config.yml" "$workspace/$1/"
 }
 
-# Runs the built binary with its output in <workspace>/<log>.stdout and .stderr, and fails with that
-# stderr when the binary exits non-zero, because the workspace and its logs are removed on exit.
+# Runs the built binary with its output in <workspace>/<log>.stdout and .stderr, and fails with its
+# status and output when it exits non-zero, because the workspace and its logs are removed on exit.
+# A binary killed by a signal writes nothing, so the status is the only diagnostic left.
 run_binary() {
-    local log=$1
+    local log=$1 command_status=0 reason
     shift
-    "$binary" "$@" >"$workspace/$log.stdout" 2>"$workspace/$log.stderr" \
-        || fail "$log run exited non-zero: $(<"$workspace/$log.stderr")"
+    "$binary" "$@" >"$workspace/$log.stdout" 2>"$workspace/$log.stderr" || command_status=$?
+    ((command_status == 0)) && return 0
+    reason=$(<"$workspace/$log.stderr")
+    [[ -n $reason ]] || reason=$(<"$workspace/$log.stdout")
+    [[ -n $reason ]] || reason="(no output; the run may have been killed by a signal)"
+    fail "$log run exited with status $command_status: $reason"
+}
+
+# Fails when a run that should be quiet reported a warning, such as a module the updater skipped.
+assert_empty_stderr() {
+    [[ ! -s "$workspace/$1.stderr" ]] \
+        || fail "$1 run produced unexpected diagnostics: $(<"$workspace/$1.stderr")"
 }
 
 # Applies a scenario's config again, passing any extra flags, and fails unless the run leaves the
@@ -80,6 +91,7 @@ assert_second_run_changes_nothing() {
         || fail "second $name run changed the Terraform modification time"
     grep -F 'No updates were performed.' "$workspace/$name-second.stdout" >/dev/null \
         || fail "second $name run did not report an already-current configuration"
+    assert_empty_stderr "$name-second"
 }
 
 binary="$workspace/tf-version-bump"
@@ -115,6 +127,7 @@ grep -F 'version = "~> 5.0"' "$idempotency_directory/main.tf" >/dev/null \
     || fail "idempotency scenario did not update the provider version"
 grep -F 'version = "2.0.0"' "$idempotency_directory/main.tf" >/dev/null \
     || fail "idempotency scenario did not update the module version"
+assert_empty_stderr idempotency-first
 
 assert_second_run_changes_nothing idempotency
 
@@ -125,6 +138,7 @@ run_binary provider-targeting-first -pattern "$provider_directory/main.tf" -conf
 cmp -s "$provider_directory/main.tf" \
     "$repository_root/examples/scenarios/provider-targeting/expected.tf.golden" \
     || fail "provider-targeting scenario did not produce the exact expected provider configuration"
+assert_empty_stderr provider-targeting-first
 
 assert_second_run_changes_nothing provider-targeting -force-add
 
@@ -135,6 +149,7 @@ run_binary same-source-ranges-first -pattern "$same_source_directory/main.tf" -c
 cmp -s "$same_source_directory/main.tf" \
     "$repository_root/examples/scenarios/same-source-ranges/expected.tf.golden" \
     || fail "same-source-ranges scenario did not produce the exact expected module versions"
+assert_empty_stderr same-source-ranges-first
 
 assert_second_run_changes_nothing same-source-ranges
 
