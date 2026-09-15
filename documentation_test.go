@@ -248,6 +248,7 @@ func hardWrappedLines(contents string) []int {
 		if depth != previousDepth || strings.TrimSpace(previous) == "" || strings.TrimSpace(line) == "" {
 			continue
 		}
+		// A list item's own prose may wrap, so a list marker exempts only the line carrying it.
 		if markdownBlockStartPattern.MatchString(line) || markdownStructurePattern.MatchString(previous) {
 			continue
 		}

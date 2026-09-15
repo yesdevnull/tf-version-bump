@@ -216,9 +216,9 @@ func TestBuildAudit_RecordsModulesInTheUpdatersFilterPrecedence(t *testing.T) {
 }
 
 // A run applies a source's entries in YAML order, so each entry meets the value the entries before
-// it leave, and a skipped entry leaves that value unchanged.
+// it leave, and a skipped entry leaves that value unchanged. Each block follows its own chain.
 func TestBuildAudit_JudgesEachEntryAgainstTheValueEarlierEntriesLeave(t *testing.T) {
-	moduleFile := writeTestFile(t, t.TempDir(), "main.tf", "module \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"4.2.0\"\n}\n")
+	moduleFile := writeTestFile(t, t.TempDir(), "main.tf", "module \"vpc\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"4.2.0\"\n}\n\nmodule \"network\" {\n  source  = \"terraform-aws-modules/vpc/aws\"\n  version = \"3.0.0\"\n}\n")
 	vpc := "terraform-aws-modules/vpc/aws"
 	config := auditConfig(t, "",
 		ModuleUpdate{Source: vpc, Version: "9.9.9", IgnoreModules: []string{"vpc"}},
@@ -237,6 +237,10 @@ func TestBuildAudit_JudgesEachEntryAgainstTheValueEarlierEntriesLeave(t *testing
 		{File: moduleFile, Name: "vpc", Source: vpc, Actual: auditValue("4.2.0"), Expected: "4.9.0"},
 		{File: moduleFile, Name: "vpc", Source: vpc, Actual: auditValue("4.9.0"), Expected: "5.0.0"},
 		{File: moduleFile, Name: "vpc", Source: vpc, Actual: auditValue("5.0.0"), Expected: "5.0.0", Matches: true},
+		{File: moduleFile, Name: "network", Source: vpc, Actual: auditValue("3.0.0"), Expected: "9.9.9"},
+		{File: moduleFile, Name: "network", Source: vpc, Actual: auditValue("9.9.9"), Expected: "4.9.0", Skip: &moduleAuditSkip{Filter: "from", Values: []string{"4.2.0"}}},
+		{File: moduleFile, Name: "network", Source: vpc, Actual: auditValue("9.9.9"), Expected: "5.0.0", Skip: &moduleAuditSkip{Filter: "from", Values: []string{"4.9.0"}}},
+		{File: moduleFile, Name: "network", Source: vpc, Actual: auditValue("9.9.9"), Expected: "5.0.0"},
 	}
 	if got, wantJSON := auditJSON(t, audit.Modules), auditJSON(t, want); got != wantJSON {
 		t.Fatalf("modules = %s, want %s", got, wantJSON)
