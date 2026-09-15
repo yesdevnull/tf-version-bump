@@ -198,8 +198,7 @@ func TestBuildAudit_ReportsAnUnreadableFile(t *testing.T) {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `go test -count=1 -run 'TestBuildAudit' ./...`
-Expected: FAIL to build with `undefined: buildAudit`, `undefined: terraformAuditEntry` and `undefined: providerAuditEntry`.
+Run: `go test -count=1 -run 'TestBuildAudit' ./...` Expected: FAIL to build with `undefined: buildAudit`, `undefined: terraformAuditEntry` and `undefined: providerAuditEntry`.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -335,8 +334,7 @@ func auditedObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression []byte, 
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `go test -count=1 -run 'TestBuildAudit' ./...`
-Expected: PASS, no other output.
+Run: `go test -count=1 -run 'TestBuildAudit' ./...` Expected: PASS, no other output.
 
 Then run `go test -count=1 ./...` and `golangci-lint run --timeout=5m`. Expected: PASS and no lint findings.
 
@@ -409,8 +407,7 @@ func shouldSkipModuleVersion(moduleName, currentVersion string, opts *moduleUpda
 }
 ```
 
-Run: `go test -count=1 ./...` and `golangci-lint run --timeout=5m`
-Expected: PASS and no findings; the refactor changes no behaviour, and the existing module-filter and `-verbose` tests pin it.
+Run: `go test -count=1 ./...` and `golangci-lint run --timeout=5m` Expected: PASS and no findings; the refactor changes no behaviour, and the existing module-filter and `-verbose` tests pin it.
 
 Commit it on its own after `git status --short`:
 
@@ -560,8 +557,7 @@ func TestBuildAudit_AgreesWithTheUpdaterOnModulesItWouldChange(t *testing.T) {
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
-Run: `go test -count=1 -run 'TestBuildAudit' ./...`
-Expected: FAIL to build with `undefined: moduleAuditEntry`, `undefined: moduleAuditSkip` and `audit.Modules undefined`.
+Run: `go test -count=1 -run 'TestBuildAudit' ./...` Expected: FAIL to build with `undefined: moduleAuditEntry`, `undefined: moduleAuditSkip` and `audit.Modules undefined`.
 
 - [ ] **Step 4: Record module entries**
 
@@ -655,8 +651,7 @@ In `TestBuildAudit_OmitsTerraformVersionsTheConfigDoesNotSet`, the expected docu
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `go test -count=1 -run 'TestBuildAudit' ./...`
-Expected: PASS.
+Run: `go test -count=1 -run 'TestBuildAudit' ./...` Expected: PASS.
 
 Then `go test -count=1 ./...` and `golangci-lint run --timeout=5m`. Expected: PASS, no lint findings.
 
@@ -846,8 +841,7 @@ and replace everything in `main` after `validateRequiredOperationFlags(flags)` w
 
 The diagnostics are unchanged: each error that `main` previously passed to `fatalf` is now returned with the same text and logged by the same `fatalf("%v", err)`.
 
-Run: `go test -count=1 ./...` and `golangci-lint run --timeout=5m`
-Expected: PASS and no findings, including every `TestCommand*Report*` and `TestCommandCheck*` test, which pin the report's bytes, diagnostics and the check exit statuses.
+Run: `go test -count=1 ./...` and `golangci-lint run --timeout=5m` Expected: PASS and no findings, including every `TestCommand*Report*` and `TestCommandCheck*` test, which pin the report's bytes, diagnostics and the check exit statuses.
 
 Commit this refactor on its own (`refactor: share the JSON output writer and isolate the update path`), with a body explaining that the audit will reuse the writer, that `runUpdateMode` keeps `main` within the complexity limit, and that the report's bytes, diagnostics and exit statuses are unchanged.
 
@@ -1043,8 +1037,7 @@ func TestCommandAuditReportsAnInvalidConfig(t *testing.T) {
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
-Run: `go test -count=1 -run 'TestParseFlagsContract|TestCommand(WritesConfigAudit|Audit|ConfigValidationRejectsUpdateAndReportFlags)' ./...`
-Expected: FAIL to build with `unknown field auditFile in struct literal of type cliFlags`.
+Run: `go test -count=1 -run 'TestParseFlagsContract|TestCommand(WritesConfigAudit|Audit|ConfigValidationRejectsUpdateAndReportFlags)' ./...` Expected: FAIL to build with `unknown field auditFile in struct literal of type cliFlags`.
 
 - [ ] **Step 4: Implement the flag**
 
@@ -1125,8 +1118,7 @@ func runAuditMode(files []string, flags *cliFlags) error {
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `go test -count=1 -run 'TestParseFlagsContract|TestCommand(WritesConfigAudit|Audit|ConfigValidationRejectsUpdateAndReportFlags)' ./...`
-Expected: PASS.
+Run: `go test -count=1 -run 'TestParseFlagsContract|TestCommand(WritesConfigAudit|Audit|ConfigValidationRejectsUpdateAndReportFlags)' ./...` Expected: PASS.
 
 Then `go test -count=1 -race ./...` and `golangci-lint run --timeout=5m`. Expected: PASS, no findings. If `gocyclo` reports `validateOperationModes` above 15, move the `-check` conflict checks into a `validateCheckMode(flags)` helper beside `validateAuditMode` rather than raising the limit.
 
@@ -1295,8 +1287,7 @@ In the file table, after the `config.go` row (line 45), add:
 
 - [ ] **Step 4: Verify the documentation**
 
-Run: `make -C /Users/dan/Code/tf-version-bump docs-check`
-Expected: PASS, including `TestDocumentationLocalLinksResolve` (the README anchor resolves).
+Run: `make -C /Users/dan/Code/tf-version-bump docs-check` Expected: PASS, including `TestDocumentationLocalLinksResolve` (the README anchor resolves).
 
 - [ ] **Step 5: Commit**
 
@@ -1665,8 +1656,7 @@ esac
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `examples/github-actions/report-test.sh`
-Expected: `FAIL: collecting two branches failed: Usage: report-state-branches.sh collect …` (the dispatcher rejects `collect`).
+Run: `examples/github-actions/report-test.sh` Expected: `FAIL: collecting two branches failed: Usage: report-state-branches.sh collect …` (the dispatcher rejects `collect`).
 
 - [ ] **Step 3: Implement `collect`**
 
@@ -1858,8 +1848,7 @@ esac
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `examples/github-actions/report-test.sh`
-Expected: `PASS: test_collect_records_each_branch_root_and_audit` and `PASS: test_collect_records_missing_and_empty_roots`, nothing else.
+Run: `examples/github-actions/report-test.sh` Expected: `PASS: test_collect_records_each_branch_root_and_audit` and `PASS: test_collect_records_missing_and_empty_roots`, nothing else.
 
 Then run the pinned shellcheck (0.11.0) directly on the new and changed scripts, because `make shellcheck` lints only tracked files and these are not committed until Step 5: `shellcheck examples/github-actions/.github/scripts/report-state-branches.sh examples/github-actions/report-test.sh examples/github-actions/test.sh`. Expected: clean. If shellcheck reports SC2329 for writer functions that are only passed by name (for example `write_alpha_branch`), add `# shellcheck disable=SC2329 # Called by name through add_state_branch.` above each one.
 
@@ -1987,8 +1976,7 @@ Add the three names to the `tests=(…)` list.
 
 - [ ] **Step 2: Run the tests**
 
-Run: `examples/github-actions/report-test.sh test_collect_records_unreadable_branches_and_continues test_collect_rejects_invalid_inputs test_collect_records_duplicate_roots_as_a_branch_error`
-Expected: all three PASS against Task 6's implementation. Because these tests describe behaviour Task 6 already implemented, prove each one can fail: temporarily delete the symlink check in `collect_root`, re-run, confirm `test_collect_records_unreadable_branches_and_continues` fails, then restore it; temporarily delete the glob-character check, confirm `test_collect_rejects_invalid_inputs` fails, then restore it; temporarily delete the duplicate-root check, confirm `test_collect_records_duplicate_roots_as_a_branch_error` fails, then restore it. Do the mutation in a throwaway copy or restore with `git checkout -- <script>`, and confirm `git status --short` shows only `report-test.sh` changed afterwards.
+Run: `examples/github-actions/report-test.sh test_collect_records_unreadable_branches_and_continues test_collect_rejects_invalid_inputs test_collect_records_duplicate_roots_as_a_branch_error` Expected: all three PASS against Task 6's implementation. Because these tests describe behaviour Task 6 already implemented, prove each one can fail: temporarily delete the symlink check in `collect_root`, re-run, confirm `test_collect_records_unreadable_branches_and_continues` fails, then restore it; temporarily delete the glob-character check, confirm `test_collect_rejects_invalid_inputs` fails, then restore it; temporarily delete the duplicate-root check, confirm `test_collect_records_duplicate_roots_as_a_branch_error` fails, then restore it. Do the mutation in a throwaway copy or restore with `git checkout -- <script>`, and confirm `git status --short` shows only `report-test.sh` changed afterwards.
 
 - [ ] **Step 3: Commit**
 
@@ -2165,8 +2153,7 @@ Add the three names to `tests=(…)`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `examples/github-actions/report-test.sh test_report_writes_the_improved_csv_and_summary test_report_succeeds_when_every_branch_was_read test_report_keeps_multi_line_values_on_one_table_row`
-Expected: `FAIL: the report did not name the unreadable branch count: Usage: …` for the first (the dispatcher rejects `report`).
+Run: `examples/github-actions/report-test.sh test_report_writes_the_improved_csv_and_summary test_report_succeeds_when_every_branch_was_read test_report_keeps_multi_line_values_on_one_table_row` Expected: `FAIL: the report did not name the unreadable branch count: Usage: …` for the first (the dispatcher rejects `report`).
 
 - [ ] **Step 3: Implement `report`**
 
@@ -2271,8 +2258,7 @@ branch could not be read; version mismatches alone never fail it.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `examples/github-actions/report-test.sh`
-Expected: every test PASSES. Then `make shellcheck`: clean.
+Run: `examples/github-actions/report-test.sh` Expected: every test PASSES. Then `make shellcheck`: clean.
 
 - [ ] **Step 5: Commit**
 
@@ -2386,8 +2372,7 @@ Add the three names to `tests=(…)`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `examples/github-actions/report-test.sh test_legacy_writes_the_existing_report_format test_legacy_reports_all_passed_and_missing_roots test_legacy_rejects_several_roots`
-Expected: `FAIL: writing the legacy report failed: Usage: …`.
+Run: `examples/github-actions/report-test.sh test_legacy_writes_the_existing_report_format test_legacy_reports_all_passed_and_missing_roots test_legacy_rejects_several_roots` Expected: `FAIL: writing the legacy report failed: Usage: …`.
 
 - [ ] **Step 3: Implement `legacy`**
 
@@ -2442,8 +2427,7 @@ omits branches that could not be read.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `examples/github-actions/report-test.sh`
-Expected: every test PASSES. `make shellcheck`: clean.
+Run: `examples/github-actions/report-test.sh` Expected: every test PASSES. `make shellcheck`: clean.
 
 - [ ] **Step 5: Commit**
 
@@ -2517,8 +2501,7 @@ test_workflow_reports_each_policy_read_only() {
 }
 ```
 
-Add it to `tests=(…)`. Run `examples/github-actions/report-test.sh test_workflow_reports_each_policy_read_only`.
-Expected: `FAIL: the report workflow does not exist`.
+Add it to `tests=(…)`. Run `examples/github-actions/report-test.sh test_workflow_reports_each_policy_read_only`. Expected: `FAIL: the report workflow does not exist`.
 
 - [ ] **Step 2: Create the workflow**
 
@@ -2614,15 +2597,13 @@ jobs:
           retention-days: 7
 ```
 
-Run: `examples/github-actions/report-test.sh test_workflow_reports_each_policy_read_only` and `make actionlint`.
-Expected: PASS; actionlint clean.
+Run: `examples/github-actions/report-test.sh test_workflow_reports_each_policy_read_only` and `make actionlint`. Expected: PASS; actionlint clean.
 
 - [ ] **Step 3: Write the failing pin-updater test**
 
 In `release_workflow_test.go`, add `"examples/github-actions/.github/workflows/tf-version-bump-report.yml",` to `actionsReleasePinFiles()` after the nonproduction caller.
 
-Run: `go test -count=1 -run 'TestUpdateActionsReleasePin' ./...`
-Expected: `TestUpdateActionsReleasePinUpdatesMaintainedFiles` FAILS with `examples/github-actions/.github/workflows/tf-version-bump-report.yml retains the previous release pin`.
+Run: `go test -count=1 -run 'TestUpdateActionsReleasePin' ./...` Expected: `TestUpdateActionsReleasePinUpdatesMaintainedFiles` FAILS with `examples/github-actions/.github/workflows/tf-version-bump-report.yml retains the previous release pin`.
 
 - [ ] **Step 4: Maintain the report pin in the updater**
 
@@ -2637,8 +2618,7 @@ In `scripts/update-actions-release-pin.sh`:
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `go test -count=1 -run 'TestUpdateActionsReleasePin' ./...`, then `go test -count=1 ./...`, `examples/github-actions/report-test.sh`, `make actionlint`, `make shellcheck`.
-Expected: all PASS and clean. `TestUpdateActionsReleasePinIsIdempotent` still passes because the report workflow pins the current release.
+Run: `go test -count=1 -run 'TestUpdateActionsReleasePin' ./...`, then `go test -count=1 ./...`, `examples/github-actions/report-test.sh`, `make actionlint`, `make shellcheck`. Expected: all PASS and clean. `TestUpdateActionsReleasePinIsIdempotent` still passes because the report workflow pins the current release.
 
 - [ ] **Step 6: Commit**
 
@@ -2717,8 +2697,7 @@ directly, so import the CSVs as text instead.
 
 - [ ] **Step 2: Verify**
 
-Run: `make docs-check` and `go test -count=1 -run 'TestUpdateActionsReleasePin' ./...`.
-Expected: PASS (the `#version-report` anchor resolves; the README still holds one version and one digest occurrence).
+Run: `make docs-check` and `go test -count=1 -run 'TestUpdateActionsReleasePin' ./...`. Expected: PASS (the `#version-report` anchor resolves; the README still holds one version and one digest occurrence).
 
 - [ ] **Step 3: Commit**
 
@@ -2748,8 +2727,7 @@ Expected output: `Updated GitHub Actions example pin to v<version>`.
 
 `release_workflow_test.go` hard-codes the current pin (`v1.0.0-rc.11` and `5560b45e…` at lines 339, 361, 395, 461 and 486) and uses `v1.0.0-rc.12` as a hypothetical next release. Follow the precedent in commit `72c5323` (`claude-git show 72c5323 -- release_workflow_test.go`): replace the current-pin literals with the new version and digest, and if the new release is itself `v1.0.0-rc.12`, move the hypothetical next release to `v1.0.0-rc.13`.
 
-Run: `go test -count=1 -run 'TestUpdateActionsReleasePin' ./...`
-Expected: PASS.
+Run: `go test -count=1 -run 'TestUpdateActionsReleasePin' ./...` Expected: PASS.
 
 - [ ] **Step 3: Full verification**
 

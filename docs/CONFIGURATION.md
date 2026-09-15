@@ -1,7 +1,6 @@
 # Configuration
 
-A YAML config lets one `tf-version-bump` run update Terraform requirements, providers, and
-modules across the same selected files.
+A YAML config lets one `tf-version-bump` run update Terraform requirements, providers, and modules across the same selected files.
 
 ```bash
 tf-version-bump -pattern "**/*.tf" -config versions.yml
@@ -36,15 +35,9 @@ modules:
     version: "4.0.0"
 ```
 
-At least one of `terraform_version`, `providers`, or `modules` should be present. Unknown fields
-are rejected by the runtime YAML decoder. Leading and trailing whitespace is removed from names,
-sources, and version strings; empty items in module filter lists are discarded.
+At least one of `terraform_version`, `providers`, or `modules` should be present. Unknown fields are rejected by the runtime YAML decoder. Leading and trailing whitespace is removed from names, sources, and version strings; empty items in module filter lists are discarded.
 
-The repository's [JSON Schema](../schema/config-schema.json) provides editor completion and
-validates Terraform-style version-constraint syntax. The CLI's YAML loader does not execute that
-JSON Schema, so use an editor or separate schema validator when you need schema enforcement. The
-maintained configurations under [`examples/`](../examples/README.md#yaml-configurations) include
-the schema declaration shown above and can be copied as editor-enabled starting points.
+The repository's [JSON Schema](../schema/config-schema.json) provides editor completion and validates Terraform-style version-constraint syntax. The CLI's YAML loader does not execute that JSON Schema, so use an editor or separate schema validator when you need schema enforcement. The maintained configurations under [`examples/`](../examples/README.md#yaml-configurations) include the schema declaration shown above and can be copied as editor-enabled starting points.
 
 ## Validate without updating
 
@@ -54,11 +47,7 @@ Validate the runtime YAML contract without selecting, parsing, or changing Terra
 tf-version-bump -validate-config versions.yml
 ```
 
-The command rejects malformed YAML, multiple YAML documents, unknown fields, missing required
-entry fields, and configs without any Terraform, provider, or module updates. It trims and
-validates values in the same way as update mode. It does not execute the JSON Schema or validate
-Terraform version-constraint syntax. Validation is standalone and cannot be combined with update,
-check, or report flags.
+The command rejects malformed YAML, multiple YAML documents, unknown fields, missing required entry fields, and configs without any Terraform, provider, or module updates. It trims and validates values in the same way as update mode. It does not execute the JSON Schema or validate Terraform version-constraint syntax. Validation is standalone and cannot be combined with update, check, or report flags.
 
 ## Top-level fields
 
@@ -68,8 +57,7 @@ check, or report flags.
 | `providers` | list | Provider version updates |
 | `modules` | list | Module version updates |
 
-When more than one group is present, the command applies Terraform, provider, then module updates.
-Entries within a list retain YAML order.
+When more than one group is present, the command applies Terraform, provider, then module updates. Entries within a list retain YAML order.
 
 ## Terraform version
 
@@ -77,8 +65,7 @@ Entries within a list retain YAML order.
 terraform_version: ">= 1.9, < 2.0"
 ```
 
-The value is set in every existing top-level `terraform` block in every selected file. A missing
-`required_version` attribute is added; a missing block is not.
+The value is set in every existing top-level `terraform` block in every selected file. A missing `required_version` attribute is added; a missing block is not.
 
 ## Providers
 
@@ -92,8 +79,7 @@ providers:
     version: ">= 6.0, < 7.0"
 ```
 
-`name` is the key under `required_providers`, not the provider source address. In this example,
-the first entry targets `aws`, not `hashicorp/aws`:
+`name` is the key under `required_providers`, not the provider source address. In this example, the first entry targets `aws`, not `hashicorp/aws`:
 
 ```hcl
 terraform {
@@ -106,8 +92,7 @@ terraform {
 }
 ```
 
-See [Provider version updates](USAGE.md#provider-version-updates) for syntax and insertion
-behaviour.
+See [Provider version updates](USAGE.md#provider-version-updates) for syntax and insertion behaviour.
 
 ## Modules
 
@@ -130,8 +115,7 @@ modules:
     version: "5.0.0"
 ```
 
-Every non-local module with that exact source is updated when it already has a literal `version`
-attribute. `-force-add` can add a missing attribute only when the source is a registry module.
+Every non-local module with that exact source is updated when it already has a literal `version` attribute. `-force-add` can add a missing attribute only when the source is a registry module.
 
 ### One source version
 
@@ -158,8 +142,7 @@ modules:
       - "~> 4.0"
 ```
 
-The strings are not interpreted. The last item matches only a module whose version attribute is
-literally `~> 4.0`; it does not represent every 4.x release.
+The strings are not interpreted. The last item matches only a module whose version attribute is literally `~> 4.0`; it does not represent every 4.x release.
 
 ### Excluded versions
 
@@ -174,8 +157,7 @@ modules:
       - "~> 3.0"
 ```
 
-An ignored version is never updated by that entry. `ignore_versions` takes precedence over
-`from` when the same value appears in both.
+An ignored version is never updated by that entry. `ignore_versions` takes precedence over `from` when the same value appears in both.
 
 ### Excluded module names
 
@@ -192,14 +174,11 @@ modules:
       - "*-temporary-*"
 ```
 
-Patterns are case-sensitive and apply to the label in `module "label"`. `*` matches zero or more
-characters. A value without `*` is an exact match.
+Patterns are case-sensitive and apply to the label in `module "label"`. `*` matches zero or more characters. A value without `*` is an exact match.
 
 ### Branch-scoped module names
 
-An entry can be limited to particular branches by prefixing it with a branch pattern. Terraform
-module names cannot contain `/`, so the final `/` separates the branch pattern from the module
-pattern:
+An entry can be limited to particular branches by prefixing it with a branch pattern. Terraform module names cannot contain `/`, so the final `/` separates the branch pattern from the module pattern:
 
 ```yaml
 modules:
@@ -211,35 +190,25 @@ modules:
       - "state/staging/*/shared-*"                # branch and module wildcards
 ```
 
-The branch pattern uses the same wildcard rules as the module pattern, so `*` spans `/` instead of
-stopping at a path segment. A trailing `/*` is therefore the module pattern rather than a branch
-glob: every module on any `state/staging/…` branch is `state/staging/*/*`. No `/`-separated part
-may be empty; `state/staging/`, `/vpc`, and `state//vpc` are rejected when the config is loaded or
-validated.
+The branch pattern uses the same wildcard rules as the module pattern, so `*` spans `/` instead of stopping at a path segment. A trailing `/*` is therefore the module pattern rather than a branch glob: every module on any `state/staging/…` branch is `state/staging/*/*`. No `/`-separated part may be empty; `state/staging/`, `/vpc`, and `state//vpc` are rejected when the config is loaded or validated.
 
-Supply the branch with the `-branch` flag, which the command never infers from Git. It takes the
-short branch name, not `refs/heads/…` or `origin/…`:
+Supply the branch with the `-branch` flag, which the command never infers from Git. It takes the short branch name, not `refs/heads/…` or `origin/…`:
 
 ```bash
 tf-version-bump -pattern "**/*.tf" -config versions.yml -branch "$(git branch --show-current)"
 ```
 
-`git branch --show-current` is deliberate: it prints nothing on a detached checkout, so a config
-containing a branch-scoped entry stops with this error:
+`git branch --show-current` is deliberate: it prints nothing on a detached checkout, so a config containing a branch-scoped entry stops with this error:
 
 ```text
 Error: ignore pattern 'state/staging/example-thing/shared-vpc' is scoped to a branch, but -branch is missing or empty; a detached checkout has no current branch
 ```
 
-`git rev-parse --abbrev-ref HEAD` prints `HEAD` there, which names no branch, so a literal
-`-branch HEAD` is rejected, as is any value beginning `refs/` such as `$GITHUB_REF`.
+`git rev-parse --abbrev-ref HEAD` prints `HEAD` there, which names no branch, so a literal `-branch HEAD` is rejected, as is any value beginning `refs/` such as `$GITHUB_REF`.
 
-A config containing a branch-scoped entry fails when `-branch` is missing, rather than silently
-dropping the exclusion and updating a module the config set out to protect. Configs that use only
-unscoped entries do not need `-branch`.
+A config containing a branch-scoped entry fails when `-branch` is missing, rather than silently dropping the exclusion and updating a module the config set out to protect. Configs that use only unscoped entries do not need `-branch`.
 
-`-audit-file` resolves these entries identically, so the audit and an update agree on which modules
-are excluded. See [the version audit](USAGE.md#machine-readable-version-audit).
+`-audit-file` resolves these entries identically, so the audit and an update agree on which modules are excluded. See [the version audit](USAGE.md#machine-readable-version-audit).
 
 ### Filter precedence
 
@@ -247,15 +216,12 @@ For a module whose source matches the entry:
 
 1. Local sources are skipped.
 2. `ignore_modules` is applied, after branch-scoped entries are resolved against `-branch`.
-3. A missing version is skipped unless the command uses `-force-add` and the source is a registry
-   module.
+3. A missing version is skipped unless the command uses `-force-add` and the source is a registry module.
 4. `ignore_versions` is applied.
 5. `from` is applied.
 6. The target `version` is written.
 
-When `-force-add` handles a missing version, there is no current value to compare with `from` or
-`ignore_versions`, so the target is added after the name and registry-source checks. Terraform
-does not support a `version` argument for Git or other non-registry module sources.
+When `-force-add` handles a missing version, there is no current value to compare with `from` or `ignore_versions`, so the target is added after the name and registry-source checks. Terraform does not support a `version` argument for Git or other non-registry module sources.
 
 ## Config-mode flags
 
@@ -276,8 +242,7 @@ tf-version-bump \
 - `-force-add` adds missing version attributes to matching registry modules.
 - `-branch` supplies the branch name that branch-scoped `ignore_modules` entries are matched against.
 
-Direct operation flags and filters cannot accompany `-config`: `-module`, `-provider`,
-`-terraform-version`, `-to`, `-from`, `-ignore-version`, and `-ignore-modules` are rejected.
+Direct operation flags and filters cannot accompany `-config`: `-module`, `-provider`, `-terraform-version`, `-to`, `-from`, `-ignore-version`, and `-ignore-modules` are rejected.
 
 ## Example files
 
@@ -289,5 +254,4 @@ The [`examples` directory](../examples/README.md) contains configs for:
 - Combined Terraform, provider, and module updates
 - A larger production-style module list
 
-Use those values as syntax examples, not as recommendations for current module or provider
-versions. Choose versions appropriate to your own configuration.
+Use those values as syntax examples, not as recommendations for current module or provider versions. Choose versions appropriate to your own configuration.

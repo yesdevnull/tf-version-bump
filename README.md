@@ -1,12 +1,9 @@
 # Terraform Version Bump
 
 > [!WARNING]
-> This repository is an experiment for generative AI coding tools. It may contain bugs,
-> incomplete features, or other issues. Review every change before applying it to production.
+> This repository is an experiment for generative AI coding tools. It may contain bugs, incomplete features, or other issues. Review every change before applying it to production.
 
-`tf-version-bump` updates Terraform module versions, Terraform `required_version`
-constraints, and provider versions across files selected by a glob pattern. It parses and
-writes HCL with HashiCorp's `hclwrite` package instead of editing Terraform as plain text.
+`tf-version-bump` updates Terraform module versions, Terraform `required_version` constraints, and provider versions across files selected by a glob pattern. It parses and writes HCL with HashiCorp's `hclwrite` package instead of editing Terraform as plain text.
 
 ## What it can update
 
@@ -15,8 +12,7 @@ writes HCL with HashiCorp's `hclwrite` package instead of editing Terraform as p
 - Provider versions in `required_providers` blocks
 - Any combination of those updates from one YAML config file
 
-Changed files retain their comments and HCL structure, but are formatted by `hclwrite`; do
-not expect byte-for-byte preservation of whitespace. Original file permissions are retained.
+Changed files retain their comments and HCL structure, but are formatted by `hclwrite`; do not expect byte-for-byte preservation of whitespace. Original file permissions are retained.
 
 ## Installation
 
@@ -28,19 +24,13 @@ Go 1.25 or later is required:
 go install github.com/yesdevnull/tf-version-bump@latest
 ```
 
-Go installs the command into `GOBIN`, or into `GOPATH/bin` when `GOBIN` is unset. Ensure that
-directory is on your `PATH`.
+Go installs the command into `GOBIN`, or into `GOPATH/bin` when `GOBIN` is unset. Ensure that directory is on your `PATH`.
 
 ### Release artefacts
 
-Pre-built archives and Linux packages are published on the
-[GitHub Releases](https://github.com/yesdevnull/tf-version-bump/releases) page. Releases may
-be marked as pre-releases, so choose the tag deliberately. Release assets include checksums
-alongside builds for Linux, macOS, and Windows on amd64 and arm64. Releases that include SLSA
-provenance publish a matching `.intoto.jsonl` asset.
+Pre-built archives and Linux packages are published on the [GitHub Releases](https://github.com/yesdevnull/tf-version-bump/releases) page. Releases may be marked as pre-releases, so choose the tag deliberately. Release assets include checksums alongside builds for Linux, macOS, and Windows on amd64 and arm64. Releases that include SLSA provenance publish a matching `.intoto.jsonl` asset.
 
-See [Release process and verification](docs/RELEASING.md) for artefact names and verification
-commands.
+See [Release process and verification](docs/RELEASING.md) for artefact names and verification commands.
 
 ### Build from source
 
@@ -64,9 +54,7 @@ tf-version-bump \
   -to "5.0.0"
 ```
 
-Module sources are compared as exact strings. All eligible module blocks with a matching source
-are updated, no matter what their block labels are. Eligibility depends on the current-version,
-module-name, and missing-version controls described below.
+Module sources are compared as exact strings. All eligible module blocks with a matching source are updated, no matter what their block labels are. Eligibility depends on the current-version, module-name, and missing-version controls described below.
 
 ### Update the required Terraform version
 
@@ -74,8 +62,7 @@ module-name, and missing-version controls described below.
 tf-version-bump -pattern "**/*.tf" -terraform-version ">= 1.9"
 ```
 
-This sets `required_version` in every existing top-level `terraform` block in the matching
-files. It does not create a missing `terraform` block.
+This sets `required_version` in every existing top-level `terraform` block in the matching files. It does not create a missing `terraform` block.
 
 ### Update a provider
 
@@ -120,15 +107,11 @@ Validate the config structure without selecting or changing Terraform files:
 tf-version-bump -validate-config versions.yml
 ```
 
-Config mode is exclusive with `-module`, `-provider`, `-terraform-version`, `-to`, and the
-module-filter flags. It can still be combined with global behaviour flags such as `-dry-run`,
-`-check`, `-force-add`, `-verbose`, `-branch`, `-output`, and `-report-file`, subject to the
-check-mode restrictions below.
+Config mode is exclusive with `-module`, `-provider`, `-terraform-version`, `-to`, and the module-filter flags. It can still be combined with global behaviour flags such as `-dry-run`, `-check`, `-force-add`, `-verbose`, `-branch`, `-output`, and `-report-file`, subject to the check-mode restrictions below.
 
 ## Preview and review
 
-The command writes files in place. Start with a clean version-control worktree, preview the
-operation, then inspect the real diff:
+The command writes files in place. Start with a clean version-control worktree, preview the operation, then inspect the real diff:
 
 ```bash
 tf-version-bump \
@@ -146,30 +129,19 @@ terraform fmt -check -recursive
 terraform validate
 ```
 
-`tf-version-bump` checks HCL syntax but cannot determine whether a new version is compatible
-with your Terraform configuration. Use your normal validation and planning workflow before
-deployment.
+`tf-version-bump` checks HCL syntax but cannot determine whether a new version is compatible with your Terraform configuration. Use your normal validation and planning workflow before deployment.
 
-For CI, use `-check` instead of `-dry-run`. It writes nothing and exits 0 when no eligible version
-value would change, 2 when updates are required, and 1 on an error. Ignored modules, unmatched
-targets, and matching modules skipped for a missing `version` can still return 0. Check mode cannot
-be combined with `-dry-run` or `-report-file`.
+For CI, use `-check` instead of `-dry-run`. It writes nothing and exits 0 when no eligible version value would change, 2 when updates are required, and 1 on an error. Ignored modules, unmatched targets, and matching modules skipped for a missing `version` can still return 0. Check mode cannot be combined with `-dry-run` or `-report-file`.
 
-Automation can pass `-report-file update-report.json` in write mode to receive exact updated
-Terraform, module, and provider block counts as JSON. See the
-[usage reference](docs/USAGE.md#machine-readable-update-report) for the report contract and the
-[examples cookbook](examples/README.md#automation-cookbook) for a complete workflow.
+Automation can pass `-report-file update-report.json` in write mode to receive exact updated Terraform, module, and provider block counts as JSON. See the [usage reference](docs/USAGE.md#machine-readable-update-report) for the report contract and the [examples cookbook](examples/README.md#automation-cookbook) for a complete workflow.
 
-To compare files with a config without changing them, pass `-audit-file audit.json` in config mode
-instead. The audit lists every configured value's current and expected version; the
-[usage reference](docs/USAGE.md#machine-readable-version-audit) describes it.
+To compare files with a config without changing them, pass `-audit-file audit.json` in config mode instead. The audit lists every configured value's current and expected version; the [usage reference](docs/USAGE.md#machine-readable-version-audit) describes it.
 
 ## Common controls
 
 ### Select current versions
 
-Repeat `-from` to update only modules whose current version string equals one of the supplied
-values:
+Repeat `-from` to update only modules whose current version string equals one of the supplied values:
 
 ```bash
 tf-version-bump \
@@ -180,12 +152,9 @@ tf-version-bump \
   -from "~> 4.0"
 ```
 
-These are exact string comparisons, not semantic-version or Terraform-constraint evaluation.
-For example, `-from "~> 4.0"` matches the literal constraint `~> 4.0`; it does not match
-`4.3.0`.
+These are exact string comparisons, not semantic-version or Terraform-constraint evaluation. For example, `-from "~> 4.0"` matches the literal constraint `~> 4.0`; it does not match `4.3.0`.
 
-Use repeatable `-ignore-version` flags to exclude exact current-version strings. Exclusions
-take precedence over `-from`.
+Use repeatable `-ignore-version` flags to exclude exact current-version strings. Exclusions take precedence over `-from`.
 
 ### Ignore module block names
 
@@ -199,9 +168,7 @@ tf-version-bump \
   -ignore-modules "legacy-vpc,test-*,*-deprecated"
 ```
 
-A pattern can be scoped to particular branches by prefixing it with a branch pattern. The final
-`/` separates the branch pattern from the module pattern, because Terraform module names cannot
-contain `/`:
+A pattern can be scoped to particular branches by prefixing it with a branch pattern. The final `/` separates the branch pattern from the module pattern, because Terraform module names cannot contain `/`:
 
 ```bash
 tf-version-bump \
@@ -212,14 +179,11 @@ tf-version-bump \
   -branch "state/staging/example-thing"
 ```
 
-An unscoped pattern applies to every branch. A scoped pattern requires `-branch`; the command never
-reads the branch from Git, and expects the short name that `git branch --show-current` prints. See
-[Branch-scoped module-name filters](docs/USAGE.md#branch-scoped-module-name-filters).
+An unscoped pattern applies to every branch. A scoped pattern requires `-branch`; the command never reads the branch from Git, and expects the short name that `git branch --show-current` prints. See [Branch-scoped module-name filters](docs/USAGE.md#branch-scoped-module-name-filters).
 
 ### Add a missing module version
 
-Matching registry modules without a `version` attribute are skipped with a warning by default.
-Use `-force-add` to add the attribute:
+Matching registry modules without a `version` attribute are skipped with a warning by default. Use `-force-add` to add the attribute:
 
 ```bash
 tf-version-bump \
@@ -229,9 +193,7 @@ tf-version-bump \
   -force-add
 ```
 
-Local and non-registry remote module sources are always skipped when their `version` attribute is
-missing, including with `-force-add`. Terraform supports `version` only for registry modules; Git
-and other remote sources select revisions through their source address.
+Local and non-registry remote module sources are always skipped when their `version` attribute is missing, including with `-force-add`. Terraform supports `version` only for registry modules; Git and other remote sources select revisions through their source address.
 
 ## Glob patterns
 
@@ -254,8 +216,7 @@ See [Usage reference](docs/USAGE.md#file-selection) for the complete matching be
 | [Examples](examples/README.md) | YAML samples, Terraform fixtures, and the branch automation script |
 | [Release process](docs/RELEASING.md) | Building, publishing, and verifying release artefacts |
 
-Run `tf-version-bump -help` for the command's built-in flag reference and
-`tf-version-bump -version` for build metadata.
+Run `tf-version-bump -help` for the command's built-in flag reference and `tf-version-bump -version` for build metadata.
 
 ## Development
 
@@ -264,8 +225,7 @@ go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 golangci-lint run --timeout=5m
 ```
 
-See [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md) for repository architecture and
-contributor guidance.
+See [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md) for repository architecture and contributor guidance.
 
 ## Licence
 

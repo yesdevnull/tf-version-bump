@@ -1,8 +1,6 @@
 # Release process and verification
 
-Git tags beginning with `v` trigger the release workflow. GitHub Actions uses GoReleaser to build
-archives and Linux packages in a draft release, the SLSA generator attaches provenance, and a final
-job publishes the complete release.
+Git tags beginning with `v` trigger the release workflow. GitHub Actions uses GoReleaser to build archives and Linux packages in a draft release, the SLSA generator attaches provenance, and a final job publishes the complete release.
 
 This page serves two audiences:
 
@@ -26,15 +24,11 @@ For a tag such as `v1.0.0-rc.8`, the version portion in archive names is `1.0.0-
 | `tf-version-bump-v<version>.checksums.txt` | SHA-256 checksums |
 | `tf-version-bump-v<version>.intoto.jsonl` | SLSA provenance |
 
-Release tags containing a semantic-version pre-release suffix, such as `-rc.8`, are published as
-GitHub pre-releases automatically. Select a tag from the
-[Releases page](https://github.com/yesdevnull/tf-version-bump/releases) rather than assuming a
-stable release exists.
+Release tags containing a semantic-version pre-release suffix, such as `-rc.8`, are published as GitHub pre-releases automatically. Select a tag from the [Releases page](https://github.com/yesdevnull/tf-version-bump/releases) rather than assuming a stable release exists.
 
 ## Verify a checksum
 
-This Linux example uses the existing `v1.0.0-rc.8` pre-release. Replace `VERSION` deliberately
-when downloading another release:
+This Linux example uses the existing `v1.0.0-rc.8` pre-release. Replace `VERSION` deliberately when downloading another release:
 
 ```bash
 VERSION="1.0.0-rc.8"
@@ -45,8 +39,7 @@ curl -LO "https://github.com/yesdevnull/tf-version-bump/releases/download/v${VER
 sha256sum -c "tf-version-bump-v${VERSION}.checksums.txt" --ignore-missing
 ```
 
-`--ignore-missing` limits verification to downloaded files whose names appear in the checksum
-manifest. Check that the command explicitly reports the selected archive as `OK`.
+`--ignore-missing` limits verification to downloaded files whose names appear in the checksum manifest. Check that the command explicitly reports the selected archive as `OK`.
 
 ## Verify SLSA provenance
 
@@ -70,14 +63,9 @@ slsa-verifier verify-artifact "tf-version-bump_${VERSION}_linux_x86_64.tar.gz" \
   --source-tag "v${VERSION}"
 ```
 
-The release workflow requests GitHub's OIDC token, supplies artefact digests to the reusable SLSA
-generator, and uploads the resulting in-toto JSONL file to the release. Third-party actions are
-pinned to commit SHAs, except for the reusable SLSA generator's upstream-required exact semantic
-version tag. Jobs declare their required permissions explicitly.
+The release workflow requests GitHub's OIDC token, supplies artefact digests to the reusable SLSA generator, and uploads the resulting in-toto JSONL file to the release. Third-party actions are pinned to commit SHAs, except for the reusable SLSA generator's upstream-required exact semantic version tag. Jobs declare their required permissions explicitly.
 
-GoReleaser runs the tagged module through `proxy.golang.org` and verifies dependencies through
-`sum.golang.org`. This tagged proxy path records verifiable module information in the binaries; a
-local snapshot does not exercise it.
+GoReleaser runs the tagged module through `proxy.golang.org` and verifies dependencies through `sum.golang.org`. This tagged proxy path records verifiable module information in the binaries; a local snapshot does not exercise it.
 
 ## Create a release
 
@@ -106,24 +94,15 @@ The tag push starts `.github/workflows/release.yml`, which:
 5. Generates and uploads SLSA provenance to the draft.
 6. Publishes the draft only after the build and provenance jobs succeed.
 
-If a complete workflow rerun is required after a failure, GoReleaser replaces the existing draft
-for that tag and uploads a clean set of assets. If only the final publication job failed, rerunning
-the failed job publishes the already-complete draft.
+If a complete workflow rerun is required after a failure, GoReleaser replaces the existing draft for that tag and uploads a clean set of assets. If only the final publication job failed, rerunning the failed job publishes the already-complete draft.
 
-Before relying on release immutability, follow
-[GitHub's repository instructions](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/prevent-release-changes#enforcing-immutable-releases-for-your-repository):
-open the repository's **Settings**, scroll to **Releases**, and select **Enable release
-immutability**. The setting applies only to releases published after it is enabled. Drafts remain
-editable while the workflow is assembling them; after publication, GitHub locks the tag and assets.
+Before relying on release immutability, follow [GitHub's repository instructions](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/prevent-release-changes#enforcing-immutable-releases-for-your-repository): open the repository's **Settings**, scroll to **Releases**, and select **Enable release immutability**. The setting applies only to releases published after it is enabled. Drafts remain editable while the workflow is assembling them; after publication, GitHub locks the tag and assets.
 
-After the workflow completes, verify that the release contains all six platform archives, four
-Linux packages, the checksum manifest, and provenance file. Perform at least one checksum and
-provenance verification using the published assets.
+After the workflow completes, verify that the release contains all six platform archives, four Linux packages, the checksum manifest, and provenance file. Perform at least one checksum and provenance verification using the published assets.
 
 ### Update the maintained GitHub Actions example
 
-After independently verifying the published Linux x86-64 archive, update the copyable Actions
-example, its test harness, and current user guides together:
+After independently verifying the published Linux x86-64 archive, update the copyable Actions example, its test harness, and current user guides together:
 
 ```bash
 scripts/update-actions-release-pin.sh v<version> <linux-x86-64-sha256>
@@ -133,9 +112,7 @@ make test-github-actions
 make actionlint
 ```
 
-The updater is deliberately offline: it accepts the already verified digest rather than trusting a
-network-fetched checksum. It validates both arguments and the expected maintained-file layout before
-writing anything. Historical design documents and version-specific test fixtures are not changed.
+The updater is deliberately offline: it accepts the already verified digest rather than trusting a network-fetched checksum. It validates both arguments and the expected maintained-file layout before writing anything. Historical design documents and version-specific test fixtures are not changed.
 
 ## Test a release locally
 
@@ -147,34 +124,26 @@ goreleaser --version
 goreleaser release --snapshot --clean
 ```
 
-GoReleaser writes snapshot output under `dist/`. The release configuration uses `-trimpath`, the
-source commit date, and commit-based modification times to reduce environmental differences. It
-does not run source-mutating pre-build hooks.
+GoReleaser writes snapshot output under `dist/`. The release configuration uses `-trimpath`, the source commit date, and commit-based modification times to reduce environmental differences. It does not run source-mutating pre-build hooks.
 
-A local snapshot confirms GoReleaser packaging. It does not exercise tagged Go module proxy mode,
-prove byte-identical reproducibility, reproduce GitHub OIDC, or run the reusable SLSA workflow.
+A local snapshot confirms GoReleaser packaging. It does not exercise tagged Go module proxy mode, prove byte-identical reproducibility, reproduce GitHub OIDC, or run the reusable SLSA workflow.
 
 ## Troubleshooting
 
 ### GoReleaser reports a dirty worktree
 
-Inspect `git status`. Commit intentional source or module-file changes before tagging. Do not tag
-from an unreviewed dirty worktree.
+Inspect `git status`. Commit intentional source or module-file changes before tagging. Do not tag from an unreviewed dirty worktree.
 
 ### Checksum verification fails
 
-Confirm the archive, checksum manifest, and tag all use the same version, including any
-pre-release suffix. Re-download both files before investigating further.
+Confirm the archive, checksum manifest, and tag all use the same version, including any pre-release suffix. Re-download both files before investigating further.
 
 ### Provenance verification fails
 
-Confirm the archive and `.intoto.jsonl` came from the same release and that `--source-tag` includes
-the leading `v`.
+Confirm the archive and `.intoto.jsonl` came from the same release and that `--source-tag` includes the leading `v`.
 
 ### Expected artefacts are missing
 
-Inspect both the GoReleaser and SLSA jobs in the tag-triggered workflow. A GoReleaser success does
-not by itself prove that provenance generation and upload also completed.
+Inspect both the GoReleaser and SLSA jobs in the tag-triggered workflow. A GoReleaser success does not by itself prove that provenance generation and upload also completed.
 
-If the release is still a draft, inspect the failed job before publishing it manually. Prefer a
-workflow rerun so the draft is rebuilt or published through the same reviewed process.
+If the release is still a draft, inspect the failed job before publishing it manually. Prefer a workflow rerun so the draft is rebuilt or published through the same reviewed process.

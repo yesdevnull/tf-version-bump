@@ -35,8 +35,7 @@
 
 - [ ] **Step 1: Review the plans against the design**
 
-Confirm every design section maps to a task and that the second pull request starts only after the
-rc.10 acceptance checks.
+Confirm every design section maps to a task and that the second pull request starts only after the rc.10 acceptance checks.
 
 - [ ] **Step 2: Scan for placeholders and inconsistent names**
 
@@ -76,8 +75,7 @@ Add command-level tests that execute real Terraform fixtures and prove:
 - `-check -dry-run`, `-check -report-file`, and `-validate-config ... -check` are rejected with exact diagnostics;
 - parsing records `check: true` and existing dry-run parsing remains distinct.
 
-The production mutations caught are an accidental write, wrong status precedence, a missing
-conflict, and treating all successful checks as status 2.
+The production mutations caught are an accidental write, wrong status precedence, a missing conflict, and treating all successful checks as status 2.
 
 - [ ] **Step 2: Run the focused tests and verify RED**
 
@@ -87,10 +85,7 @@ Expected: FAIL because `-check`, its conflicts, and status 2 do not exist.
 
 - [ ] **Step 3: Implement the minimal command policy**
 
-Add the flag and validation. After mode validation, make check mode use the existing dry-run update
-path while retaining a distinct banner. Return update totals from both command-mode runners. In
-`main`, process all files, handle any error as status 1, publish only allowed reports, then call
-`exitFunc(2)` when check mode found one or more updates.
+Add the flag and validation. After mode validation, make check mode use the existing dry-run update path while retaining a distinct banner. Return update totals from both command-mode runners. In `main`, process all files, handle any error as status 1, publish only allowed reports, then call `exitFunc(2)` when check mode found one or more updates.
 
 - [ ] **Step 4: Run focused and complete Go tests**
 
@@ -104,13 +99,11 @@ Expected: PASS.
 
 - [ ] **Step 5: Update the internal architecture contract**
 
-Update `CLAUDE.md` to describe check status precedence and the mode-runner update total. Do not add
-user-facing cookbook prose yet.
+Update `CLAUDE.md` to describe check status precedence and the mode-runner update total. Do not add user-facing cookbook prose yet.
 
 - [ ] **Step 6: Commit check mode**
 
-Stage `main.go`, `command_test.go`, and `CLAUDE.md`; commit with subject
-`feat: add CI check mode`.
+Stage `main.go`, `command_test.go`, and `CLAUDE.md`; commit with subject `feat: add CI check mode`.
 
 ### Task 3: Report exact Terraform block updates in schema version 2
 
@@ -127,13 +120,9 @@ Stage `main.go`, `command_test.go`, and `CLAUDE.md`; commit with subject
 
 - [ ] **Step 1: Write the failing Terraform report tests**
 
-Add command-level report assertions for multiple Terraform blocks, already-current blocks, a
-missing `required_version`, two hard-linked paths, config mode, direct mode, and dry-run zeros. Add a
-focused updater test proving changed block indexes identify only blocks that would be rewritten.
-Update no existing expected report strings yet.
+Add command-level report assertions for multiple Terraform blocks, already-current blocks, a missing `required_version`, two hard-linked paths, config mode, direct mode, and dry-run zeros. Add a focused updater test proving changed block indexes identify only blocks that would be rewritten. Update no existing expected report strings yet.
 
-The production mutations caught are counting files instead of blocks, counting semantic no-ops,
-double-counting a hard link, and forgetting either direct or config mode.
+The production mutations caught are counting files instead of blocks, counting semantic no-ops, double-counting a hard link, and forgetting either direct or config mode.
 
 - [ ] **Step 2: Run focused tests and verify RED**
 
@@ -143,15 +132,11 @@ Expected: FAIL because the report has no Terraform field or recorder.
 
 - [ ] **Step 3: Implement Terraform block identity recording**
 
-Refactor the updater through `updateTerraformVersionWithCount`, retain the existing convenience
-adapter for tests, pass the report recorder through direct/config processing, and record changed
-block indexes only after actual writes. Set `SchemaVersion` to 2 before publishing.
+Refactor the updater through `updateTerraformVersionWithCount`, retain the existing convenience adapter for tests, pass the report recorder through direct/config processing, and record changed block indexes only after actual writes. Set `SchemaVersion` to 2 before publishing.
 
 - [ ] **Step 4: Update all schema-v1 report expectations mechanically**
 
-Change existing expected JSON to schema version 2 and include
-`"terraform_blocks_updated": 0` or the independently derived non-zero value. Do not weaken exact
-JSON assertions.
+Change existing expected JSON to schema version 2 and include `"terraform_blocks_updated": 0` or the independently derived non-zero value. Do not weaken exact JSON assertions.
 
 - [ ] **Step 5: Run focused and complete Go tests**
 
@@ -165,8 +150,7 @@ Expected: PASS.
 
 - [ ] **Step 6: Update the internal report contract and commit**
 
-Update `CLAUDE.md` from report schema version 1 to version 2 and describe the unique Terraform block
-count. Stage only the task files and commit with subject `feat: report Terraform block updates`.
+Update `CLAUDE.md` from report schema version 1 to version 2 and describe the unique Terraform block count. Stage only the task files and commit with subject `feat: report Terraform block updates`.
 
 ### Task 4: Add the automation cookbook and maintained scenarios
 
@@ -191,12 +175,9 @@ count. Stage only the task files and commit with subject `feat: report Terraform
 
 - [ ] **Step 1: Write the failing scenario-runner contract in Go**
 
-Add a documentation test that runs `examples/run-scenarios.sh` from the repository root, captures
-stdout/stderr, and requires a zero exit with a concise success line. Add config discovery for the two
-scenario YAML files so the runtime/schema constraint checks own them too.
+Add a documentation test that runs `examples/run-scenarios.sh` from the repository root, captures stdout/stderr, and requires a zero exit with a concise success line. Add config discovery for the two scenario YAML files so the runtime/schema constraint checks own them too.
 
-The production mutation caught is a copyable scenario whose command, fixture, or assertion has
-drifted from the real CLI.
+The production mutation caught is a copyable scenario whose command, fixture, or assertion has drifted from the real CLI.
 
 - [ ] **Step 2: Run documentation checks and verify RED**
 
@@ -206,13 +187,10 @@ Expected: FAIL because `examples/run-scenarios.sh` and the scenario configs do n
 
 - [ ] **Step 3: Add minimal fixtures and runner**
 
-Create the two scenario directories and an executable Bash runner with `--help`, dependency checks,
-one temporary workspace, cleanup trap, one repository binary build, precise failure messages, and
-observable assertions:
+Create the two scenario directories and an executable Bash runner with `--help`, dependency checks, one temporary workspace, cleanup trap, one repository binary build, precise failure messages, and observable assertions:
 
 - force-add first warns and preserves the fixture, then adds version `5.0.0` with `-force-add`;
-- idempotency applies the combined config, records bytes and modification time, applies it again,
-  and proves the second command reports no updates without changing either.
+- idempotency applies the combined config, records bytes and modification time, applies it again, and proves the second command reports no updates without changing either.
 
 - [ ] **Step 4: Run the runner and documentation checks**
 
@@ -226,10 +204,7 @@ Expected: PASS.
 
 - [ ] **Step 5: Write the human-facing cookbook and corrections**
 
-Add schema declarations to every maintained update config. Expand `examples/README.md` with
-validation, preview, check-status handling, apply/report/jq, and copy-safe scenario commands. Update
-the README quick-start flag list, the usage flag/report/expression contracts, and the configuration
-guide's editor setup without duplicating the full reference.
+Add schema declarations to every maintained update config. Expand `examples/README.md` with validation, preview, check-status handling, apply/report/jq, and copy-safe scenario commands. Update the README quick-start flag list, the usage flag/report/expression contracts, and the configuration guide's editor setup without duplicating the full reference.
 
 - [ ] **Step 6: Re-run documentation and complete Go tests**
 
@@ -243,8 +218,7 @@ Expected: PASS.
 
 - [ ] **Step 7: Commit documentation and examples**
 
-Stage the listed documentation, Makefile, runner, configs, scenarios, and documentation test. Commit
-with subject `docs: add automation cookbook and scenarios`.
+Stage the listed documentation, Makefile, runner, configs, scenarios, and documentation test. Commit with subject `docs: add automation cookbook and scenarios`.
 
 ### Task 5: Clean up tests and review the first pull request
 
@@ -258,15 +232,11 @@ with subject `docs: add automation cookbook and scenarios`.
 
 - [ ] **Step 1: Run the mandatory test-cleanup subagent**
 
-Commit all implementation work, invoke the `test-cleanup` skill in a fresh subagent on this branch,
-classify every touched test, run the relevant suite and coverage, and commit only subtractive test
-changes. If nothing is removed, record that result without an empty commit.
+Commit all implementation work, invoke the `test-cleanup` skill in a fresh subagent on this branch, classify every touched test, run the relevant suite and coverage, and commit only subtractive test changes. If nothing is removed, record that result without an empty commit.
 
 - [ ] **Step 2: Request adversarial review**
 
-Use the repository's peer/adversarial review workflow on the complete diff. Verify every finding
-against code and tests before accepting it. Apply confirmed fixes with TDD and signed commits; reply
-to rejected findings with technical evidence.
+Use the repository's peer/adversarial review workflow on the complete diff. Verify every finding against code and tests before accepting it. Apply confirmed fixes with TDD and signed commits; reply to rejected findings with technical evidence.
 
 - [ ] **Step 3: Re-run cleanup if review fixes changed tests materially**
 
@@ -301,19 +271,15 @@ Expected: every command exits 0, output is pristine, and total coverage remains 
 
 - [ ] **Step 2: Verify branch state and signatures**
 
-Inspect `origin/main...HEAD`, confirm only intended files changed, and verify every PR commit reports a
-good signature from Dan's GenAI key. Stop on any signing failure.
+Inspect `origin/main...HEAD`, confirm only intended files changed, and verify every PR commit reports a good signature from Dan's GenAI key. Stop on any signing failure.
 
 - [ ] **Step 3: Push, open the pull request, and verify CI**
 
-Push through the Codex wrapper, create a PR with a body covering behaviour, report migration, docs,
-tests, and the planned rc.10 dependency. Wait for every required check and resolve failures rather
-than bypassing them.
+Push through the Codex wrapper, create a PR with a body covering behaviour, report migration, docs, tests, and the planned rc.10 dependency. Wait for every required check and resolve failures rather than bypassing them.
 
 - [ ] **Step 4: Rebase-merge and refresh local main**
 
-Rebase-merge only after all branch commits are signed and checks pass. Pull `main` with rebase and
-verify the merged tree matches the reviewed PR result.
+Rebase-merge only after all branch commits are signed and checks pass. Pull `main` with rebase and verify the merged tree matches the reviewed PR result.
 
 - [ ] **Step 5: Re-run release-gate verification on merged main**
 
@@ -321,12 +287,8 @@ Repeat the full commands from Step 1 on the exact merged commit. Confirm a clean
 
 - [ ] **Step 6: Create and push the annotated release tag**
 
-Create annotated tag `v1.0.0-rc.10` with message `Release v1.0.0-rc.10` through the Codex Git wrapper
-and push that exact tag. Do not move or recreate the tag after publication.
+Create annotated tag `v1.0.0-rc.10` with message `Release v1.0.0-rc.10` through the Codex Git wrapper and push that exact tag. Do not move or recreate the tag after publication.
 
 - [ ] **Step 7: Verify the published release**
 
-Wait for the release and provenance workflows. Confirm six platform archives, four Linux packages,
-the checksum manifest, and the in-toto provenance file. Download the Linux x86-64 archive and
-checksum manifest, verify the archive checksum, verify provenance using the documented command, run
-the extracted binary's `-version`, and record its SHA-256 for the Actions migration.
+Wait for the release and provenance workflows. Confirm six platform archives, four Linux packages, the checksum manifest, and the in-toto provenance file. Download the Linux x86-64 archive and checksum manifest, verify the archive checksum, verify provenance using the documented command, run the extracted binary's `-version`, and record its SHA-256 for the Actions migration.
