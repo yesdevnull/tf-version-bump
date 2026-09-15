@@ -52,8 +52,8 @@ jobs:
       terraform_fmt: true
       terraform_init_upgrade: ${{ github.event_name == 'workflow_dispatch' && inputs.terraform_init_upgrade || false }}
       terraform_version: 1.15.5
-      tf_version_bump_version: v1.0.0-rc.13
-      tf_version_bump_archive_sha256: 62927c35285b2b12c0c5e91422b4711bb087bf3584a94413660b2cc59187b186
+      tf_version_bump_version: v1.0.0-rc.14
+      tf_version_bump_archive_sha256: a6e13b11903db55dd418584a4052255fd583631c1e167baf6ed1c80ab2e4d9a0
       dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
       max_parallel: 4
       commit_author_name: github-actions[bot]

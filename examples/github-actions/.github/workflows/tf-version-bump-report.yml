@@ -63,8 +63,8 @@ jobs:
           REPORT_TERRAFORM_ROOTS: ${{ matrix.terraform_directories }}
           REPORT_BRANCHES: ${{ runner.temp }}/branches.json
           REPORT_OUTPUT_DIR: ${{ runner.temp }}/version-report
-          REPORT_TF_VERSION_BUMP_VERSION: v1.0.0-rc.13
-          REPORT_TF_VERSION_BUMP_ARCHIVE_SHA256: 62927c35285b2b12c0c5e91422b4711bb087bf3584a94413660b2cc59187b186
+          REPORT_TF_VERSION_BUMP_VERSION: v1.0.0-rc.14
+          REPORT_TF_VERSION_BUMP_ARCHIVE_SHA256: a6e13b11903db55dd418584a4052255fd583631c1e167baf6ed1c80ab2e4d9a0
         run: '"$CONTROL_CHECKOUT/.github/scripts/report-state-branches.sh" collect'
       - name: Write version report
         env:

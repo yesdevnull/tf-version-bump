@@ -50,8 +50,8 @@ Each configured root runs the updater and `terraform init`. If the candidate cha
 then run `terraform validate` in the same initialised checkout, including unchanged candidates.
 The reusable workflow defaults formatting to `false`; both supplied callers enable it.
 
-The callers pin `tf-version-bump` to `v1.0.0-rc.13` and archive SHA-256
-`62927c35285b2b12c0c5e91422b4711bb087bf3584a94413660b2cc59187b186`.
+The callers pin `tf-version-bump` to `v1.0.0-rc.14` and archive SHA-256
+`a6e13b11903db55dd418584a4052255fd583631c1e167baf6ed1c80ab2e4d9a0`.
 
 `terraform_init_upgrade` defaults to `false`. Enable the manual input, or set it to `true` in
 the caller's `with` block for scheduled runs, to add `-upgrade`. Direct script callers use
