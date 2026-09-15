@@ -207,7 +207,7 @@ The branch pattern uses the same wildcard rules as the module pattern, so `*` sp
 
 A trailing `/*` is the module pattern, not a branch glob. `state/staging/*` means every module on a branch named exactly `state/staging`, which cannot exist alongside any `state/staging/<name>` branch, because Git stores refs as directories. Under a `state/<environment>/<name>` scheme, use `state/staging/*/*`.
 
-The command does not inspect Git, so supply `-branch` yourself. It takes the short branch name, as `git branch --show-current` prints it, not `refs/heads/…` or `origin/…`:
+The command does not inspect Git, so supply `-branch` yourself. It takes the short branch name, as `git branch --show-current` prints it, rather than a full ref such as `refs/heads/…`. A remote-tracking name such as `origin/main` is accepted, because a local branch may be named that way, but it is rarely the branch you mean:
 
 ```bash
 tf-version-bump -pattern "**/*.tf" -config versions.yml -branch "$(git branch --show-current)"

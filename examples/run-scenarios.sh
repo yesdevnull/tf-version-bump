@@ -37,7 +37,7 @@ if (($# != 0)); then
     exit 2
 fi
 
-for dependency in go grep cmp cp mktemp sed stat touch; do
+for dependency in go grep cmp cp mkdir mktemp sed stat touch; do
     require_command "$dependency"
 done
 
