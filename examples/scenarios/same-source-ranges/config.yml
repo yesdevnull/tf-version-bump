@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yesdevnull/tf-version-bump/main/schema/config-schema.json
+
+# Both entries target the same module source. Neither target appears in the other entry's `from`
+# list, so the result does not depend on entry order and a second run changes nothing.
+modules:
+  # Keep 5.x constraints and pins on the latest 5.x line.
+  - source: terraform-aws-modules/vpc/aws
+    version: "~> 5.21"
+    from:
+      - "~> 5.0"
+      - "5.1.0"
+
+  # Move 4.x constraints to the latest 4.x line, except the legacy VPC.
+  - source: terraform-aws-modules/vpc/aws
+    version: "~> 4.6"
+    from: "~> 4.0"
+    ignore_modules:
+      - legacy_vpc
