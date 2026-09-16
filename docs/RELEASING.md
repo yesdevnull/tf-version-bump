@@ -112,7 +112,7 @@ make test-github-actions
 make actionlint
 ```
 
-The updater is deliberately offline: it accepts the already verified digest rather than trusting a network-fetched checksum. It validates both arguments and the expected maintained-file layout before writing anything. Historical design documents and version-specific test fixtures are not changed.
+The updater is deliberately offline: it accepts the already verified digest rather than trusting a network-fetched checksum. It validates both arguments and the expected maintained-file layout before writing anything. The release-pin tests read the pin out of the maintained example rather than naming a release of their own, so a bump changes only the files the updater writes.
 
 ## Test a release locally
 
