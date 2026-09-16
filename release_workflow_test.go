@@ -348,7 +348,7 @@ func TestUpdateActionsReleasePinUpdatesMaintainedFiles(t *testing.T) {
 
 func TestUpdateActionsReleasePinAcceptsStableRelease(t *testing.T) {
 	repository := copyActionsReleasePinFixture(t)
-	currentVersion, _ := currentActionsReleasePin(t)
+	currentVersion, currentDigest := currentActionsReleasePin(t)
 	const newVersion = "v9.9.9"
 	const newDigest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
@@ -358,10 +358,13 @@ func TestUpdateActionsReleasePinAcceptsStableRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update to stable release: %v\n%s", err, output)
 	}
+	// The bare version is left out: it would match an unrelated version literal, such as the
+	// Terraform version beside the pin, the day a release shares one of their numbers.
+	previousArchive := "tf-version-bump_" + strings.TrimPrefix(currentVersion, "v") + "_linux"
 	for _, filename := range actionsReleasePinFiles() {
 		contents := readTestFile(t, filepath.Join(repository, filename))
-		if strings.Contains(contents, strings.TrimPrefix(currentVersion, "v")) {
-			t.Errorf("%s retains the previous prerelease", filename)
+		if strings.Contains(contents, currentVersion) || strings.Contains(contents, previousArchive) || strings.Contains(contents, currentDigest) {
+			t.Errorf("%s retains the previous release pin", filename)
 		}
 		if !strings.Contains(contents, newVersion) || !strings.Contains(contents, newDigest) {
 			t.Errorf("%s does not contain the stable release pin", filename)
@@ -454,10 +457,10 @@ func TestUpdateActionsReleasePinRejectsInvalidInputWithoutChanges(t *testing.T) 
 		args []string
 	}{
 		{name: "missing arguments"},
-		{name: "version without tag prefix", args: []string{strings.TrimPrefix(replacementActionsReleaseVersion, "v"), strings.Repeat("a", 64)}},
-		{name: "malformed version", args: []string{"v1.0", strings.Repeat("a", 64)}},
-		{name: "leading zero in core version", args: []string{"v01.0.0", strings.Repeat("a", 64)}},
-		{name: "leading zero in numeric prerelease", args: []string{"v1.0.0-01", strings.Repeat("a", 64)}},
+		{name: "version without tag prefix", args: []string{strings.TrimPrefix(replacementActionsReleaseVersion, "v"), replacementActionsReleaseDigest}},
+		{name: "malformed version", args: []string{"v1.0", replacementActionsReleaseDigest}},
+		{name: "leading zero in core version", args: []string{"v01.0.0", replacementActionsReleaseDigest}},
+		{name: "leading zero in numeric prerelease", args: []string{"v1.0.0-01", replacementActionsReleaseDigest}},
 		{name: "short digest", args: []string{replacementActionsReleaseVersion, "abc123"}},
 	}
 
@@ -616,16 +619,18 @@ func TestRequiredStatusWorkflowDocumentationMatchesTriggers(t *testing.T) {
 	}
 }
 
-// The pin these tests ask the updater to write. It names no real release, so it can never equal the
-// checked-in pin, whatever that has been bumped to.
+// The pin these tests ask the updater to write. They name no real release, so neither can ever equal
+// the checked-in pin, whatever that has been bumped to.
 const (
 	replacementActionsReleaseVersion = "v9.9.9-rc.1"
 	replacementActionsReleaseDigest  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 )
 
 // currentActionsReleasePin reads the pin the maintained example is checked in with, so no test
-// carries a release version or digest of its own and a bump changes only the files the updater
-// writes. Both fields live in every caller; the non-production one stands for them all.
+// repeats the checked-in pin and a bump changes only the files the updater writes. Only the two
+// reusable-workflow callers declare these fields verbatim; the other maintained files spell the pin
+// as an archive name, a URL or prose. The updater reads its own baseline from the production caller,
+// so callers that disagree fail its layout check rather than skewing this one.
 func currentActionsReleasePin(t *testing.T) (version, digest string) {
 	t.Helper()
 	const caller = "examples/github-actions/.github/workflows/tf-version-bump-nonproduction.yml"
