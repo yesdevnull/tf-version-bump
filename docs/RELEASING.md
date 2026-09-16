@@ -107,12 +107,13 @@ After independently verifying the published Linux x86-64 archive, update the cop
 ```bash
 scripts/update-actions-release-pin.sh v<version> <linux-x86-64-sha256>
 git diff -- examples/github-actions docs/ADVANCED-USAGE.md
+go test ./...
 make docs-check
 make test-github-actions
 make actionlint
 ```
 
-The updater is deliberately offline: it accepts the already verified digest rather than trusting a network-fetched checksum. It validates both arguments and the expected maintained-file layout before writing anything. The release-pin tests read the pin out of the maintained example rather than naming a release of their own, so a bump changes only the files the updater writes.
+The updater is deliberately offline: it accepts the already verified digest rather than trusting a network-fetched checksum. It validates both arguments and the expected maintained-file layout before writing anything. The release-pin tests read the pin out of the maintained example rather than naming a release of their own, so a bump changes only the files the updater writes; `make docs-check` does not run them, which is why the block above runs the full suite. Version literals outside that maintained set, such as the historical examples in this guide and the fixture versions in the example's own harness, are left alone.
 
 ## Test a release locally
 
