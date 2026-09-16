@@ -321,7 +321,7 @@ func TestReleaseWorkflowReferencesSLSAGeneratorByExactSemanticVersionTag(t *test
 
 func TestUpdateActionsReleasePinUpdatesMaintainedFiles(t *testing.T) {
 	repository := copyActionsReleasePinFixture(t)
-	const newVersion = "v1.0.0-rc.15"
+	const newVersion = "v1.0.0-rc.16"
 	const newDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", newVersion, newDigest)
@@ -330,13 +330,13 @@ func TestUpdateActionsReleasePinUpdatesMaintainedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update release pin: %v\n%s", err, output)
 	}
-	if got, want := string(output), "Updated GitHub Actions example pin to v1.0.0-rc.15\n"; got != want {
+	if got, want := string(output), "Updated GitHub Actions example pin to v1.0.0-rc.16\n"; got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
 
 	for _, filename := range actionsReleasePinFiles() {
 		contents := readTestFile(t, filepath.Join(repository, filename))
-		if strings.Contains(contents, "v1.0.0-rc.14") || strings.Contains(contents, "a6e13b11903db55dd418584a4052255fd583631c1e167baf6ed1c80ab2e4d9a0") {
+		if strings.Contains(contents, "v1.0.0-rc.15") || strings.Contains(contents, "735b71fdfcf9cf3c04557588dceabb92aa3e8b3c332d39f30a319cdd9521fb94") {
 			t.Errorf("%s retains the previous release pin", filename)
 		}
 		if !strings.Contains(contents, newVersion) || !strings.Contains(contents, newDigest) {
@@ -358,7 +358,7 @@ func TestUpdateActionsReleasePinAcceptsStableRelease(t *testing.T) {
 	}
 	for _, filename := range actionsReleasePinFiles() {
 		contents := readTestFile(t, filepath.Join(repository, filename))
-		if strings.Contains(contents, "1.0.0-rc.14") {
+		if strings.Contains(contents, "1.0.0-rc.15") {
 			t.Errorf("%s retains the previous prerelease", filename)
 		}
 		if !strings.Contains(contents, newVersion) || !strings.Contains(contents, newDigest) {
@@ -392,7 +392,7 @@ func TestUpdateActionsReleasePinIsIdempotent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	command := exec.CommandContext(ctx, bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.14", "a6e13b11903db55dd418584a4052255fd583631c1e167baf6ed1c80ab2e4d9a0")
+	command := exec.CommandContext(ctx, bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.15", "735b71fdfcf9cf3c04557588dceabb92aa3e8b3c332d39f30a319cdd9521fb94")
 	command.Dir = repository
 	command.WaitDelay = time.Second
 	output, err := command.CombinedOutput()
@@ -496,13 +496,13 @@ func TestUpdateActionsReleasePinRejectsUnexpectedLayoutWithoutPartialChanges(t *
 	repository := copyActionsReleasePinFixture(t)
 	guide := filepath.Join(repository, "docs", "ADVANCED-USAGE.md")
 	contents := readTestFile(t, guide)
-	contents = strings.Replace(contents, "a6e13b11903db55dd418584a4052255fd583631c1e167baf6ed1c80ab2e4d9a0", strings.Repeat("b", 64), 1)
+	contents = strings.Replace(contents, "735b71fdfcf9cf3c04557588dceabb92aa3e8b3c332d39f30a319cdd9521fb94", strings.Repeat("b", 64), 1)
 	if err := os.WriteFile(guide, []byte(contents), 0o644); err != nil {
 		t.Fatalf("write mismatched guide fixture: %v", err)
 	}
 	before := readActionsReleasePinFiles(t, repository)
 
-	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.15", strings.Repeat("a", 64))
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.16", strings.Repeat("a", 64))
 	command.Dir = repository
 	output, err := command.CombinedOutput()
 	var exitError *exec.ExitError
@@ -521,14 +521,14 @@ func TestUpdateActionsReleasePinRejectsDivergentDuplicateFieldWithoutPartialChan
 	repository := copyActionsReleasePinFixture(t)
 	workflow := filepath.Join(repository, "examples", "github-actions", ".github", "workflows", "tf-version-bump-nonproduction.yml")
 	contents := readTestFile(t, workflow)
-	currentField := "      tf_version_bump_version: v1.0.0-rc.14"
+	currentField := "      tf_version_bump_version: v1.0.0-rc.15"
 	contents = strings.Replace(contents, currentField, currentField+"\n      tf_version_bump_version: v0.9.0", 1)
 	if err := os.WriteFile(workflow, []byte(contents), 0o644); err != nil {
 		t.Fatalf("write duplicate-field fixture: %v", err)
 	}
 	before := readActionsReleasePinFiles(t, repository)
 
-	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.15", strings.Repeat("a", 64))
+	command := exec.Command(bashPath(t), "scripts/update-actions-release-pin.sh", "v1.0.0-rc.16", strings.Repeat("a", 64))
 	command.Dir = repository
 	output, err := command.CombinedOutput()
 	var exitError *exec.ExitError
