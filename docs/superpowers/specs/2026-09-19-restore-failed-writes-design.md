@@ -50,7 +50,7 @@ Unlike `gofmt`, the backup goes in the system temporary directory rather than be
 
 On failure paths the handle's own `Close` error is discarded (`_ = file.Close()`), as `preparedReportFile.publish` does, because a more specific error is already being returned.
 
-Steps 4 and 5 are a helper, `rewriteContents(file rewritableFile, original, formatted []byte) (restored bool, err error)`, which returns whether the file holds its original bytes after a failure. `write` owns opening, reading, backing up, closing, removing the backup, marking the file untrusted and wording every error.
+Steps 4 and 5 are a helper, `rewriteContents(file rewritableFile, original, formatted []byte) (restored bool, err error)`, which returns whether the file holds its original bytes after a failure. It words the rewrite part of the error (the plain cause, `; original content restored`, or `; restoring the original also failed: …`), because only it knows which case occurred. `write` owns opening, reading, backing up, closing, removing the backup and marking the file untrusted, and adds the `failed to write file:` prefix and, when the backup is kept, the `; original content is in <backup>` suffix.
 
 ### Untrusted files
 
@@ -83,12 +83,14 @@ New tests are written first, under TDD. Each points the system temporary directo
 
 In `module_update_test.go`, beside the existing write-failure tests:
 
+- A successful write leaves no backup.
+- A write whose read through the open handle fails returns `failed to write file: <err>`, leaves the file unchanged and creates no backup.
 - A write that fails part way restores the original bytes exactly, returns the `; original content restored` error and leaves no backup.
 - A write whose new content is shorter than the original, and which fails at the `Truncate` or the `Sync` after a complete `WriteAt`, restores the original bytes exactly.
 - A write that fails before writing any byte leaves the file unchanged, returns the plain `failed to write file: <err>` error and leaves no backup.
 - A write whose restore also fails keeps exactly one backup holding the original bytes, returns the error naming that backup's path, and a later `readTerraformFile` of the same file, and of a hard link to it, returns the untrusted-file error.
 - A `Close` failure after a successful rewrite keeps the backup, returns the error naming it, and leaves the file holding the new content.
-- With the temporary directory set to a path that does not exist, the write returns the `cannot back up` error and the file is unchanged.
+- With the temporary directory set to a path that does not exist, the write returns the `cannot back up` error and the file is unchanged. This one error is asserted by its exact prefix and `errors.Is(err, fs.ErrNotExist)` rather than as a whole string, because it quotes the random name `os.CreateTemp` chose and the platform's wording of the missing path.
 - When the backup's own `Write`, `Sync` or `Close` fails (one subtest each, through the `createBackupFile` hook), the write returns the exact `cannot back up` error, the Terraform file is unchanged and no backup remains in the temporary directory.
 - When removing the backup fails after a successful write, the write succeeds and stderr holds exactly `Warning: could not remove backup <backup>: <err>`. The test double's successful `Close` makes the test's temporary directory read-only (mode 0o500, restored in `t.Cleanup`) before returning, so the removal fails. The test skips when running as root, which ignores directory permissions, and on Windows, where a read-only directory does not block removal.
 
