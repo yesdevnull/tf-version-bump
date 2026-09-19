@@ -54,7 +54,7 @@ Steps 4 and 5 are a helper, `rewriteContents(file rewritableFile, original, form
 
 ### Untrusted files
 
-When a write keeps its backup, `write` records the file in a run-wide set of untrusted files, holding its `os.FileInfo` and backup path. `readTerraformFile` already stats each file before reading it; after that stat it checks the set with `os.SameFile`, as `updateReport.fileIdentity` does, and for an untrusted file returns `file left untrusted by an earlier failed write; original content is in <backup>` without reading it. Rewriting in place keeps the inode, so the check also catches the same file reached through a symlink or a hard link.
+When a write keeps its backup, `write` records the file in a run-wide set of untrusted files, holding its `os.FileInfo` and backup path. The `os.FileInfo` is `terraformFile.info`, captured by the stat in `readTerraformFile`, so recording the file needs no further stat that could itself fail and leave a kept backup's file unmarked. `readTerraformFile` already stats each file before reading it; after that stat it checks the set with `os.SameFile`, as `updateReport.fileIdentity` does, and for an untrusted file returns `file left untrusted by an earlier failed write; original content is in <backup>` without reading it. Rewriting in place keeps the inode, so the check also catches the same file reached through a symlink or a hard link.
 
 Every update path already logs a read error and counts it once per entry, so the Terraform-version pass, each provider pass and the module entries in `processFiles` all refuse the file for the rest of the run with no new plumbing, and the command exits 1. The audit (`audit.go`) reads and parses files itself and never writes, so it neither fills nor consults the set.
 
@@ -72,12 +72,12 @@ Tests replace the hook with a wrapper around the real `*os.File` that fails a ch
 - A file whose write keeps a backup is refused for the rest of the run by every pass, instead of being re-read and updated again.
 - A file deleted between the parse and the write now fails with `failed to write file: open <name>: no such file or directory`, instead of being recreated silently, because `O_CREATE` is dropped.
 - The system temporary directory must be writable and have room for a copy of the file; if not, the write fails before the file is touched.
-- `terraformFile.mode` goes, because the permission bits are never changed. `readTerraformFile` keeps its `os.Stat`, because the untrusted-file check needs the result and `TestUpdateModuleVersionErrors` asserts the `failed to stat file:` prefix for a missing file.
+- `terraformFile.mode` is replaced by `info os.FileInfo`, because the permission bits are never changed and the untrusted-file set needs the file's identity. `readTerraformFile` keeps its `os.Stat`, which supplies `info`, performs the untrusted-file check and keeps the `failed to stat file:` prefix that `TestUpdateModuleVersionErrors` asserts for a missing file.
 - Hard links, symlinks, owner, group, extended attributes, permission bits and read-only failures behave as before. `updateReport.fileIdentity` needs no change.
 
 ## Tests
 
-New tests are written first, under TDD. Each sets `TMPDIR` with `t.Setenv` to its own `t.TempDir()`, so it can assert exactly which backups exist; no test in the suite runs in parallel, so `t.Setenv` is allowed. Every error is asserted as an exact string.
+New tests are written first, under TDD. Each points the system temporary directory at its own `t.TempDir()` with `t.Setenv`, setting `TMPDIR` for Unix and `TMP` and `TEMP` for Windows, where `os.TempDir` reads those instead, so it can assert exactly which backups exist. No test in the suite runs in parallel, so `t.Setenv` is allowed. Every error is asserted as an exact string.
 
 In `module_update_test.go`, beside the existing write-failure tests:
 
@@ -86,11 +86,12 @@ In `module_update_test.go`, beside the existing write-failure tests:
 - A write that fails before writing any byte leaves the file unchanged, returns the plain `failed to write file: <err>` error and leaves no backup.
 - A write whose restore also fails keeps exactly one backup holding the original bytes, returns the error naming that backup's path, and a later `readTerraformFile` of the same file, and of a hard link to it, returns the untrusted-file error.
 - A `Close` failure after a successful rewrite keeps the backup, returns the error naming it, and leaves the file holding the new content.
-- With `TMPDIR` set to a path that does not exist, the write returns the `cannot back up` error and the file is unchanged.
+- With the temporary directory set to a path that does not exist, the write returns the `cannot back up` error and the file is unchanged.
+- When removing the backup fails after a successful write, the write succeeds and stderr holds exactly `Warning: could not remove backup <backup>: <err>`. The test double's successful `Close` makes the test's temporary directory read-only (mode 0o500, restored in `t.Cleanup`) before returning, so the removal fails. The test skips when running as root, which ignores directory permissions, and on Windows, where a read-only directory does not block removal.
 
 In `command_test.go`, a config-mode run whose Terraform-version write keeps its backup logs the untrusted-file error for the file in each later provider and module entry, exits 1, and never writes the file again.
 
-Intentionally uncovered: the warning when removing the backup fails, and failures of the backup's own `Write`, `Sync` and `Close`. Provoking them needs a second hook for a path that only prints a warning or reuses the `cannot back up` wording, which the backup-creation test already asserts.
+Awaiting Dan's decision: failures of the backup's own `Write`, `Sync` and `Close` share the `cannot back up` wording that the backup-creation test asserts, but provoking them needs a second hook around `os.CreateTemp`. Either add that hook and test each branch, or approve leaving these branches uncovered as an exception to the rule that tests cover all functionality.
 
 The existing tests for read-only files (`module_update_test.go`, `terraform_version_test.go`, `provider_update_test.go`, `command_test.go`), preserved permission bits and hard-linked report counts, including the linked-name content check in `TestCommandReportCountsHardLinkedBlocksOnce`, must pass unchanged. After the TDD phase, a separate `test-cleanup` pass removes low-value tests, such as permission-bit tests that no longer exercise anything.
 
@@ -99,14 +100,14 @@ The existing tests for read-only files (`module_update_test.go`, `terraform_vers
 - `CLAUDE.md`, gotcha "Don't run concurrent instances over the same files": replace "writes are not atomic" with the two-tier guarantee, the untrusted-file rule, the crash and power-loss limitation, and the backup's location in the system temporary directory. There is still no file locking.
 - `CLAUDE.md`, "Standard hclwrite pattern": replace "keeps the mode write must preserve" and "then the original permission bits" with the in-place rewrite and its restore.
 - `AGENTS.md`, the hclwrite outline comment "Format and write back with the original permission bits": the same change.
-- `docs/USAGE.md`, "File-writing behaviour": replace "The original permission bits are reused when the file is written" with the fact that files are rewritten in place, so permission bits, owner and links are untouched. Replace "Writes are not transactional" with the guarantee, the backup's location and name, what an error naming a backup means for the user, the need for a writable temporary directory, and the crash limitation. Keep the advice against concurrent runs.
-- `main.go`: update the doc comments on `terraformFile` and `write`, and the `processFiles` comment "A failed write may not have reached the file…", which becomes: after a failed write the file on disk holds its original content, so later entries start from it.
+- `docs/USAGE.md`, "File-writing behaviour": replace "The original permission bits are reused when the file is written" with the fact that files are rewritten in place, so permission bits, owner and links are untouched. Replace "Writes are not transactional" with the guarantee, the backup's location and name, what an error naming a backup means for the user, the need for a writable temporary directory, that pointing `TMPDIR` (or `TMP`/`TEMP` on Windows) inside the Terraform tree brings a leftover backup back into glob range, and the crash limitation. Keep the advice against concurrent runs.
+- `main.go`: update the doc comments on `terraformFile` and `write`, and the `processFiles` comment "A failed write may not have reached the file…", which becomes: after a failed write the file is re-read, so later entries start from its original content when it was restored, and are refused by `readTerraformFile` when its backup was kept.
 - `command_test.go`: the comment on `TestCommandConfigFailedWriteRestartsLaterEntriesFromDisk` says a failed write "may not have reached the file"; restate it as the file being restored, which is why later entries start from its content on disk. The test's assertions do not change: a read-only file fails at the open, before any backup.
 
 ## Acceptance
 
 - A write that reports an error either leaves the Terraform file byte-for-byte as it was with no backup remaining, or keeps a backup of the original bytes, names that backup in the error, and every later read of the same file in the run is refused.
-- No backup is ever created inside the Terraform tree.
+- The backup is created in `os.TempDir()`, never beside the Terraform file.
 - Every existing test passes unchanged, and total coverage stays at or above 90%.
 - `golangci-lint` passes.
 - The documentation lists above describe the new behaviour.
