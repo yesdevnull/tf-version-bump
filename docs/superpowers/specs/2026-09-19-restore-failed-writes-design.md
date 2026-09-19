@@ -64,7 +64,9 @@ The set is package state guarded by a mutex. Tests that make a write keep its ba
 
 `rewritableFile` is the narrow interface the write needs: `Read`, `WriteAt`, `Truncate`, `Sync` and `Close`, all satisfied by `*os.File`. The file is opened through an unexported package variable, `openFileForRewrite`, defaulting to the `os.OpenFile` call in step 1 and guarded by `hookMu`, following the existing `exitFunc` and `fatalf` hooks (`main.go`, near the top).
 
-Tests replace the hook with a wrapper around the real `*os.File` that fails a chosen call: the Nth `WriteAt` after writing only its first bytes (N = 2 fails the restore), a `Truncate`, a `Sync`, or the `Close`. Every call that is not chosen to fail goes through to the real file. The partial bytes really reach the disk, so every assertion concerns bytes on disk and the real restore logic, not the behaviour of a mock.
+The backup is created through a second unexported package variable, `createBackupFile`, also guarded by `hookMu`, defaulting to the `os.CreateTemp` call in step 3 and returning a `backupFile` interface (`Write`, `Sync`, `Close` and `Name`) that `*os.File` satisfies.
+
+Tests replace `openFileForRewrite` with a wrapper around the real `*os.File` that fails a chosen call: the Nth `WriteAt` after writing only its first bytes (N = 2 fails the restore), a `Truncate`, a `Sync`, or the `Close`. Every call that is not chosen to fail goes through to the real file. They replace `createBackupFile` with a wrapper around a real temporary file that fails its `Write`, `Sync` or `Close`. The partial bytes really reach the disk, so every assertion concerns bytes on disk and the real restore and clean-up logic, not the behaviour of a mock.
 
 ## Behaviour changes
 
@@ -87,11 +89,10 @@ In `module_update_test.go`, beside the existing write-failure tests:
 - A write whose restore also fails keeps exactly one backup holding the original bytes, returns the error naming that backup's path, and a later `readTerraformFile` of the same file, and of a hard link to it, returns the untrusted-file error.
 - A `Close` failure after a successful rewrite keeps the backup, returns the error naming it, and leaves the file holding the new content.
 - With the temporary directory set to a path that does not exist, the write returns the `cannot back up` error and the file is unchanged.
+- When the backup's own `Write`, `Sync` or `Close` fails (one subtest each, through the `createBackupFile` hook), the write returns the exact `cannot back up` error, the Terraform file is unchanged and no backup remains in the temporary directory.
 - When removing the backup fails after a successful write, the write succeeds and stderr holds exactly `Warning: could not remove backup <backup>: <err>`. The test double's successful `Close` makes the test's temporary directory read-only (mode 0o500, restored in `t.Cleanup`) before returning, so the removal fails. The test skips when running as root, which ignores directory permissions, and on Windows, where a read-only directory does not block removal.
 
 In `command_test.go`, a config-mode run whose Terraform-version write keeps its backup logs the untrusted-file error for the file in each later provider and module entry, exits 1, and never writes the file again.
-
-Awaiting Dan's decision: failures of the backup's own `Write`, `Sync` and `Close` share the `cannot back up` wording that the backup-creation test asserts, but provoking them needs a second hook around `os.CreateTemp`. Either add that hook and test each branch, or approve leaving these branches uncovered as an exception to the rule that tests cover all functionality.
 
 The existing tests for read-only files (`module_update_test.go`, `terraform_version_test.go`, `provider_update_test.go`, `command_test.go`), preserved permission bits and hard-linked report counts, including the linked-name content check in `TestCommandReportCountsHardLinkedBlocksOnce`, must pass unchanged. After the TDD phase, a separate `test-cleanup` pass removes low-value tests, such as permission-bit tests that no longer exercise anything.
 
