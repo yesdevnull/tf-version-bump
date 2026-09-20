@@ -677,6 +677,68 @@ func TestCommandConfigFailedWriteRestartsLaterEntriesFromDisk(t *testing.T) {
 	}
 }
 
+// A run whose updates all failed must say so. Reporting that the config may be empty or match
+// nothing sends the operator to the config when the config was right and the files were not.
+func TestCommandConfigEveryUpdateFailedReportsTheFailures(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", `module "broken" {`)
+	config := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n")
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config})
+
+	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\n1 update(s) failed; see the errors above\n"
+	wantDiagnostics := "Error processing " + file + ": failed to parse HCL: " + file + ":1,17-18: Unclosed configuration block; There is no closing brace for this block before the end of the file. This may be caused by incorrect brace nesting elsewhere in this file.\n1 module update error(s)\n"
+	if result.stdout != wantStdout || result.diagnostics != wantDiagnostics || result.exitCode != 1 {
+		t.Fatalf("result = %#v, want stdout %q, diagnostics %q and exit 1", result, wantStdout, wantDiagnostics)
+	}
+}
+
+// A config that declares nothing is named as such, rather than left to share the wording of a
+// config whose updates are all already applied.
+func TestCommandConfigDeclaringNoUpdatesSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	input := "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+	file := writeTestFile(t, dir, "main.tf", input)
+	config := writeTestFile(t, dir, "versions.yml", "# nothing to update\n")
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config})
+
+	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\nNo updates were performed. The config declares no updates.\n"
+	if result.stdout != wantStdout || result.diagnostics != "" || result.exitCode != -1 {
+		t.Fatalf("result = %#v, want stdout %q and normal return", result, wantStdout)
+	}
+	if got := readTestFile(t, file); got != input {
+		t.Errorf("content = %q, want unchanged %q", got, input)
+	}
+}
+
+// Every direct mode reports its failures in place of a success line counting no files, which
+// claims a success the run never had.
+func TestCommandEveryUpdateFailedReportsTheFailures(t *testing.T) {
+	tests := []struct {
+		name, errText string
+		operation     []string
+	}{
+		{"module", "1 module update error(s)", []string{"-module", "example/module", "-to", "2.0.0"}},
+		{"terraform", "1 Terraform version update error(s)", []string{"-terraform-version", ">= 1.5"}},
+		{"provider", "1 provider update error(s)", []string{"-provider", "aws", "-to", "~> 5.0"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			file := writeTestFile(t, dir, "main.tf", `module "broken" {`)
+
+			result := runMainCommand(t, append([]string{"tf-version-bump", "-pattern", file}, tt.operation...))
+
+			wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\n1 update(s) failed; see the errors above\n"
+			wantDiagnostics := "Error processing " + file + ": failed to parse HCL: " + file + ":1,17-18: Unclosed configuration block; There is no closing brace for this block before the end of the file. This may be caused by incorrect brace nesting elsewhere in this file.\n" + tt.errText + "\n"
+			if result.stdout != wantStdout || result.diagnostics != wantDiagnostics || result.exitCode != 1 {
+				t.Fatalf("result = %#v, want stdout %q, diagnostics %q and exit 1", result, wantStdout, wantDiagnostics)
+			}
+		})
+	}
+}
+
 // Once a write keeps its backup, the file's content cannot be trusted, so every later pass in the
 // run refuses it rather than applying further changes to a possibly damaged file.
 func TestCommandConfigRefusesFileWhoseWriteKeptBackup(t *testing.T) {
@@ -1340,7 +1402,7 @@ terraform_version: ">= 1.5"
 	})
 
 	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\n" +
-		"No updates were performed. Config file may be empty or contain no matching items.\n"
+		"No updates were performed. Every configured update is already applied or matched nothing; use -audit-file to see which.\n"
 	if result.exitCode != -1 || result.diagnostics != "" || result.stdout != wantStdout {
 		t.Fatalf("result = %#v, want stdout %q", result, wantStdout)
 	}
@@ -1378,6 +1440,7 @@ func TestCommandReportsAggregateFileFailure(t *testing.T) {
 			} else {
 				wantStdout += "==================================================\nConfig File Update Summary\n==================================================\nModules: 1 update(s) applied\n"
 			}
+			wantStdout += "1 update(s) failed; see the errors above\n"
 			wantDiag := "Error processing " + bad + ": failed to parse HCL: " + bad + ":1,1-2: Argument or block definition required; An argument or block definition is required here.\n1 module update error(s)\n"
 			wantHCL := "module \"example\" {\n  source  = \"example/module\"\n  version = \"2.0.0\"\n}\n"
 			if r.stdout != wantStdout || r.diagnostics != wantDiag || r.exitCode != 1 || readTestFile(t, good) != wantHCL {
