@@ -387,7 +387,7 @@ func loadResolvedConfig(configFile, branch string) (*Config, error) {
 // processFiles applies the module updates to every matching file in order, parsing each file once so
 // an update meets the changes earlier updates made to it, in a dry run as in a real run. A file that
 // cannot be read or parsed counts one error per update; each failed write counts one error, and the
-// file is read again for the updates after it, which a file whose write kept its backup refuses.
+// file is read again for the updates after it, and a file whose write kept its backup refuses that read.
 func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (totalUpdates, totalErrors int) {
 	for _, file := range files {
 		parsed, readErr := readTerraformFile(file)
@@ -1466,7 +1466,7 @@ const (
 )
 
 // rewriteContents replaces the file's bytes with formatted. When that fails it writes the original
-// bytes back, and the outcome and the error agree on which of the three cases happened.
+// bytes back, unless nothing reached the file, and the outcome says which of the three cases happened.
 func rewriteContents(file rewritableFile, original, formatted []byte) (rewriteOutcome, error) {
 	written, err := file.WriteAt(formatted, 0)
 	if err != nil && written == 0 {

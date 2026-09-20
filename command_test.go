@@ -684,8 +684,8 @@ func TestCommandConfigRefusesFileWhoseWriteKeptBackup(t *testing.T) {
 	dir := t.TempDir()
 	input := "terraform {\n  required_version = \">= 1.0\"\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\n\nmodule \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
 	file := writeTestFile(t, dir, "main.tf", input)
-	// A second file, processed after the first in every pass, shows the refusal covers only the file
-	// whose write kept a backup.
+	// A second file shows the refusal covers only the file whose write kept a backup. Every pass walks
+	// the files in the sorted order the glob returns, so main.tf is the one whose write fails.
 	other := writeTestFile(t, dir, "other.tf", input)
 	config := writeTestFile(t, dir, "versions.yml", "terraform_version: \">= 1.5\"\nproviders:\n  - name: aws\n    version: \"~> 5.0\"\nmodules:\n  - source: example/module\n    version: 2.0.0\n")
 	rewrite := &failingFile{failOn: map[string][]int{"WriteAt": {1, 2}}, partial: 1}
@@ -703,12 +703,12 @@ func TestCommandConfigRefusesFileWhoseWriteKeptBackup(t *testing.T) {
 	if result.diagnostics != wantDiagnostics || result.exitCode != 1 {
 		t.Fatalf("result = %#v, want diagnostics %q and exit 1", result, wantDiagnostics)
 	}
-	if strings.Contains(result.stdout, file) || strings.Count(result.stdout, "✓") != 3 {
+	if strings.Contains(result.stdout, file) || strings.Count(result.stdout, other) != 3 {
 		t.Errorf("stdout = %q, want the three updates of the second file and nothing for the refused one", result.stdout)
 	}
-	// Two calls rewrote and failed to restore the first file, and three updated the second.
-	if got := rewrite.calls["WriteAt"]; got != 5 {
-		t.Errorf("WriteAt calls = %d, want no further write to the refused file", got)
+	// The refused file still holds what the failed write left, so no later pass wrote to it again.
+	if got := readTestFile(t, file); got != input {
+		t.Errorf("refused file = %q, want it left as the failed write did", got)
 	}
 	if got := readTestFile(t, other); strings.Contains(got, "1.0.0") || strings.Contains(got, "~> 4.0") || strings.Contains(got, ">= 1.0") {
 		t.Errorf("second file = %q, want every version updated", got)
