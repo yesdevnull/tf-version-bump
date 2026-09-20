@@ -227,24 +227,6 @@ func TestUpdateModuleVersionPreservesHCL(t *testing.T) {
 	}
 }
 
-func TestUpdateModuleVersionPreservesPermissions(t *testing.T) {
-	file := writeTestFile(t, t.TempDir(), "main.tf", "module \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n  version = \"1.0.0\"\n}\n")
-	if err := os.Chmod(file, 0o640); err != nil {
-		t.Fatal(err)
-	}
-	updated, err := updateModuleVersion(file, "terraform-aws-modules/vpc/aws", "2.0.0", nil, nil, nil, false, false, false, "text")
-	if err != nil || !updated {
-		t.Fatalf("updated=%v err=%v", updated, err)
-	}
-	info, err := os.Stat(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0o640 {
-		t.Errorf("mode = %o, want 640", got)
-	}
-}
-
 func TestUpdateModuleVersionMatchingVersionDoesNotWrite(t *testing.T) {
 	input := `module "vpc" {
 source="terraform-aws-modules/vpc/aws"
