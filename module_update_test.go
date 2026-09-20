@@ -375,6 +375,41 @@ func TestTerraformFileWrite_SucceedsWithoutLeavingBackup(t *testing.T) {
 	}
 }
 
+// A write rewrites the file rather than replacing it, which is what keeps hard links shared and
+// leaves the permission bits, owner and extended attributes that a rename would take over.
+func TestTerraformFileWrite_KeepsFileIdentityAndPermissions(t *testing.T) {
+	file := writeTestFile(t, t.TempDir(), "main.tf", moduleAt("1.0.0"))
+	if err := os.Chmod(file, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := updateModuleVersion(file, vpcSource, "2.0.0", nil, nil, nil, false, false, false, "text")
+
+	if !updated || err != nil {
+		t.Fatalf("updated=%v err=%v", updated, err)
+	}
+	after, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Error("the write replaced the file instead of rewriting it")
+	}
+	if got := readTestFile(t, file); got != moduleAt("2.0.0") {
+		t.Errorf("content = %q, want %q", got, moduleAt("2.0.0"))
+	}
+	if runtime.GOOS == "windows" {
+		return // Windows maps only the read-only bit onto the permission bits.
+	}
+	if got := after.Mode().Perm(); got != 0o640 {
+		t.Errorf("permissions = %v, want %v", got, os.FileMode(0o640))
+	}
+}
+
 // Every failure here leaves the file holding its original bytes, so the backup is removed.
 func TestTerraformFileWrite_RestoresOriginalAfterFailedRewrite(t *testing.T) {
 	const restored = "failed to write file: injected failure; original content restored"
