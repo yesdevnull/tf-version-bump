@@ -17,6 +17,8 @@ This covers every failure the process observes: opening, reading, backing up, wr
 
 Out of scope: a crash, `SIGKILL` or power loss part way through a write. The file can then hold a mixture of old and new content. The backup's data is synced but its directory entry is not, and it lives in the system temporary directory, which some systems clear at reboot, so after a power loss or reboot the backup may be gone too. Even so, this is no worse than today, where the same event leaves a truncated file and no copy.
 
+Known limitation: On Linux, writeback errors are reported once and then cleared by the kernel, so after a rewrite's `Sync` fails during a write operation, a subsequent `Sync` during the restore can report success even though the restored bytes were not persisted to storage. The tool would then remove the backup and report success, leaving the file's state uncertain. This limitation is inherent to the `gofmt` model chosen and occurs only in extraordinary circumstances such as unrecoverable hardware errors, but it is still preferable to the previous behaviour where the same failure left a truncated file with no backup copy.
+
 ## Decision: back up, rewrite in place, restore on failure
 
 The approach follows `gofmt -w` (`writeFile` in `src/cmd/gofmt/gofmt.go`), which backs up the original, rewrites it in place and writes the original bytes back if the rewrite fails.
