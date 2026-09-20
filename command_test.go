@@ -361,8 +361,14 @@ func TestCommandCheckProcessingErrorWinsOverUpdatesRequired(t *testing.T) {
 		"tf-version-bump", "-pattern", dir + "/*.tf", "-module", "example/module", "-to", "2.0.0", "-check",
 	})
 
-	if result.exitCode != 1 || !strings.Contains(result.diagnostics, "Error processing "+bad) || !strings.Contains(result.diagnostics, "1 module update error(s)") {
-		t.Fatalf("result = %#v, want processing diagnostics and exit 1", result)
+	// The summary reports the failures alongside the updates the run would make, so a check whose
+	// answer is incomplete never reads as a clean "would update 1 file".
+	wantStdout := "Found 2 file(s) matching pattern '" + dir + "/*.tf'\n" +
+		"Running in check mode - no files will be modified\n" +
+		"→ Would update module source 'example/module' to version '2.0.0' in " + good + "\n\n" +
+		"Dry run: would update 1 file(s)\n1 update(s) failed; see the errors above\n"
+	if result.exitCode != 1 || result.stdout != wantStdout || !strings.Contains(result.diagnostics, "Error processing "+bad) || !strings.Contains(result.diagnostics, "1 module update error(s)") {
+		t.Fatalf("result = %#v, want stdout %q, processing diagnostics and exit 1", result, wantStdout)
 	}
 	if got := readTestFile(t, good); got != goodInput {
 		t.Fatalf("check changed valid content to %q, want %q", got, goodInput)
