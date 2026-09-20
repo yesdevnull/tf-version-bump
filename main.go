@@ -1487,9 +1487,12 @@ func truncateAndSync(file rewritableFile, size int) error {
 	return file.Sync()
 }
 
-// removeBackup deletes a backup that is no longer needed.
+// removeBackup deletes a backup that is no longer needed. The Terraform file is already correct, so
+// a failure is only a warning.
 func removeBackup(backup string) {
-	_ = os.Remove(backup)
+	if err := os.Remove(backup); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not remove backup %s: %v\n", backup, err)
+	}
 }
 
 // applyModuleVersion applies one module update to a parsed file, changing it in memory so a later
