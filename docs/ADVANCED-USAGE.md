@@ -16,7 +16,7 @@ Terraform commands can need extra environment variables, such as a token for ano
 
 Each configured root runs the updater and `terraform init`. If the candidate changes and `terraform_fmt` is enabled, formatting runs recursively below every configured root. All roots then run `terraform validate` in the same initialised checkout, including unchanged candidates. The reusable workflow defaults formatting to `false`; both supplied callers enable it.
 
-The callers pin `tf-version-bump` to `v1.0.0-rc.15` and archive SHA-256 `735b71fdfcf9cf3c04557588dceabb92aa3e8b3c332d39f30a319cdd9521fb94`.
+The callers pin `tf-version-bump` to `v1.0.0-rc.16` and archive SHA-256 `096b8b9840bdfc2a885b93956c7788c1b6017ddb03d464615734fd49e45487ce`.
 
 `terraform_init_upgrade` defaults to `false`. Enable the manual input, or set it to `true` in the caller's `with` block for scheduled runs, to add `-upgrade`. Direct script callers use `PROCESS_TERRAFORM_INIT_UPGRADE=true`. Ordinary initialisation preserves compatible locked provider versions and fails if updated constraints exclude them; it does not retry with upgrade. Upgrade can update all eligible providers within their constraints. Generated lock files are included in the candidate. Modules are resolved from their configured constraints on each fresh run.
 
