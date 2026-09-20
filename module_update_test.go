@@ -410,6 +410,31 @@ func TestTerraformFileWrite_KeepsFileIdentityAndPermissions(t *testing.T) {
 	}
 }
 
+// Rewriting in place follows a symlink to its target, so the link stays a link and the file it
+// names holds the update.
+func TestTerraformFileWrite_UpdatesThroughSymlink(t *testing.T) {
+	directory := t.TempDir()
+	target := writeTestFile(t, directory, "main.tf", moduleAt("1.0.0"))
+	link := filepath.Join(directory, "link.tf")
+	createSymlinkOrSkip(t, target, link)
+
+	updated, err := updateModuleVersion(link, vpcSource, "2.0.0", nil, nil, nil, false, false, false, "text")
+
+	if !updated || err != nil {
+		t.Fatalf("updated=%v err=%v", updated, err)
+	}
+	linkInfo, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linkInfo.Mode()&os.ModeSymlink == 0 {
+		t.Error("the write replaced the symlink with a regular file")
+	}
+	if got := readTestFile(t, target); got != moduleAt("2.0.0") {
+		t.Errorf("target content = %q, want %q", got, moduleAt("2.0.0"))
+	}
+}
+
 // Every failure here leaves the file holding its original bytes, so the backup is removed.
 func TestTerraformFileWrite_RestoresOriginalAfterFailedRewrite(t *testing.T) {
 	const restored = "failed to write file: injected failure; original content restored"

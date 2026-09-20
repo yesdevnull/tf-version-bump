@@ -1405,10 +1405,10 @@ func (file *terraformFile) write() error {
 		_ = handle.Close()
 		return fmt.Errorf("failed to write file: cannot back up %s: %w", file.name, err)
 	}
-	restored, err := rewriteContents(handle, original, hclwrite.Format(file.hcl.Bytes()))
+	outcome, err := rewriteContents(handle, original, hclwrite.Format(file.hcl.Bytes()))
 	if err != nil {
 		_ = handle.Close()
-		if !restored {
+		if outcome == rewriteUncertain {
 			return file.keepBackup(backup, err)
 		}
 		removeBackup(backup)
@@ -1446,30 +1446,42 @@ func writeBackup(name string, original []byte) (string, error) {
 		err = closeErr
 	}
 	if err != nil {
-		_ = os.Remove(path)
+		removeBackup(path)
 		return "", err
 	}
 	return path, nil
 }
 
+// rewriteOutcome says what a rewrite left in the file, so a caller never has to read it back.
+type rewriteOutcome int
+
+const (
+	// rewriteComplete means the file holds the new bytes.
+	rewriteComplete rewriteOutcome = iota
+	// rewriteUndone means the rewrite failed and the file holds its original bytes.
+	rewriteUndone
+	// rewriteUncertain means the rewrite failed and the file may hold neither version in full.
+	rewriteUncertain
+)
+
 // rewriteContents replaces the file's bytes with formatted. When that fails it writes the original
-// bytes back; restored reports whether the file then holds them, and the error says which happened.
-func rewriteContents(file rewritableFile, original, formatted []byte) (restored bool, err error) {
+// bytes back, and the outcome and the error agree on which of the three cases happened.
+func rewriteContents(file rewritableFile, original, formatted []byte) (rewriteOutcome, error) {
 	written, err := file.WriteAt(formatted, 0)
 	if err != nil && written == 0 {
 		// Nothing reached the file, so it still holds its original bytes.
-		return true, err
+		return rewriteUndone, err
 	}
 	if err == nil {
 		err = truncateAndSync(file, len(formatted))
 	}
 	if err == nil {
-		return false, nil
+		return rewriteComplete, nil
 	}
 	if restoreErr := writeContents(file, original); restoreErr != nil {
-		return false, fmt.Errorf("%w; restoring the original also failed: %w", err, restoreErr)
+		return rewriteUncertain, fmt.Errorf("%w; restoring the original also failed: %w", err, restoreErr)
 	}
-	return true, fmt.Errorf("%w; original content restored", err)
+	return rewriteUndone, fmt.Errorf("%w; original content restored", err)
 }
 
 // writeContents writes data over the start of the file, cuts the file to its length and syncs it.
@@ -1487,8 +1499,8 @@ func truncateAndSync(file rewritableFile, size int) error {
 	return file.Sync()
 }
 
-// removeBackup deletes a backup that is no longer needed. The Terraform file is already correct, so
-// a failure is only a warning.
+// removeBackup deletes a backup that is no longer needed. The Terraform file holds the content it
+// should by then, so a failure is only a warning.
 func removeBackup(backup string) {
 	if err := os.Remove(backup); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not remove backup %s: %v\n", backup, err)
