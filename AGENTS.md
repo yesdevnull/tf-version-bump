@@ -101,7 +101,7 @@ make shellcheck                                           # Every tracked shell 
 `main.go` reads and writes every Terraform file through `readTerraformFile` and `terraformFile.write`; reuse them for any new update path.
 
 ```go
-// 1. Stat, read and parse; the file keeps its mode for the write
+// 1. Stat, read and parse; a file a failed write left untrusted is refused
 file, err := readTerraformFile(filename)
 
 // 2. Navigate and modify
@@ -111,7 +111,7 @@ for _, block := range file.hcl.Body().Blocks() {
     }
 }
 
-// 3. Format and write back with the original permission bits
+// 3. Format and rewrite in place; a failed rewrite is undone from a backup
 err = file.write()
 ```
 

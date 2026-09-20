@@ -79,7 +79,7 @@ Note this means the tool cannot protect a user who `cd`s into `.terraform` and g
 
 **Local modules are skipped by design.** `isLocalModule` treats `./`, `../` and `/` sources as local; Terraform gives them no version attribute, so there is nothing to bump.
 
-**Don't run concurrent instances over the same files.** There is no file locking and writes are not atomic. Files are processed in memory, so very large files (>100MB) are impractical.
+**Don't run concurrent instances over the same files.** There is no file locking. A write copies the file's original bytes to a `tf-version-bump-backup-*` file in the system temporary directory, then rewrites the file in place: a failed rewrite is undone and the backup removed, and when the file's state cannot be confirmed the backup is kept, the error names it and `readTerraformFile` refuses the file for the rest of the run. A crash or power loss part way through a write can still leave a mixed file, and the backup may not survive a reboot. Files are processed in memory, so very large files (>100MB) are impractical.
 
 ## Architecture
 
@@ -87,7 +87,7 @@ Note this means the tool cannot protect a user who `cd`s into `.terraform` and g
 
 `main()` → `validateOperationModes` → either standalone config validation or `findMatchingFiles` → `runAuditMode` (`-audit-file`: `buildAudit`, never writes Terraform files) or `runUpdateMode` → `runConfigFileMode` (YAML) / `runCLIMode` (one direct operation). Each update mode dispatches to one of three update paths: `processFiles` → `applyModuleVersion` for modules, `processTerraformVersion` → `updateTerraformVersionWithCount`, or `processProviderVersion` → `updateProviderVersionWithCount`.
 
-`processFiles` parses each file once with `readTerraformFile`, then applies the module entries to it in YAML order through `applyModuleVersion`, which writes after each change unless in a dry run. Entries for one source therefore chain — an entry whose `from` lists an earlier entry's target moves the block again in the same run — and dry runs and checks report the same chain because the parsed file carries every earlier change. A file that cannot be read or parsed counts once per entry; each failed write counts once, and the file is read again for later entries. `updateModuleVersionWithCount` is the single-entry wrapper most module tests call.
+`processFiles` parses each file once with `readTerraformFile`, then applies the module entries to it in YAML order through `applyModuleVersion`, which writes after each change unless in a dry run. Entries for one source therefore chain — an entry whose `from` lists an earlier entry's target moves the block again in the same run — and dry runs and checks report the same chain because the parsed file carries every earlier change. A file that cannot be read or parsed counts once per entry; each failed write counts once, and the file is read again for later entries, which a file whose write kept its backup refuses. `updateModuleVersionWithCount` is the single-entry wrapper most module tests call.
 
 `applyModuleVersion` bundles its many parameters into a `moduleUpdateOptions` struct and delegates per-block work to `updateModuleBlockResult` → `shouldSkipModuleVersion`. Add new per-module filtering there rather than growing the parameter list.
 
@@ -96,7 +96,7 @@ Provider updates are the fiddliest path: `required_providers` entries can be eit
 ### Standard hclwrite pattern
 
 ```go
-file, err := readTerraformFile(filename) // stat, read and parse; keeps the mode write must preserve
+file, err := readTerraformFile(filename) // stat, read and parse; refuses a file a failed write left untrusted
 if err != nil { return false, nil, err }
 
 for _, block := range file.hcl.Body().Blocks() {
@@ -106,7 +106,7 @@ for _, block := range file.hcl.Body().Blocks() {
 }
 
 if updated && !dryRun {
-    err = file.write() // hclwrite.Format, then the original permission bits
+    err = file.write() // hclwrite.Format, then an in-place rewrite undone from a backup if it fails
 }
 ```
 
@@ -154,7 +154,7 @@ Adding a config field means updating `schema/config-schema.json` too.
 
 ### Errors and output
 
-File-level errors log and continue to the next file; bad flags, invalid globs, no file matches, and an unparseable config are fatal (`fatalf`). Warnings go to stderr prefixed `Warning:` for local modules, missing version attributes without `-force-add`, and non-registry sources where `-force-add` cannot add a version. Filtered modules are printed only with `-verbose`. Prefer skipping over guessing.
+File-level errors log and continue to the next file; bad flags, invalid globs, no file matches, and an unparseable config are fatal (`fatalf`). Warnings go to stderr prefixed `Warning:` for local modules, missing version attributes without `-force-add`, non-registry sources where `-force-add` cannot add a version, and a write's backup that could not be removed. Filtered modules are printed only with `-verbose`. Prefer skipping over guessing.
 
 Success is prefixed `✓`; dry-run lines use `→` with the verb "Would update". User-facing values are wrapped with `quote(s, format)`: `'vpc'` for `text` output, `` `vpc` `` for `md`. Thread `outputFormat` through rather than hardcoding quotes.
 
