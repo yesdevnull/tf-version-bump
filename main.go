@@ -402,8 +402,8 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (tota
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				totalErrors++
-				// A failed write may not have reached the file, so later updates start from what is
-				// on disk rather than from the in-memory change it did not save.
+				// Read the file again rather than keep the unsaved change: a restored file gives later
+				// updates its original content, and a file whose backup was kept is refused.
 				parsed, readErr = readTerraformFile(file)
 				continue
 			}
@@ -1311,9 +1311,10 @@ func updateModuleVersionWithCount(filename, moduleSource, version string, fromVe
 	return applyModuleVersion(file, moduleSource, version, fromVersions, ignoreVersions, ignorePatterns, forceAdd, dryRun, verbose, outputFormat)
 }
 
-// terraformFile is a Terraform file parsed once.
+// terraformFile is a Terraform file parsed once, with the identity the untrusted-file check compares.
 type terraformFile struct {
 	name string
+	info os.FileInfo
 	hcl  *hclwrite.File
 }
 
@@ -1334,9 +1335,43 @@ type backupFile interface {
 	Name() string
 }
 
+// untrustedFile is a Terraform file whose failed write kept a backup, so its content cannot be trusted.
+type untrustedFile struct {
+	info   os.FileInfo
+	backup string
+}
+
+var (
+	untrustedMu    sync.Mutex
+	untrustedFiles []untrustedFile // refused by readTerraformFile for the rest of the run
+)
+
+func markUntrusted(info os.FileInfo, backup string) {
+	untrustedMu.Lock()
+	defer untrustedMu.Unlock()
+	untrustedFiles = append(untrustedFiles, untrustedFile{info: info, backup: backup})
+}
+
+// untrustedBackup returns the backup holding an untrusted file's original bytes. It compares file
+// identities, so the same file reached through a symlink or a hard link is found too.
+func untrustedBackup(info os.FileInfo) (backup string, untrusted bool) {
+	untrustedMu.Lock()
+	defer untrustedMu.Unlock()
+	for _, file := range untrustedFiles {
+		if os.SameFile(info, file.info) {
+			return file.backup, true
+		}
+	}
+	return "", false
+}
+
 func readTerraformFile(filename string) (*terraformFile, error) {
-	if _, err := os.Stat(filename); err != nil {
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
 		return nil, fmt.Errorf("failed to stat file: %w", err)
+	}
+	if backup, untrusted := untrustedBackup(fileInfo); untrusted {
+		return nil, fmt.Errorf("file left untrusted by an earlier failed write; original content is in %s", backup)
 	}
 
 	src, err := os.ReadFile(filename)
@@ -1349,7 +1384,7 @@ func readTerraformFile(filename string) (*terraformFile, error) {
 		return nil, fmt.Errorf("failed to parse HCL: %s", diags.Error())
 	}
 
-	return &terraformFile{name: filename, hcl: file}, nil
+	return &terraformFile{name: filename, info: fileInfo, hcl: file}, nil
 }
 
 // write formats the file and rewrites it in place, so its permission bits, owner and links are
@@ -1388,8 +1423,10 @@ func (file *terraformFile) write() error {
 	return nil
 }
 
-// keepBackup reports a write whose file may not hold its original bytes, naming the backup that does.
+// keepBackup reports a write whose file may not hold its original bytes, naming the backup that
+// does, and marks the file untrusted so the rest of the run refuses it.
 func (file *terraformFile) keepBackup(backup string, err error) error {
+	markUntrusted(file.info, backup)
 	return fmt.Errorf("failed to write file: %w; original content is in %s", err, backup)
 }
 

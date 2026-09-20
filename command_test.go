@@ -677,6 +677,37 @@ func TestCommandConfigFailedWriteRestartsLaterEntriesFromDisk(t *testing.T) {
 	}
 }
 
+// Once a write keeps its backup, the file's content cannot be trusted, so every later pass in the
+// run refuses it rather than applying further changes to a possibly damaged file.
+func TestCommandConfigRefusesFileWhoseWriteKeptBackup(t *testing.T) {
+	backups := useTempDir(t)
+	dir := t.TempDir()
+	input := "terraform {\n  required_version = \">= 1.0\"\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\n\nmodule \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+	file := writeTestFile(t, dir, "main.tf", input)
+	config := writeTestFile(t, dir, "versions.yml", "terraform_version: \">= 1.5\"\nproviders:\n  - name: aws\n    version: \"~> 5.0\"\nmodules:\n  - source: example/module\n    version: 2.0.0\n")
+	rewrite := &failingFile{failOn: map[string][]int{"WriteAt": {1, 2}}, partial: 1}
+	failRewrite(t, rewrite)
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config})
+
+	kept := backupsIn(t, backups)
+	if len(kept) != 1 {
+		t.Fatalf("backups = %v, want exactly one; result = %#v", kept, result)
+	}
+	failure := "Error processing " + file + ": failed to write file: injected failure; restoring the original also failed: injected failure; original content is in " + kept[0] + "\n"
+	refused := "Error processing " + file + ": file left untrusted by an earlier failed write; original content is in " + kept[0] + "\n"
+	wantDiagnostics := failure + refused + refused + "3 update error(s)\n"
+	if result.diagnostics != wantDiagnostics || result.exitCode != 1 || strings.Contains(result.stdout, "✓") {
+		t.Fatalf("result = %#v, want diagnostics %q, no success lines and exit 1", result, wantDiagnostics)
+	}
+	if got := rewrite.calls["WriteAt"]; got != 2 {
+		t.Errorf("WriteAt calls = %d, want only the failed rewrite and its restore", got)
+	}
+	if got := readTestFile(t, kept[0]); got != input {
+		t.Errorf("backup = %q, want the original %q", got, input)
+	}
+}
+
 func TestCommandWritesExactUpdatedBlockCounts(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "main.tf", `terraform {

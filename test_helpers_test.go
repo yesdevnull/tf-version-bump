@@ -389,6 +389,10 @@ func failRewrite(t *testing.T, target *failingFile) {
 		hookMu.Lock()
 		openFileForRewrite = original
 		hookMu.Unlock()
+		// A write that keeps its backup marks the file untrusted for the rest of the run.
+		untrustedMu.Lock()
+		untrustedFiles = nil
+		untrustedMu.Unlock()
 	})
 }
 
