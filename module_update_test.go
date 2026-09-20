@@ -481,7 +481,12 @@ func TestTerraformFileWrite_KeepsBackupWhenFileStateIsUncertain(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backups := useTempDir(t)
-			file := writeTestFile(t, t.TempDir(), "main.tf", moduleAt("1.0.0"))
+			dir := t.TempDir()
+			file := writeTestFile(t, dir, "main.tf", moduleAt("1.0.0"))
+			names := []string{file}
+			if linked := filepath.Join(dir, "linked.tf"); os.Link(file, linked) == nil {
+				names = append(names, linked)
+			}
 			failRewrite(t, &failingFile{failOn: tt.failOn, partial: len(moduleAt("2.0.0")) - 1})
 
 			_, err := updateModuleVersion(file, vpcSource, "2.0.0", nil, nil, nil, false, false, false, "text")
@@ -500,6 +505,12 @@ func TestTerraformFileWrite_KeepsBackupWhenFileStateIsUncertain(t *testing.T) {
 			if tt.wantContent != "" {
 				if got := readTestFile(t, file); got != tt.wantContent {
 					t.Errorf("content = %q, want %q", got, tt.wantContent)
+				}
+			}
+			wantRefusal := "file left untrusted by an earlier failed write; original content is in " + kept[0]
+			for _, name := range names {
+				if _, readErr := readTerraformFile(name); readErr == nil || readErr.Error() != wantRefusal {
+					t.Errorf("readTerraformFile(%s) err = %v, want %q", name, readErr, wantRefusal)
 				}
 			}
 		})
