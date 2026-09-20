@@ -361,9 +361,11 @@ File-level errors do not stop processing: the command writes every diagnostic an
 
 ## File-writing behaviour
 
-Changed files are serialised through `hclwrite.Format`. Comments and the surrounding HCL structure are retained, but whitespace can be normalised across the changed file. The original permission bits are reused when the file is written.
+Changed files are serialised through `hclwrite.Format`. Comments and the surrounding HCL structure are retained, but whitespace can be normalised across the changed file. Files are rewritten in place, so their permission bits, owner and hard links are untouched, and a symlinked file is updated through its link.
 
-Writes are not transactional and there is no file locking. Do not run multiple instances against the same files. Keep the files under version control, use `-dry-run`, and review the resulting diff.
+Before rewriting a file, the tool copies its original bytes to a file named `tf-version-bump-backup-<file>-<random>` in the system temporary directory (`TMPDIR`, or `TMP` or `TEMP` on Windows), which must be writable and have room for the copy. If the rewrite fails, the original bytes are written back, the backup is removed and the error ends with `original content restored`. If the original cannot be written back, or the file cannot be closed after its rewrite, the backup is kept and the error ends with `original content is in <backup>`: copy that file over the Terraform file to recover it. The Terraform file is then refused for the rest of the run, so every later operation on it reports an error. Pointing the temporary directory inside the Terraform tree lets a later pattern select a leftover backup as an input. A crash or power loss part way through a write can still leave a mixed file, and the backup may not survive a reboot.
+
+There is no file locking. Do not run multiple instances against the same files. Keep the files under version control, use `-dry-run`, and review the resulting diff.
 
 The parser reads each file into memory. This is reasonable for ordinary Terraform files but is not designed for exceptionally large generated configurations.
 

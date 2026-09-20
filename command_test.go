@@ -649,7 +649,7 @@ func TestCommandConfigDryRunChainsEntriesForOneSource(t *testing.T) {
 	}
 }
 
-// A failed write may not have reached the file, so later entries start from the file on disk rather
+// A failed write leaves the file on disk as it was, so later entries start from that content rather
 // than the unsaved change: the chained entry is judged against the version the file still holds, and
 // an entry for another source is still applied. The third entry fails to write for the same reason,
 // so abandoning the file after the first failure would report one error instead of two.
