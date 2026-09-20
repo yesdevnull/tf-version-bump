@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -514,5 +515,48 @@ func TestTerraformFileWrite_KeepsBackupWhenFileStateIsUncertain(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTerraformFileWrite_WarnsWhenBackupCannotBeRemoved(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a read-only directory does not block removing a file on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	backups := useTempDir(t)
+	file := writeTestFile(t, t.TempDir(), "main.tf", moduleAt("1.0.0"))
+	// Closing the rewritten file makes the backup's directory read-only, so the removal that follows fails.
+	failRewrite(t, &failingFile{afterClose: func() {
+		if err := os.Chmod(backups, 0o500); err != nil {
+			t.Fatal(err)
+		}
+	}})
+	t.Cleanup(func() {
+		if err := os.Chmod(backups, 0o700); err != nil {
+			t.Error(err)
+		}
+	})
+
+	var updated bool
+	var err error
+	stderr := captureStderr(t, func() {
+		updated, err = updateModuleVersion(file, vpcSource, "2.0.0", nil, nil, nil, false, false, false, "text")
+	})
+
+	if !updated || err != nil {
+		t.Fatalf("updated=%v err=%v, want a successful write", updated, err)
+	}
+	kept := backupsIn(t, backups)
+	if len(kept) != 1 {
+		t.Fatalf("backups = %v, want the one that could not be removed", kept)
+	}
+	want := "Warning: could not remove backup " + kept[0] + ": remove " + kept[0] + ": permission denied\n"
+	if stderr != want {
+		t.Errorf("stderr = %q, want %q", stderr, want)
+	}
+	if got := readTestFile(t, file); got != moduleAt("2.0.0") {
+		t.Errorf("content = %q, want %q", got, moduleAt("2.0.0"))
 	}
 }
