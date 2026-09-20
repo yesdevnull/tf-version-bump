@@ -69,6 +69,24 @@ var (
 		log.Printf(format, v...)
 		exitFunc(1)
 	}
+	// openFileForRewrite opens a Terraform file to rewrite it in place: without O_CREATE, so a file
+	// deleted since its parse is not recreated, and without O_TRUNC, so a failed write can be undone.
+	openFileForRewrite = func(name string) (rewritableFile, error) {
+		file, err := os.OpenFile(name, os.O_RDWR, 0)
+		if err != nil {
+			return nil, err
+		}
+		return file, nil
+	}
+	// createBackupFile creates the copy of a Terraform file's original bytes kept while it is
+	// rewritten. It lives in the system temporary directory, so no Terraform glob can select it.
+	createBackupFile = func(pattern string) (backupFile, error) {
+		file, err := os.CreateTemp("", pattern)
+		if err != nil {
+			return nil, err
+		}
+		return file, nil
+	}
 )
 
 // stringSliceFlag is a custom flag type that allows a flag to be specified multiple times
@@ -1293,16 +1311,31 @@ func updateModuleVersionWithCount(filename, moduleSource, version string, fromVe
 	return applyModuleVersion(file, moduleSource, version, fromVersions, ignoreVersions, ignorePatterns, forceAdd, dryRun, verbose, outputFormat)
 }
 
-// terraformFile is a Terraform file parsed once, with the permission bits a write must preserve.
+// terraformFile is a Terraform file parsed once.
 type terraformFile struct {
 	name string
-	mode os.FileMode
 	hcl  *hclwrite.File
 }
 
+// rewritableFile is an open Terraform file that a write replaces in place.
+type rewritableFile interface {
+	io.Reader
+	io.WriterAt
+	Truncate(size int64) error
+	Sync() error
+	Close() error
+}
+
+// backupFile holds a Terraform file's original bytes while the file is rewritten.
+type backupFile interface {
+	io.Writer
+	Sync() error
+	Close() error
+	Name() string
+}
+
 func readTerraformFile(filename string) (*terraformFile, error) {
-	fileInfo, err := os.Stat(filename)
-	if err != nil {
+	if _, err := os.Stat(filename); err != nil {
 		return nil, fmt.Errorf("failed to stat file: %w", err)
 	}
 
@@ -1316,15 +1349,110 @@ func readTerraformFile(filename string) (*terraformFile, error) {
 		return nil, fmt.Errorf("failed to parse HCL: %s", diags.Error())
 	}
 
-	return &terraformFile{name: filename, mode: fileInfo.Mode(), hcl: file}, nil
+	return &terraformFile{name: filename, hcl: file}, nil
 }
 
-// write formats the file and replaces its contents, keeping the original permission bits.
+// write formats the file and rewrites it in place, so its permission bits, owner and links are
+// untouched. The original bytes are backed up first: a failed rewrite is undone and the backup
+// removed, and when the file's state cannot be confirmed the backup is kept and the error names it.
 func (file *terraformFile) write() error {
-	if err := os.WriteFile(file.name, hclwrite.Format(file.hcl.Bytes()), file.mode.Perm()); err != nil {
+	handle, err := openFileForRewrite(file.name)
+	if err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
+	original, err := io.ReadAll(handle)
+	if err != nil {
+		_ = handle.Close()
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+	backup, err := writeBackup(file.name, original)
+	if err != nil {
+		_ = handle.Close()
+		return fmt.Errorf("failed to write file: cannot back up %s: %w", file.name, err)
+	}
+	restored, err := rewriteContents(handle, original, hclwrite.Format(file.hcl.Bytes()))
+	if err != nil {
+		_ = handle.Close()
+		if !restored {
+			return file.keepBackup(backup, err)
+		}
+		removeBackup(backup)
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+	// The rewrite is synced, but a failed close leaves its state unconfirmed. Restoring would mean
+	// reopening the file, so, as gofmt does, the backup is kept instead.
+	if err := handle.Close(); err != nil {
+		return file.keepBackup(backup, err)
+	}
+	removeBackup(backup)
 	return nil
+}
+
+// keepBackup reports a write whose file may not hold its original bytes, naming the backup that does.
+func (file *terraformFile) keepBackup(backup string, err error) error {
+	return fmt.Errorf("failed to write file: %w; original content is in %s", err, backup)
+}
+
+// writeBackup copies a Terraform file's original bytes into the system temporary directory and
+// returns the copy's path. A copy that fails part way is removed.
+func writeBackup(name string, original []byte) (string, error) {
+	backup, err := createBackupFile("tf-version-bump-backup-" + filepath.Base(name) + "-*")
+	if err != nil {
+		return "", err
+	}
+	path := backup.Name()
+	_, err = backup.Write(original)
+	if err == nil {
+		err = backup.Sync()
+	}
+	if closeErr := backup.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
+}
+
+// rewriteContents replaces the file's bytes with formatted. When that fails it writes the original
+// bytes back; restored reports whether the file then holds them, and the error says which happened.
+func rewriteContents(file rewritableFile, original, formatted []byte) (restored bool, err error) {
+	written, err := file.WriteAt(formatted, 0)
+	if err != nil && written == 0 {
+		// Nothing reached the file, so it still holds its original bytes.
+		return true, err
+	}
+	if err == nil {
+		err = truncateAndSync(file, len(formatted))
+	}
+	if err == nil {
+		return false, nil
+	}
+	if restoreErr := writeContents(file, original); restoreErr != nil {
+		return false, fmt.Errorf("%w; restoring the original also failed: %w", err, restoreErr)
+	}
+	return true, fmt.Errorf("%w; original content restored", err)
+}
+
+// writeContents writes data over the start of the file, cuts the file to its length and syncs it.
+func writeContents(file rewritableFile, data []byte) error {
+	if _, err := file.WriteAt(data, 0); err != nil {
+		return err
+	}
+	return truncateAndSync(file, len(data))
+}
+
+func truncateAndSync(file rewritableFile, size int) error {
+	if err := file.Truncate(int64(size)); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
+// removeBackup deletes a backup that is no longer needed.
+func removeBackup(backup string) {
+	_ = os.Remove(backup)
 }
 
 // applyModuleVersion applies one module update to a parsed file, changing it in memory so a later
