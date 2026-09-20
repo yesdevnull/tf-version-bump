@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -364,4 +366,142 @@ func TestUpdateModuleVersionErrors(t *testing.T) {
 			t.Errorf("updated=%v err=%v", updated, err)
 		}
 	})
+}
+
+const vpcSource = "terraform-aws-modules/vpc/aws"
+
+// moduleAt is a formatted Terraform file pinning the VPC module at version.
+func moduleAt(version string) string {
+	return "module \"vpc\" {\n  source  = \"" + vpcSource + "\"\n  version = \"" + version + "\"\n}\n"
+}
+
+func TestTerraformFileWrite_SucceedsWithoutLeavingBackup(t *testing.T) {
+	backups := useTempDir(t)
+	file := writeTestFile(t, t.TempDir(), "main.tf", moduleAt("1.0.0"))
+
+	updated, err := updateModuleVersion(file, vpcSource, "2.0.0", nil, nil, nil, false, false, false, "text")
+
+	if !updated || err != nil {
+		t.Fatalf("updated=%v err=%v", updated, err)
+	}
+	if got := readTestFile(t, file); got != moduleAt("2.0.0") {
+		t.Errorf("content = %q, want %q", got, moduleAt("2.0.0"))
+	}
+	if kept := backupsIn(t, backups); len(kept) != 0 {
+		t.Errorf("backups = %v, want none", kept)
+	}
+}
+
+// Every failure here leaves the file holding its original bytes, so the backup is removed.
+func TestTerraformFileWrite_RestoresOriginalAfterFailedRewrite(t *testing.T) {
+	const restored = "failed to write file: injected failure; original content restored"
+	tests := []struct {
+		name    string
+		from    string // a longer original makes a complete WriteAt leave a stale tail
+		failOn  map[string][]int
+		partial int
+		wantErr string
+	}{
+		{name: "write fails part way", from: "1.0.0", failOn: map[string][]int{"WriteAt": {1}}, partial: len(moduleAt("2.0.0")) - 1, wantErr: restored},
+		{name: "truncate fails after shorter content", from: "10.0.0", failOn: map[string][]int{"Truncate": {1}}, wantErr: restored},
+		{name: "sync fails after shorter content", from: "10.0.0", failOn: map[string][]int{"Sync": {1}}, wantErr: restored},
+		{name: "write fails before any byte", from: "1.0.0", failOn: map[string][]int{"WriteAt": {1}}, wantErr: "failed to write file: injected failure"},
+		{name: "read fails before backup", from: "1.0.0", failOn: map[string][]int{"Read": {1}}, wantErr: "failed to write file: injected failure"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backups := useTempDir(t)
+			file := writeTestFile(t, t.TempDir(), "main.tf", moduleAt(tt.from))
+			failRewrite(t, &failingFile{failOn: tt.failOn, partial: tt.partial})
+
+			updated, err := updateModuleVersion(file, vpcSource, "2.0.0", nil, nil, nil, false, false, false, "text")
+
+			if updated || err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("updated=%v err=%v, want error %q", updated, err, tt.wantErr)
+			}
+			if got := readTestFile(t, file); got != moduleAt(tt.from) {
+				t.Errorf("content = %q, want the original %q", got, moduleAt(tt.from))
+			}
+			if kept := backupsIn(t, backups); len(kept) != 0 {
+				t.Errorf("backups = %v, want none", kept)
+			}
+		})
+	}
+}
+
+func TestTerraformFileWrite_FailsBeforeRewriteWhenBackupFails(t *testing.T) {
+	t.Run("temporary directory missing", func(t *testing.T) {
+		file := writeTestFile(t, t.TempDir(), "main.tf", moduleAt("1.0.0"))
+		setTempDir(t, filepath.Join(t.TempDir(), "missing"))
+
+		_, err := updateModuleVersion(file, vpcSource, "2.0.0", nil, nil, nil, false, false, false, "text")
+
+		// The error quotes CreateTemp's random name and the platform's wording, so only its prefix is exact.
+		wantPrefix := "failed to write file: cannot back up " + file + ": "
+		if err == nil || !strings.HasPrefix(err.Error(), wantPrefix) || !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("err = %v, want prefix %q wrapping fs.ErrNotExist", err, wantPrefix)
+		}
+		if got := readTestFile(t, file); got != moduleAt("1.0.0") {
+			t.Errorf("content = %q, want the original", got)
+		}
+	})
+	for _, method := range []string{"Write", "Sync", "Close"} {
+		t.Run("backup "+method+" fails", func(t *testing.T) {
+			backups := useTempDir(t)
+			file := writeTestFile(t, t.TempDir(), "main.tf", moduleAt("1.0.0"))
+			failBackup(t, &failingFile{failOn: map[string][]int{method: {1}}})
+
+			_, err := updateModuleVersion(file, vpcSource, "2.0.0", nil, nil, nil, false, false, false, "text")
+
+			want := "failed to write file: cannot back up " + file + ": injected failure"
+			if err == nil || err.Error() != want {
+				t.Fatalf("err = %v, want %q", err, want)
+			}
+			if got := readTestFile(t, file); got != moduleAt("1.0.0") {
+				t.Errorf("content = %q, want the original", got)
+			}
+			if kept := backupsIn(t, backups); len(kept) != 0 {
+				t.Errorf("backups = %v, want the partial backup removed", kept)
+			}
+		})
+	}
+}
+
+// When the file cannot be shown to hold either version, the backup is kept and the error names it.
+func TestTerraformFileWrite_KeepsBackupWhenFileStateIsUncertain(t *testing.T) {
+	tests := []struct {
+		name        string
+		failOn      map[string][]int
+		wantCause   string
+		wantContent string // empty when the partial restore leaves no meaningful content to assert
+	}{
+		{name: "restore fails", failOn: map[string][]int{"WriteAt": {1, 2}}, wantCause: "injected failure; restoring the original also failed: injected failure"},
+		{name: "close fails after rewrite", failOn: map[string][]int{"Close": {1}}, wantCause: "injected failure", wantContent: moduleAt("2.0.0")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backups := useTempDir(t)
+			file := writeTestFile(t, t.TempDir(), "main.tf", moduleAt("1.0.0"))
+			failRewrite(t, &failingFile{failOn: tt.failOn, partial: len(moduleAt("2.0.0")) - 1})
+
+			_, err := updateModuleVersion(file, vpcSource, "2.0.0", nil, nil, nil, false, false, false, "text")
+
+			kept := backupsIn(t, backups)
+			if len(kept) != 1 {
+				t.Fatalf("backups = %v, want exactly one; err = %v", kept, err)
+			}
+			want := "failed to write file: " + tt.wantCause + "; original content is in " + kept[0]
+			if err == nil || err.Error() != want {
+				t.Fatalf("err = %v, want %q", err, want)
+			}
+			if got := readTestFile(t, kept[0]); got != moduleAt("1.0.0") {
+				t.Errorf("backup = %q, want the original", got)
+			}
+			if tt.wantContent != "" {
+				if got := readTestFile(t, file); got != tt.wantContent {
+					t.Errorf("content = %q, want %q", got, tt.wantContent)
+				}
+			}
+		})
+	}
 }

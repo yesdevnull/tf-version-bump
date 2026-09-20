@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"io"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -292,4 +295,152 @@ func captureLog(t *testing.T, fn func()) string {
 	log.SetPrefix("")
 	fn()
 	return output.String()
+}
+
+var errInjected = errors.New("injected failure")
+
+// failingFile passes every call through to a real file except the calls chosen to fail, so a test
+// can make a write fail part way and still assert on the bytes that reached the disk.
+type failingFile struct {
+	*os.File
+	failOn     map[string][]int // method name → the 1-based calls of it that fail
+	partial    int              // bytes a failing WriteAt stores before it fails
+	afterClose func()           // runs after a successful Close
+	calls      map[string]int
+}
+
+func (f *failingFile) fails(method string) bool {
+	if f.calls == nil {
+		f.calls = map[string]int{}
+	}
+	f.calls[method]++
+	return slices.Contains(f.failOn[method], f.calls[method])
+}
+
+func (f *failingFile) Read(p []byte) (int, error) {
+	if f.fails("Read") {
+		return 0, errInjected
+	}
+	return f.File.Read(p)
+}
+
+func (f *failingFile) Write(p []byte) (int, error) {
+	if f.fails("Write") {
+		return 0, errInjected
+	}
+	return f.File.Write(p)
+}
+
+func (f *failingFile) WriteAt(p []byte, off int64) (int, error) {
+	if !f.fails("WriteAt") {
+		return f.File.WriteAt(p, off)
+	}
+	written, err := f.File.WriteAt(p[:min(f.partial, len(p))], off)
+	if err != nil {
+		return written, err
+	}
+	return written, errInjected
+}
+
+func (f *failingFile) Truncate(size int64) error {
+	if f.fails("Truncate") {
+		return errInjected
+	}
+	return f.File.Truncate(size)
+}
+
+func (f *failingFile) Sync() error {
+	if f.fails("Sync") {
+		return errInjected
+	}
+	return f.File.Sync()
+}
+
+func (f *failingFile) Close() error {
+	if f.fails("Close") {
+		_ = f.File.Close()
+		return errInjected
+	}
+	if err := f.File.Close(); err != nil {
+		return err
+	}
+	if f.afterClose != nil {
+		f.afterClose()
+	}
+	return nil
+}
+
+// failRewrite makes every Terraform file opened for rewriting behave as target describes. The lock
+// is held only while swapping the hook, because runMainCommand holds hookMu for a whole run.
+func failRewrite(t *testing.T, target *failingFile) {
+	t.Helper()
+	hookMu.Lock()
+	original := openFileForRewrite
+	openFileForRewrite = func(name string) (rewritableFile, error) {
+		file, err := original(name)
+		if err != nil {
+			return nil, err
+		}
+		target.File = file.(*os.File)
+		return target, nil
+	}
+	hookMu.Unlock()
+	t.Cleanup(func() {
+		hookMu.Lock()
+		openFileForRewrite = original
+		hookMu.Unlock()
+	})
+}
+
+// failBackup makes every backup a write creates behave as target describes.
+func failBackup(t *testing.T, target *failingFile) {
+	t.Helper()
+	hookMu.Lock()
+	original := createBackupFile
+	createBackupFile = func(pattern string) (backupFile, error) {
+		file, err := original(pattern)
+		if err != nil {
+			return nil, err
+		}
+		target.File = file.(*os.File)
+		return target, nil
+	}
+	hookMu.Unlock()
+	t.Cleanup(func() {
+		hookMu.Lock()
+		createBackupFile = original
+		hookMu.Unlock()
+	})
+}
+
+// setTempDir points os.TempDir at dir for the test. Windows reads TMP and TEMP instead of TMPDIR.
+func setTempDir(t *testing.T, dir string) {
+	t.Helper()
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(name, dir)
+	}
+}
+
+// useTempDir points os.TempDir at a fresh directory, so the test sees every backup a write leaves.
+func useTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	setTempDir(t, dir)
+	return dir
+}
+
+// backupsIn lists the backups a write left in dir.
+func backupsIn(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var backups []string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "tf-version-bump-backup-") {
+			backups = append(backups, filepath.Join(dir, entry.Name()))
+		}
+	}
+	return backups
 }
