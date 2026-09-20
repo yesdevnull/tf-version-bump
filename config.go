@@ -153,12 +153,19 @@ func loadConfig(filename string) (*Config, error) {
 	return &config, nil
 }
 
+// declaresNoUpdates reports a config that asks for nothing: no Terraform version, no providers and
+// no modules. Both readers judge an empty config the same way, so -validate-config and an update
+// run cannot disagree about which configs declare nothing.
+func (c *Config) declaresNoUpdates() bool {
+	return c.TerraformVersion == "" && len(c.Providers) == 0 && len(c.Modules) == 0
+}
+
 func validateConfigFile(filename string) error {
 	config, err := loadConfig(filename)
 	if err != nil {
 		return err
 	}
-	if config.TerraformVersion == "" && len(config.Providers) == 0 && len(config.Modules) == 0 {
+	if config.declaresNoUpdates() {
 		return fmt.Errorf("config contains no updates")
 	}
 	return nil

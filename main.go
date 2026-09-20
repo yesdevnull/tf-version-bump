@@ -430,21 +430,39 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (tota
 	return totalUpdates, totalErrors
 }
 
-// printSummary prints the final summary of updates
-func printSummary(totalUpdates, updatesCount int, dryRun bool) {
-	if dryRun {
-		if updatesCount > 1 {
-			fmt.Printf("\nDry run: would apply %d update(s) across all files\n", totalUpdates)
-		} else {
-			fmt.Printf("\nDry run: would update %d file(s)\n", totalUpdates)
-		}
-	} else {
-		if updatesCount > 1 {
-			fmt.Printf("\nSuccessfully applied %d update(s) across all files\n", totalUpdates)
-		} else {
-			fmt.Printf("\nSuccessfully updated %d file(s)\n", totalUpdates)
-		}
+// failureNote reports the updates that failed, so a summary of what succeeded is never mistaken
+// for the whole story of the run. It is empty when nothing failed.
+func failureNote(errorCount int) string {
+	if errorCount == 0 {
+		return ""
 	}
+	return fmt.Sprintf("%d update(s) failed; see the errors above\n", errorCount)
+}
+
+// printRunSummary prints one run's summary line followed by its failures. A run that updated
+// nothing and failed omits the line rather than counting no files as a success.
+func printRunSummary(line string, totalUpdates, errorCount int) {
+	fmt.Println()
+	if totalUpdates > 0 || errorCount == 0 {
+		fmt.Println(line)
+	}
+	fmt.Print(failureNote(errorCount))
+}
+
+// printSummary prints the final summary of updates
+func printSummary(totalUpdates, updatesCount, errorCount int, dryRun bool) {
+	var line string
+	switch {
+	case dryRun && updatesCount > 1:
+		line = fmt.Sprintf("Dry run: would apply %d update(s) across all files", totalUpdates)
+	case dryRun:
+		line = fmt.Sprintf("Dry run: would update %d file(s)", totalUpdates)
+	case updatesCount > 1:
+		line = fmt.Sprintf("Successfully applied %d update(s) across all files", totalUpdates)
+	default:
+		line = fmt.Sprintf("Successfully updated %d file(s)", totalUpdates)
+	}
+	printRunSummary(line, totalUpdates, errorCount)
 }
 
 func main() {
@@ -838,13 +856,20 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 	}
 
 	// Print summary
-	printConfigSummary(terraformUpdates, providerUpdates, moduleUpdates, flags.dryRun)
-	totalUpdates := terraformUpdates + providerUpdates + moduleUpdates
+	outcome := configOutcome{
+		terraformUpdates: terraformUpdates,
+		providerUpdates:  providerUpdates,
+		moduleUpdates:    moduleUpdates,
+		errors:           terraformErrors + providerErrors + moduleErrors,
+		declaresNothing:  config.declaresNoUpdates(),
+	}
+	printConfigSummary(outcome, flags.dryRun)
+	totalUpdates := outcome.updates()
 	if terraformErrors == 0 && providerErrors == 0 && moduleErrors > 0 {
 		return totalUpdates, fmt.Errorf("%d module update error(s)", moduleErrors)
 	}
-	if totalErrors := terraformErrors + providerErrors + moduleErrors; totalErrors > 0 {
-		return totalUpdates, fmt.Errorf("%d update error(s)", totalErrors)
+	if outcome.errors > 0 {
+		return totalUpdates, fmt.Errorf("%d update error(s)", outcome.errors)
 	}
 	return totalUpdates, nil
 }
@@ -858,7 +883,7 @@ func runCLIMode(files []string, flags *cliFlags) (int, error) {
 	case flags.terraformVersion != "":
 		var totalErrors int
 		totalUpdates, totalErrors = processTerraformVersion(files, flags.terraformVersion, flags.dryRun, flags.output, flags.reportRecorder())
-		printTerraformSummary(totalUpdates, flags.dryRun)
+		printTerraformSummary(totalUpdates, totalErrors, flags.dryRun)
 		if totalErrors > 0 {
 			return totalUpdates, fmt.Errorf("%d Terraform version update error(s)", totalErrors)
 		}
@@ -869,7 +894,7 @@ func runCLIMode(files []string, flags *cliFlags) (int, error) {
 		}
 		var totalErrors int
 		totalUpdates, totalErrors = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output, flags.reportRecorder())
-		printProviderSummary(flags.providerName, totalUpdates, flags.dryRun, flags.output)
+		printProviderSummary(flags.providerName, totalUpdates, totalErrors, flags.dryRun, flags.output)
 		if totalErrors > 0 {
 			return totalUpdates, fmt.Errorf("%d provider update error(s)", totalErrors)
 		}
@@ -878,7 +903,7 @@ func runCLIMode(files []string, flags *cliFlags) (int, error) {
 		updates = loadModuleUpdates(flags)
 		var totalErrors int
 		totalUpdates, totalErrors = processFiles(files, updates, flags)
-		printSummary(totalUpdates, len(updates), flags.dryRun)
+		printSummary(totalUpdates, len(updates), totalErrors, flags.dryRun)
 		if totalErrors > 0 {
 			return totalUpdates, fmt.Errorf("%d module update error(s)", totalErrors)
 		}
@@ -886,54 +911,77 @@ func runCLIMode(files []string, flags *cliFlags) (int, error) {
 	}
 }
 
+// configOutcome is what one config-mode run did. The summary needs the failures as well as the
+// updates: without them a run whose every update failed cannot be told from one with nothing to
+// do, and both would be reported as a config that is empty or matches nothing.
+type configOutcome struct {
+	terraformUpdates int
+	providerUpdates  int
+	moduleUpdates    int
+	errors           int
+	declaresNothing  bool
+}
+
+// updates counts the Terraform, provider and module updates the run performed.
+func (o configOutcome) updates() int {
+	return o.terraformUpdates + o.providerUpdates + o.moduleUpdates
+}
+
 // printConfigSummary prints the summary for config file mode
-func printConfigSummary(terraformUpdates, providerUpdates, moduleUpdates int, dryRun bool) {
-	if terraformUpdates > 0 || providerUpdates > 0 || moduleUpdates > 0 {
+func printConfigSummary(outcome configOutcome, dryRun bool) {
+	switch {
+	case outcome.updates() > 0:
 		fmt.Println("\n" + strings.Repeat("=", 50))
 		fmt.Println("Config File Update Summary")
 		fmt.Println(strings.Repeat("=", 50))
-		if terraformUpdates > 0 {
+		if outcome.terraformUpdates > 0 {
 			if dryRun {
-				fmt.Printf("Terraform version: would update %d file(s)\n", terraformUpdates)
+				fmt.Printf("Terraform version: would update %d file(s)\n", outcome.terraformUpdates)
 			} else {
-				fmt.Printf("Terraform version: %d file(s) updated\n", terraformUpdates)
+				fmt.Printf("Terraform version: %d file(s) updated\n", outcome.terraformUpdates)
 			}
 		}
-		if providerUpdates > 0 {
+		if outcome.providerUpdates > 0 {
 			if dryRun {
-				fmt.Printf("Providers: would apply %d update(s)\n", providerUpdates)
+				fmt.Printf("Providers: would apply %d update(s)\n", outcome.providerUpdates)
 			} else {
-				fmt.Printf("Providers: %d update(s) applied\n", providerUpdates)
+				fmt.Printf("Providers: %d update(s) applied\n", outcome.providerUpdates)
 			}
 		}
-		if moduleUpdates > 0 {
+		if outcome.moduleUpdates > 0 {
 			if dryRun {
-				fmt.Printf("Modules: would apply %d update(s)\n", moduleUpdates)
+				fmt.Printf("Modules: would apply %d update(s)\n", outcome.moduleUpdates)
 			} else {
-				fmt.Printf("Modules: %d update(s) applied\n", moduleUpdates)
+				fmt.Printf("Modules: %d update(s) applied\n", outcome.moduleUpdates)
 			}
 		}
-	} else {
-		fmt.Println("\nNo updates were performed. Config file may be empty or contain no matching items.")
+	case outcome.errors > 0:
+		// Every configured update failed, so the failures below are the whole summary.
+		fmt.Println()
+	case outcome.declaresNothing:
+		fmt.Println("\nNo updates were performed. The config declares no updates.")
+	default:
+		fmt.Println("\nNo updates were performed. Every configured update is already applied or matched nothing; use -audit-file to see which.")
 	}
+	fmt.Print(failureNote(outcome.errors))
 }
 
 // printTerraformSummary prints the summary for terraform version updates
-func printTerraformSummary(totalUpdates int, dryRun bool) {
+func printTerraformSummary(totalUpdates, errorCount int, dryRun bool) {
+	line := fmt.Sprintf("Successfully updated Terraform version in %d file(s)", totalUpdates)
 	if dryRun {
-		fmt.Printf("\nDry run: would update Terraform version in %d file(s)\n", totalUpdates)
-	} else {
-		fmt.Printf("\nSuccessfully updated Terraform version in %d file(s)\n", totalUpdates)
+		line = fmt.Sprintf("Dry run: would update Terraform version in %d file(s)", totalUpdates)
 	}
+	printRunSummary(line, totalUpdates, errorCount)
 }
 
 // printProviderSummary prints the summary for provider version updates
-func printProviderSummary(providerName string, totalUpdates int, dryRun bool, outputFormat string) {
+func printProviderSummary(providerName string, totalUpdates, errorCount int, dryRun bool, outputFormat string) {
+	line := fmt.Sprintf("Successfully updated %s provider version in %d file(s)", quote(providerName, outputFormat), totalUpdates)
 	if dryRun {
-		fmt.Printf("\nDry run: would update %s provider version in %d file(s)\n", quote(providerName, outputFormat), totalUpdates)
-	} else {
-		fmt.Printf("\nSuccessfully updated %s provider version in %d file(s)\n", quote(providerName, outputFormat), totalUpdates)
+		line = fmt.Sprintf("Dry run: would update %s provider version in %d file(s)", quote(providerName, outputFormat), totalUpdates)
 	}
+	printRunSummary(line, totalUpdates, errorCount)
 }
 
 // containsVersion checks if a version string is present in a slice of versions.

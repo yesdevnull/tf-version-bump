@@ -28,12 +28,13 @@ func TestRunCLIModeContinuesAfterFileFailure(t *testing.T) {
 			})
 			parser := "failed to parse HCL: " + bad + ":1,11-12: Unclosed configuration block; There is no closing brace for this block before the end of the file. This may be caused by incorrect brace nesting elsewhere in this file."
 			wantDiag := "Error processing " + bad + ": " + parser + "\n"
-			wantOut := tt.output + good + "\n\nSuccessfully updated 1 file(s)\n"
+			failed := "1 update(s) failed; see the errors above\n"
+			wantOut := tt.output + good + "\n\nSuccessfully updated 1 file(s)\n" + failed
 			if tt.name == "terraform" {
-				wantOut = tt.output + good + "\n\nSuccessfully updated Terraform version in 1 file(s)\n"
+				wantOut = tt.output + good + "\n\nSuccessfully updated Terraform version in 1 file(s)\n" + failed
 			}
 			if tt.name == "provider" {
-				wantOut = tt.output + good + "\n\nSuccessfully updated 'aws' provider version in 1 file(s)\n"
+				wantOut = tt.output + good + "\n\nSuccessfully updated 'aws' provider version in 1 file(s)\n" + failed
 			}
 			if stdout != wantOut || diag != wantDiag || err == nil || err.Error() != tt.errText || readTestFile(t, good) != tt.wantHCL {
 				t.Fatalf("stdoutOK=%v diagOK=%v errOK=%v hclOK=%v stdout=%q diag=%q err=%v content=%q", stdout == wantOut, diag == wantDiag, err != nil && err.Error() == tt.errText, readTestFile(t, good) == tt.wantHCL, stdout, diag, err, readTestFile(t, good))
@@ -150,7 +151,7 @@ modules:
 		_, err := runConfigFileMode([]string{bad1, bad2, good}, &cliFlags{configFile: cfg, output: "text"})
 		return err
 	})
-	wantPrefix := "✓ Updated Terraform required_version to '>= 1.6' in " + good + "\n✓ Updated provider 'aws' to version '~> 5.0' in " + good + "\n✓ Updated provider 'azurerm' to version '~> 4.0' in " + good + "\n✓ Updated module source 'terraform-aws-modules/vpc/aws' to version '5.0.0' in " + good + "\n✓ Updated module source 'terraform-aws-modules/ec2-instance/aws' to version '6.0.0' in " + good + "\n\n==================================================\nConfig File Update Summary\n==================================================\nTerraform version: 1 file(s) updated\nProviders: 2 update(s) applied\nModules: 2 update(s) applied\n"
+	wantPrefix := "✓ Updated Terraform required_version to '>= 1.6' in " + good + "\n✓ Updated provider 'aws' to version '~> 5.0' in " + good + "\n✓ Updated provider 'azurerm' to version '~> 4.0' in " + good + "\n✓ Updated module source 'terraform-aws-modules/vpc/aws' to version '5.0.0' in " + good + "\n✓ Updated module source 'terraform-aws-modules/ec2-instance/aws' to version '6.0.0' in " + good + "\n\n==================================================\nConfig File Update Summary\n==================================================\nTerraform version: 1 file(s) updated\nProviders: 2 update(s) applied\nModules: 2 update(s) applied\n10 update(s) failed; see the errors above\n"
 	if err == nil || err.Error() != "10 update error(s)" || stdout != wantPrefix {
 		t.Fatalf("stdout=%q diag=%q err=%v content=%q", stdout, diag, err, readTestFile(t, good))
 	}
