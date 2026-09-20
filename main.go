@@ -431,16 +431,18 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (tota
 }
 
 // failureNote reports the updates that failed, so a summary of what succeeded is never mistaken
-// for the whole story of the run. It is empty when nothing failed.
+// for the whole story of the run. Every counted failure is logged where it happens, so the count
+// is also the number of diagnostics; it names stderr because the summary is on stdout, and a
+// redirected stdout would otherwise end with a pointer to errors it does not contain.
 func failureNote(errorCount int) string {
 	if errorCount == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%d update(s) failed; see the errors above\n", errorCount)
+	return fmt.Sprintf("%d update(s) failed; see the errors on stderr\n", errorCount)
 }
 
 // printRunSummary prints one run's summary line followed by its failures. A run that updated
-// nothing and failed omits the line rather than counting no files as a success.
+// nothing and failed omits the line rather than reporting a clean zero it cannot vouch for.
 func printRunSummary(line string, totalUpdates, errorCount int) {
 	fmt.Println()
 	if totalUpdates > 0 || errorCount == 0 {
@@ -857,21 +859,19 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 
 	// Print summary
 	outcome := configOutcome{
-		terraformUpdates: terraformUpdates,
-		providerUpdates:  providerUpdates,
-		moduleUpdates:    moduleUpdates,
-		errors:           terraformErrors + providerErrors + moduleErrors,
-		declaresNothing:  config.declaresNoUpdates(),
+		terraformUpdates: terraformUpdates, terraformErrors: terraformErrors,
+		providerUpdates: providerUpdates, providerErrors: providerErrors,
+		moduleUpdates: moduleUpdates, moduleErrors: moduleErrors,
+		declaresNothing: config.declaresNoUpdates(),
 	}
 	printConfigSummary(outcome, flags.dryRun)
-	totalUpdates := outcome.updates()
-	if terraformErrors == 0 && providerErrors == 0 && moduleErrors > 0 {
-		return totalUpdates, fmt.Errorf("%d module update error(s)", moduleErrors)
+	if outcome.onlyModuleErrors() {
+		return outcome.updates(), fmt.Errorf("%d module update error(s)", outcome.moduleErrors)
 	}
-	if outcome.errors > 0 {
-		return totalUpdates, fmt.Errorf("%d update error(s)", outcome.errors)
+	if outcome.errors() > 0 {
+		return outcome.updates(), fmt.Errorf("%d update error(s)", outcome.errors())
 	}
-	return totalUpdates, nil
+	return outcome.updates(), nil
 }
 
 // runCLIMode handles CLI mode operations
@@ -911,20 +911,31 @@ func runCLIMode(files []string, flags *cliFlags) (int, error) {
 	}
 }
 
-// configOutcome is what one config-mode run did. The summary needs the failures as well as the
-// updates: without them a run whose every update failed cannot be told from one with nothing to
-// do, and both would be reported as a config that is empty or matches nothing.
+// configOutcome counts what one config-mode run applied, or in a dry run would apply, and what
+// it failed on. The summary needs the failures as well as the updates: without them a run whose
+// every update failed cannot be told from one with nothing to do, and the operator is sent to
+// the config when the files were at fault.
 type configOutcome struct {
-	terraformUpdates int
-	providerUpdates  int
-	moduleUpdates    int
-	errors           int
-	declaresNothing  bool
+	terraformUpdates, terraformErrors int
+	providerUpdates, providerErrors   int
+	moduleUpdates, moduleErrors       int
+	declaresNothing                   bool
 }
 
-// updates counts the Terraform, provider and module updates the run performed.
+// updates counts the Terraform, provider and module version updates.
 func (o configOutcome) updates() int {
 	return o.terraformUpdates + o.providerUpdates + o.moduleUpdates
+}
+
+// errors counts the failed Terraform, provider and module update operations.
+func (o configOutcome) errors() int {
+	return o.terraformErrors + o.providerErrors + o.moduleErrors
+}
+
+// onlyModuleErrors reports whether every failure was a module update, which lets the run name the
+// modules in its error rather than blame the whole config.
+func (o configOutcome) onlyModuleErrors() bool {
+	return o.terraformErrors == 0 && o.providerErrors == 0 && o.moduleErrors > 0
 }
 
 // printConfigSummary prints the summary for config file mode
@@ -955,15 +966,16 @@ func printConfigSummary(outcome configOutcome, dryRun bool) {
 				fmt.Printf("Modules: %d update(s) applied\n", outcome.moduleUpdates)
 			}
 		}
-	case outcome.errors > 0:
-		// Every configured update failed, so the failures below are the whole summary.
+	case outcome.errors() > 0:
+		// Nothing was updated and something failed, so the failures below are the whole summary.
+		// A "nothing to do" message here would blame the config for a file-level fault.
 		fmt.Println()
 	case outcome.declaresNothing:
 		fmt.Println("\nNo updates were performed. The config declares no updates.")
 	default:
-		fmt.Println("\nNo updates were performed. Every configured update is already applied or matched nothing; use -audit-file to see which.")
+		fmt.Println("\nNo updates were performed. Every configured update is already applied, skipped or matched nothing; use -audit-file to see which.")
 	}
-	fmt.Print(failureNote(outcome.errors))
+	fmt.Print(failureNote(outcome.errors()))
 }
 
 // printTerraformSummary prints the summary for terraform version updates
