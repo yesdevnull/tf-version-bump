@@ -111,7 +111,7 @@ for _, block := range file.hcl.Body().Blocks() {
     }
 }
 
-// 3. Format and rewrite in place; a failed rewrite is undone from a backup
+// 3. Format and rewrite in place; a failed rewrite writes the original bytes back
 err = file.write()
 ```
 

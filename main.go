@@ -79,7 +79,8 @@ var (
 		return file, nil
 	}
 	// createBackupFile creates the copy of a Terraform file's original bytes kept while it is
-	// rewritten. It lives in the system temporary directory, so no Terraform glob can select it.
+	// rewritten. It lives in the system temporary directory, which keeps it out of the reach of a
+	// Terraform glob unless that directory is itself inside the tree being globbed.
 	createBackupFile = func(pattern string) (backupFile, error) {
 		file, err := os.CreateTemp("", pattern)
 		if err != nil {
@@ -386,7 +387,7 @@ func loadResolvedConfig(configFile, branch string) (*Config, error) {
 // processFiles applies the module updates to every matching file in order, parsing each file once so
 // an update meets the changes earlier updates made to it, in a dry run as in a real run. A file that
 // cannot be read or parsed counts one error per update; each failed write counts one error, and the
-// file is read again for the updates after it.
+// file is read again for the updates after it, which a file whose write kept its backup refuses.
 func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (totalUpdates, totalErrors int) {
 	for _, file := range files {
 		parsed, readErr := readTerraformFile(file)
