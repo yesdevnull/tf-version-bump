@@ -106,7 +106,7 @@ for _, block := range file.hcl.Body().Blocks() {
 }
 
 if updated && !dryRun {
-    err = file.write() // hclwrite.Format, then an in-place rewrite undone from a backup if it fails
+    err = file.write() // hclwrite.Format, then an in-place rewrite that writes the original bytes back if it fails
 }
 ```
 
