@@ -951,6 +951,57 @@ func TestCommandReportCountsHardLinkedTerraformBlocksOnce(t *testing.T) {
 	}
 }
 
+// decomposedVersion spells é as e plus a combining acute accent. HCL writes strings in NFC, so a
+// file never holds these bytes after an update, only their composed equivalent.
+const decomposedVersion = "~> 5.0-é"
+
+func TestCommandReportCountsHardLinkedProviderBlocksOnce(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "a.tf", "terraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\n")
+	linkedFile := dir + "/b.tf"
+	if err := os.Link(file, linkedFile); err != nil {
+		t.Skipf("cannot create hard link: %v", err)
+	}
+	report := dir + "/report.json"
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", dir + "/*.tf", "-provider", "aws", "-to", decomposedVersion, "-report-file", report,
+	})
+
+	if result.exitCode != -1 || result.diagnostics != "" {
+		t.Fatalf("result = %#v", result)
+	}
+	want := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 0,\n  \"module_blocks_updated\": 0,\n  \"provider_blocks_updated\": 1\n}\n"
+	if got := readTestFile(t, report); got != want {
+		t.Fatalf("report = %q, want %q", got, want)
+	}
+}
+
+func TestCommandCheckPassesAfterUpdatingToDecomposedVersion(t *testing.T) {
+	tests := []struct {
+		name, content string
+		operation     []string
+	}{
+		{name: "terraform", content: "terraform {\n  required_version = \">= 1.0\"\n}\n", operation: []string{"-terraform-version", decomposedVersion}},
+		{name: "provider", content: "terraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\n", operation: []string{"-provider", "aws", "-to", decomposedVersion}},
+		{name: "module", content: "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n", operation: []string{"-module", "example/module", "-to", decomposedVersion}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := writeTestFile(t, t.TempDir(), "main.tf", tt.content)
+			base := append([]string{"tf-version-bump", "-pattern", file}, tt.operation...)
+
+			if result := runMainCommand(t, base); result.exitCode != -1 || result.diagnostics != "" {
+				t.Fatalf("update result = %#v", result)
+			}
+			if result := runMainCommand(t, append(base, "-check")); result.exitCode != -1 || result.diagnostics != "" {
+				t.Fatalf("check after update result = %#v", result)
+			}
+		})
+	}
+}
+
 func TestCommandReportAggregatesDistinctFiles(t *testing.T) {
 	dir := t.TempDir()
 	firstFile := writeTestFile(t, dir, "first.tf", `terraform {
