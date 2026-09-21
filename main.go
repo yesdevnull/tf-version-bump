@@ -203,8 +203,9 @@ func (report *updateReport) recordTopLevelBlocks(filename string, blockIndexes [
 	return blockIDs, recordedBlocks
 }
 
-// recordProviderBlocks needs no de-duplication, unlike module entries, which chain over one block:
-// the config names each provider once, and a hard-linked copy is read already at the target.
+// recordProviderBlocks needs no de-duplication: a run names each provider once, and another path to
+// the same file, a hard link or symlink, is read already at the target. Module entries can update
+// one block more than once in a run, so modules, and Terraform blocks through the same helper, do.
 func (report *updateReport) recordProviderBlocks(blockLocations []string) {
 	report.ProviderBlocksUpdated += len(blockLocations)
 }

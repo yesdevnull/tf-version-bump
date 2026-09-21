@@ -79,8 +79,6 @@ providers:
     version: ">= 6.0, < 7.0"
 ```
 
-Each `name` may appear only once. A provider entry has no filters, so a second entry for the same name could only contradict the first; the loader rejects it, and `-validate-config` reports the repeated entry. The JSON Schema cannot express this rule, so only the runtime check enforces it.
-
 `name` is the key under `required_providers`, not the provider source address. In this example, the first entry targets `aws`, not `hashicorp/aws`:
 
 ```hcl
@@ -93,6 +91,8 @@ terraform {
   }
 }
 ```
+
+Each `name` may appear only once. A provider entry has no filters, so a second entry for the same name can at best repeat the first and otherwise contradicts it; the loader rejects it, and `-validate-config` reports the repeated entry. The JSON Schema cannot express this rule, so only the runtime check enforces it.
 
 See [Provider version updates](USAGE.md#provider-version-updates) for syntax and insertion behaviour.
 
