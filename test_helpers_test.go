@@ -74,7 +74,7 @@ func updateModuleVersion(filename, moduleSource, version string, fromVersions, i
 }
 
 func updateProviderVersion(filename, providerName, version string, dryRun bool) (bool, error) {
-	updated, _, err := updateProviderVersionWithCount(filename, providerName, version, dryRun)
+	updated, _, _, err := updateProviderVersionWithCount(filename, providerName, version, dryRun)
 	return updated, err
 }
 

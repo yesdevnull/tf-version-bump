@@ -454,11 +454,11 @@ func failureNote(errorCount int) string {
 // it recognised does not read like a run with nothing to do. Every skip it counts is warned
 // about, which is why it names the warnings rather than repeating them, but not every warned
 // skip counts: a local module can never carry a version, so nothing is left outstanding.
-func skipNote(skipCount int) string {
+func skipNote(skipCount int, kind string) string {
 	if skipCount == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%d module(s) skipped; see the warnings on stderr\n", skipCount)
+	return fmt.Sprintf("%d %s(s) skipped; see the warnings on stderr\n", skipCount, kind)
 }
 
 // printRunSummary prints one run's summary line followed by its failures. A run that updated
@@ -467,21 +467,22 @@ func skipNote(skipCount int) string {
 // counted as a success. It names every cause it cannot tell apart, including the skips the count
 // below leaves out, so it never denies a skip the run has just printed. It promises no tool that
 // answers "which", because -audit-file needs a config and -verbose lists only filtered modules.
-func printRunSummary(line string, totalUpdates, errorCount, skipCount int, dryRun bool) {
+func printRunSummary(line string, totalUpdates, errorCount int, skipped string, dryRun bool) {
 	fmt.Println()
 	switch {
 	case totalUpdates > 0:
 		fmt.Println(line)
-	case errorCount > 0 || skipCount > 0:
-		// The notes below are the whole summary: nothing was updated, and something failed or was
-		// left unpinned, so neither a success line nor a nothing-to-do line would be true.
+	case errorCount > 0:
+		// Nothing was updated and something failed, so the failures below are the whole summary:
+		// a nothing-to-do line would read as a clean result. A skip does not suppress it, because
+		// the line names skipping as one of the causes and the note then quantifies it.
 	case dryRun:
 		fmt.Println("No updates would be performed. Nothing matched, or every match was already at the target version or skipped.")
 	default:
 		fmt.Println("No updates were performed. Nothing matched, or every match was already at the target version or skipped.")
 	}
 	fmt.Print(failureNote(errorCount))
-	fmt.Print(skipNote(skipCount))
+	fmt.Print(skipped)
 }
 
 // printSummary prints the final summary of updates. A direct run carries one module operation,
@@ -491,7 +492,7 @@ func printSummary(totalUpdates, errorCount, skipCount int, dryRun bool) {
 	if dryRun {
 		line = fmt.Sprintf("Dry run: would update %d file(s)", totalUpdates)
 	}
-	printRunSummary(line, totalUpdates, errorCount, skipCount, dryRun)
+	printRunSummary(line, totalUpdates, errorCount, skipNote(skipCount, "module"), dryRun)
 }
 
 func main() {
@@ -898,7 +899,7 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 		return 0, fmt.Errorf("Error: config contains no updates") //nolint:staticcheck // User-facing CLI diagnostic.
 	}
 
-	var terraformUpdates, terraformErrors, providerUpdates, providerErrors, moduleUpdates, moduleSkips, moduleErrors int
+	var terraformUpdates, terraformErrors, providerUpdates, providerSkips, providerErrors, moduleUpdates, moduleSkips, moduleErrors int
 
 	// Process terraform version if specified
 	if config.TerraformVersion != "" {
@@ -907,8 +908,9 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 
 	// Process provider updates if specified
 	for _, provider := range config.Providers {
-		count, updateErrors := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output, flags.reportRecorder())
+		count, skips, updateErrors := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output, flags.reportRecorder())
 		providerUpdates += count
+		providerSkips += skips
 		providerErrors += updateErrors
 	}
 
@@ -922,7 +924,7 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 		terraformUpdates: terraformUpdates, terraformErrors: terraformErrors,
 		providerUpdates: providerUpdates, providerErrors: providerErrors,
 		moduleUpdates: moduleUpdates, moduleErrors: moduleErrors,
-		moduleSkips: moduleSkips,
+		moduleSkips: moduleSkips, providerSkips: providerSkips,
 	}
 	printConfigSummary(outcome, flags.dryRun)
 	if outcome.onlyModuleErrors() {
@@ -953,8 +955,9 @@ func runCLIMode(files []string, flags *cliFlags) (int, error) {
 			fatalf("Error: -to flag is required when using -provider")
 		}
 		var totalErrors int
-		totalUpdates, totalErrors = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output, flags.reportRecorder())
-		printProviderSummary(flags.providerName, totalUpdates, totalErrors, flags.dryRun, flags.output)
+		var totalSkips int
+		totalUpdates, totalSkips, totalErrors = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output, flags.reportRecorder())
+		printProviderSummary(flags.providerName, totalUpdates, totalErrors, totalSkips, flags.dryRun, flags.output)
 		if totalErrors > 0 {
 			return totalUpdates, fmt.Errorf("Error: %d provider update error(s)", totalErrors) //nolint:staticcheck // User-facing CLI diagnostic.
 		}
@@ -980,7 +983,7 @@ type configOutcome struct {
 	terraformUpdates, terraformErrors int
 	providerUpdates, providerErrors   int
 	moduleUpdates, moduleErrors       int
-	moduleSkips                       int
+	moduleSkips, providerSkips        int
 }
 
 // updates counts the Terraform, provider and module version updates.
@@ -1027,36 +1030,36 @@ func printConfigSummary(outcome configOutcome, dryRun bool) {
 				fmt.Printf("Modules: %d update(s) applied\n", outcome.moduleUpdates)
 			}
 		}
-	case outcome.errors() > 0 || outcome.moduleSkips > 0:
-		// Nothing was updated and something failed or was left unpinned, so the notes below are
-		// the whole summary. A "nothing to do" message here would blame the config for a
-		// file-level fault, or claim as settled a module the run declined to pin.
+	case outcome.errors() > 0:
+		// Nothing was updated and something failed, so the notes below are the whole summary: a
+		// "nothing to do" message here would blame the config for a file-level fault. A skip does
+		// not suppress it, because the message names skipping and the note then quantifies it.
 		fmt.Println()
 	default:
 		fmt.Println("\nNo updates were performed. Every configured update is already applied, skipped or matched nothing; use -audit-file to see which.")
 	}
 	fmt.Print(failureNote(outcome.errors()))
-	fmt.Print(skipNote(outcome.moduleSkips))
+	fmt.Print(skipNote(outcome.providerSkips, "provider"))
+	fmt.Print(skipNote(outcome.moduleSkips, "module"))
 }
 
 // printTerraformSummary prints the summary for terraform version updates
 func printTerraformSummary(totalUpdates, errorCount int, dryRun bool) {
-	// A Terraform version update has no module to skip.
+	// A Terraform required_version is set whether or not one is already there, so nothing is skipped.
 	line := fmt.Sprintf("Successfully updated Terraform version in %d file(s)", totalUpdates)
 	if dryRun {
 		line = fmt.Sprintf("Dry run: would update Terraform version in %d file(s)", totalUpdates)
 	}
-	printRunSummary(line, totalUpdates, errorCount, 0, dryRun)
+	printRunSummary(line, totalUpdates, errorCount, "", dryRun)
 }
 
 // printProviderSummary prints the summary for provider version updates
-func printProviderSummary(providerName string, totalUpdates, errorCount int, dryRun bool, outputFormat string) {
-	// A provider update has no module to skip.
+func printProviderSummary(providerName string, totalUpdates, errorCount, skipCount int, dryRun bool, outputFormat string) {
 	line := fmt.Sprintf("Successfully updated %s provider version in %d file(s)", quote(providerName, outputFormat), totalUpdates)
 	if dryRun {
 		line = fmt.Sprintf("Dry run: would update %s provider version in %d file(s)", quote(providerName, outputFormat), totalUpdates)
 	}
-	printRunSummary(line, totalUpdates, errorCount, 0, dryRun)
+	printRunSummary(line, totalUpdates, errorCount, skipNote(skipCount, "provider"), dryRun)
 }
 
 // containsVersion checks if a version string is present in a slice of versions.
@@ -1125,9 +1128,14 @@ func processTerraformVersion(files []string, version string, dryRun bool, output
 // Returns:
 //   - totalUpdates: Number of files that were updated (or would be updated in dry-run mode)
 //   - totalErrors: Number of files that could not be processed
-func processProviderVersion(files []string, providerName, version string, dryRun bool, outputFormat string, report *updateReport) (totalUpdates, totalErrors int) {
+func processProviderVersion(files []string, providerName, version string, dryRun bool, outputFormat string, report *updateReport) (totalUpdates, totalSkips, totalErrors int) {
 	for _, file := range files {
-		updated, changedBlocks, err := updateProviderVersionWithCount(file, providerName, version, dryRun)
+		updated, changedBlocks, skipped, err := updateProviderVersionWithCount(file, providerName, version, dryRun)
+		// An entry matched and left unpinned is warned about per entry, as an unpinned module is.
+		for range skipped {
+			fmt.Fprintf(os.Stderr, "Warning: Provider %s in %s has no version argument and updates cannot add one, skipping\n", quote(providerName, outputFormat), file)
+		}
+		totalSkips += skipped
 		if err != nil {
 			log.Printf("Error processing %s: %v", file, err)
 			totalErrors++
@@ -1147,7 +1155,7 @@ func processProviderVersion(files []string, providerName, version string, dryRun
 			totalUpdates++
 		}
 	}
-	return totalUpdates, totalErrors
+	return totalUpdates, totalSkips, totalErrors
 }
 
 // updateTerraformVersion updates the required_version attribute in terraform blocks
@@ -1217,15 +1225,16 @@ func updateTerraformVersionWithCount(filename, version string, dryRun bool) (upd
 //   - updated: true if a provider operation was applied (or would be applied in dry-run mode)
 //   - changedBlocks: locations of provider blocks whose version values differ from the target
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateProviderVersionWithCount(filename, providerName, version string, dryRun bool) (updated bool, changedBlocks []string, err error) {
+func updateProviderVersionWithCount(filename, providerName, version string, dryRun bool) (updated bool, changedBlocks []string, skipped int, err error) {
 	file, err := readTerraformFile(filename)
 	if err != nil {
-		return false, nil, err
+		return false, nil, 0, err
 	}
 
 	for blockIndex, block := range file.hcl.Body().Blocks() {
-		blockUpdated, blockChanges := updateProviderTerraformBlockResult(block, providerName, version)
+		blockUpdated, blockChanges, blockSkipped := updateProviderTerraformBlockResult(block, providerName, version)
 		updated = updated || blockUpdated
+		skipped += blockSkipped
 		for _, blockChange := range blockChanges {
 			changedBlocks = append(changedBlocks, fmt.Sprintf("%d/%s", blockIndex, blockChange))
 		}
@@ -1233,16 +1242,16 @@ func updateProviderVersionWithCount(filename, providerName, version string, dryR
 
 	if updated && !dryRun {
 		if err := file.write(); err != nil {
-			return false, nil, err
+			return false, nil, skipped, err
 		}
 	}
 
-	return updated, changedBlocks, nil
+	return updated, changedBlocks, skipped, nil
 }
 
-func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, version string) (updated bool, changedBlocks []string) {
+func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, version string) (updated bool, changedBlocks []string, skipped int) {
 	if block.Type() != "terraform" {
-		return false, nil
+		return false, nil, 0
 	}
 
 	updated = false
@@ -1259,7 +1268,10 @@ func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, ver
 			}
 			continue
 		}
-		attributeUpdated, attributeChanged := updateProviderAttributeVersionResult(nestedBlock, providerName, version)
+		attributeUpdated, attributeChanged, attributeSkipped := updateProviderAttributeVersionResult(nestedBlock, providerName, version)
+		if attributeSkipped {
+			skipped++
+		}
 		if attributeUpdated {
 			updated = true
 			if attributeChanged {
@@ -1268,7 +1280,7 @@ func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, ver
 		}
 	}
 
-	return updated, changedBlocks
+	return updated, changedBlocks, skipped
 }
 
 func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, version string) (updated bool, changedBlocks []int) {
@@ -1292,29 +1304,35 @@ func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, 
 
 // updateProviderAttributeVersion updates the version value within a provider attribute's object expression
 // This handles the attribute-based syntax: aws = { source = "..." version = "..." }
-func updateProviderAttributeVersionResult(nestedBlock *hclwrite.Block, providerName, newVersion string) (updated, changed bool) {
+// The third result reports an entry this run matched and left unpinned: an object with no version
+// argument, which an update does not add. Block syntax cannot reach it, because a missing version
+// there is simply set.
+func updateProviderAttributeVersionResult(nestedBlock *hclwrite.Block, providerName, newVersion string) (updated, changed, skipped bool) {
 	objExpr, expression, ok := providerAttributeObject(nestedBlock, providerName)
 	if !ok {
-		return false, false
+		return false, false, false
 	}
 
 	updatedExpression, hasVersion, changed := replaceProviderObjectVersion(objExpr, expression, newVersion)
-	if !hasVersion || !changed {
-		return false, false
+	if !hasVersion {
+		return false, false, true
+	}
+	if !changed {
+		return false, false, false
 	}
 
 	newAttribute := append([]byte(providerName+" = "), updatedExpression...)
 	newExpr, diags := hclwrite.ParseConfig(newAttribute, "inline", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return false, false
+		return false, false, false
 	}
 
 	for _, newAttr := range newExpr.Body().Attributes() {
 		nestedBlock.Body().SetAttributeRaw(providerName, newAttr.Expr().BuildTokens(nil))
-		return true, changed
+		return true, changed, false
 	}
 
-	return false, false
+	return false, false, false
 }
 
 func providerAttributeObject(nestedBlock *hclwrite.Block, providerName string) (*hclsyntax.ObjectConsExpr, []byte, bool) {
