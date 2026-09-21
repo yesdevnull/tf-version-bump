@@ -451,18 +451,12 @@ func printRunSummary(line string, totalUpdates, errorCount int) {
 	fmt.Print(failureNote(errorCount))
 }
 
-// printSummary prints the final summary of updates
-func printSummary(totalUpdates, updatesCount, errorCount int, dryRun bool) {
-	var line string
-	switch {
-	case dryRun && updatesCount > 1:
-		line = fmt.Sprintf("Dry run: would apply %d update(s) across all files", totalUpdates)
-	case dryRun:
+// printSummary prints the final summary of updates. A direct run carries one module operation,
+// so the count is always a count of files.
+func printSummary(totalUpdates, errorCount int, dryRun bool) {
+	line := fmt.Sprintf("Successfully updated %d file(s)", totalUpdates)
+	if dryRun {
 		line = fmt.Sprintf("Dry run: would update %d file(s)", totalUpdates)
-	case updatesCount > 1:
-		line = fmt.Sprintf("Successfully applied %d update(s) across all files", totalUpdates)
-	default:
-		line = fmt.Sprintf("Successfully updated %d file(s)", totalUpdates)
 	}
 	printRunSummary(line, totalUpdates, errorCount)
 }
@@ -903,7 +897,7 @@ func runCLIMode(files []string, flags *cliFlags) (int, error) {
 		updates = loadModuleUpdates(flags)
 		var totalErrors int
 		totalUpdates, totalErrors = processFiles(files, updates, flags)
-		printSummary(totalUpdates, len(updates), totalErrors, flags.dryRun)
+		printSummary(totalUpdates, totalErrors, flags.dryRun)
 		if totalErrors > 0 {
 			return totalUpdates, fmt.Errorf("Error: %d module update error(s)", totalErrors) //nolint:staticcheck // User-facing CLI diagnostic.
 		}
