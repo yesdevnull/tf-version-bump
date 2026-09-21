@@ -47,7 +47,7 @@ Validate the runtime YAML contract without selecting, parsing, or changing Terra
 tf-version-bump -validate-config versions.yml
 ```
 
-The command rejects malformed YAML, multiple YAML documents, unknown fields, missing required entry fields, and configs without any Terraform, provider, or module updates. It trims and validates values in the same way as update mode. It does not execute the JSON Schema or validate Terraform version-constraint syntax. Validation is standalone and cannot be combined with update, check, or report flags.
+The command rejects malformed YAML, multiple YAML documents, unknown fields, missing required entry fields, a provider `name` listed more than once, and configs without any Terraform, provider, or module updates. It trims and validates values in the same way as update mode. It does not execute the JSON Schema or validate Terraform version-constraint syntax. Validation is standalone and cannot be combined with update, check, or report flags.
 
 ## Top-level fields
 
@@ -78,6 +78,8 @@ providers:
   - name: "google"
     version: ">= 6.0, < 7.0"
 ```
+
+Each `name` may appear only once. A provider entry has no filters, so a second entry for the same name could only contradict the first; the loader rejects it, and `-validate-config` reports the repeated entry. The JSON Schema cannot express this rule, so only the runtime check enforces it.
 
 `name` is the key under `required_providers`, not the provider source address. In this example, the first entry targets `aws`, not `hashicorp/aws`:
 

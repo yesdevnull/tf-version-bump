@@ -1156,8 +1156,6 @@ module "example" {
 `)
 	config := writeTestFile(t, dir, "updates.yml", `providers:
   - name: aws
-    version: "~> 5.0"
-  - name: aws
     version: "~> 6.0"
 modules:
   - source: example/module
@@ -1204,8 +1202,6 @@ module "example" {
 		t.Skipf("cannot create hard link: %v", err)
 	}
 	config := writeTestFile(t, dir, "updates.yml", `providers:
-  - name: aws
-    version: "~> 5.0"
   - name: aws
     version: "~> 6.0"
 modules:

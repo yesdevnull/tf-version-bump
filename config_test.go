@@ -97,6 +97,7 @@ func TestLoadConfigRejectsInvalidInput(t *testing.T) {
 		{name: "provider missing name", data: "providers:\n  - version: 5.0.0\n", want: "provider at index 0 is missing 'name' field", exact: true},
 		{name: "provider missing version", data: "providers:\n  - name: aws\n", want: "provider at index 0 is missing 'version' field", exact: true},
 		{name: "later provider missing name", data: "providers:\n  - name: aws\n    version: 5.0.0\n  - version: 6.0.0\n", want: "provider at index 1 is missing 'name' field", exact: true},
+		{name: "duplicate provider name", data: "providers:\n  - name: aws\n    version: 5.0.0\n  - name: google\n    version: 6.0.0\n  - name: \" aws \"\n    version: 6.0.0\n", want: "provider at index 2 repeats name 'aws' from index 0", exact: true},
 		{name: "ignore versions non-string", data: "modules:\n  - source: example/module\n    version: 5.0.0\n    ignore_versions: [4]\n", want: "failed to parse YAML: version filter array contains non-string values", exact: true},
 		{name: "ignore modules invalid entry", data: "modules:\n  - source: example/module\n    version: 5.0.0\n    ignore_modules: [\"state/staging/\"]\n", want: "module at index 0 has an invalid 'ignore_modules' entry: 'state/staging/' must be '<branch>/<module>' with no empty '/'-separated part", exact: true},
 	}
