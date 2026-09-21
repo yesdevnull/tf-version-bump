@@ -342,7 +342,7 @@ func TestCommandCheckReturnsSuccessWhenCurrent(t *testing.T) {
 
 	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n" +
 		"Running in check mode - no files will be modified\n\n" +
-		"No updates would be performed. Every selected file is already at the target version or matched nothing.\n"
+		"No updates would be performed. Nothing matched, or every match was already at the target version or skipped.\n"
 	if result.stdout != wantStdout || result.diagnostics != "" || result.exitCode != -1 {
 		t.Fatalf("result = %#v, want stdout %q and normal return", result, wantStdout)
 	}
@@ -508,7 +508,7 @@ func TestCommandNoMatchingModuleIsSuccess(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "main.tf", "module \"x\" {\n  source = \"other/module\"\n  version = \"1.0.0\"\n}\n")
 	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0"})
-	if result.stdout != "Found 1 file(s) matching pattern '"+file+"'\n\nNo updates were performed. Every selected file is already at the target version or matched nothing.\n" || result.diagnostics != "" || result.exitCode != -1 || readTestFile(t, file) != "module \"x\" {\n  source = \"other/module\"\n  version = \"1.0.0\"\n}\n" {
+	if result.stdout != "Found 1 file(s) matching pattern '"+file+"'\n\nNo updates were performed. Nothing matched, or every match was already at the target version or skipped.\n" || result.diagnostics != "" || result.exitCode != -1 || readTestFile(t, file) != "module \"x\" {\n  source = \"other/module\"\n  version = \"1.0.0\"\n}\n" {
 		t.Fatalf("result %#v content %q", result, readTestFile(t, file))
 	}
 }
@@ -1772,6 +1772,35 @@ func TestCommandKeepsReportWhenNothingWasChanged(t *testing.T) {
 			}
 			if got := readTestFile(t, report); got != reportContent {
 				t.Errorf("report = %q, want it left alone as %q", got, reportContent)
+			}
+		})
+	}
+}
+
+// A module a filter excluded was neither already at the target version nor unmatched, so the
+// sentence must not name those as the only causes: the run prints the skip with -verbose and
+// would otherwise deny it on the next line. The skip count deliberately does not cover a filtered
+// module, which is not left outstanding, so the wording is what has to carry it.
+func TestCommandFilteredDirectRunDoesNotDenyTheSkip(t *testing.T) {
+	tests := map[string][]string{
+		"ignore-modules": {"-ignore-modules", "legacy-*"},
+		"from":           {"-from", "9.9.9"},
+	}
+	for name, filter := range tests {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			input := "module \"legacy-vpc\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n"
+			file := writeTestFile(t, dir, "main.tf", input)
+			args := append([]string{"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0"}, filter...)
+
+			result := runMainCommand(t, args)
+
+			wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\nNo updates were performed. Nothing matched, or every match was already at the target version or skipped.\n"
+			if result.stdout != wantStdout || result.diagnostics != "" || result.warnings != "" || result.exitCode != -1 {
+				t.Fatalf("result = %#v, want stdout %q and normal return", result, wantStdout)
+			}
+			if got := readTestFile(t, file); got != input {
+				t.Errorf("content = %q, want unchanged %q", got, input)
 			}
 		})
 	}
