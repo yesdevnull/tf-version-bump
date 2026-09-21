@@ -159,7 +159,6 @@ type updateReport struct {
 	ProviderBlocksUpdated  int `json:"provider_blocks_updated"`
 	terraformBlockIDs      map[string]struct{}
 	moduleBlockIDs         map[string]struct{}
-	providerBlockIDs       map[string]struct{}
 	fileIdentities         []fs.FileInfo
 }
 
@@ -204,19 +203,10 @@ func (report *updateReport) recordTopLevelBlocks(filename string, blockIndexes [
 	return blockIDs, recordedBlocks
 }
 
-func (report *updateReport) recordProviderBlocks(filename string, blockLocations []string) {
-	fileID := report.fileIdentity(filename)
-	if report.providerBlockIDs == nil {
-		report.providerBlockIDs = make(map[string]struct{})
-	}
-	for _, blockLocation := range blockLocations {
-		blockID := fileID + "\x00" + blockLocation
-		if _, recorded := report.providerBlockIDs[blockID]; recorded {
-			continue
-		}
-		report.providerBlockIDs[blockID] = struct{}{}
-		report.ProviderBlocksUpdated++
-	}
+// recordProviderBlocks needs no de-duplication, unlike module entries, which chain over one block:
+// the config names each provider once, and a hard-linked copy is read already at the target.
+func (report *updateReport) recordProviderBlocks(blockLocations []string) {
+	report.ProviderBlocksUpdated += len(blockLocations)
 }
 
 func (report *updateReport) fileIdentity(filename string) string {
@@ -1152,7 +1142,7 @@ func processProviderVersion(files []string, providerName, version string, dryRun
 		}
 		if updated {
 			if report != nil && !dryRun && len(changedBlocks) > 0 {
-				report.recordProviderBlocks(file, changedBlocks)
+				report.recordProviderBlocks(changedBlocks)
 			}
 			prefix := "✓"
 			action := "Updated"

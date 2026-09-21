@@ -1129,7 +1129,7 @@ func TestProviderModesSkipReportBookkeepingWhenDisabled(t *testing.T) {
 			if runErr != nil {
 				t.Fatalf("provider mode error = %v", runErr)
 			}
-			if flags.report.providerBlockIDs != nil || flags.report.fileIdentities != nil {
+			if flags.report.ProviderBlocksUpdated != 0 || flags.report.fileIdentities != nil {
 				t.Fatalf("disabled report bookkeeping = %#v", flags.report)
 			}
 			if got := readTestFile(t, file); !strings.Contains(got, `version = "~> 5.0"`) {

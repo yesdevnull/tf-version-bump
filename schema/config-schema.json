@@ -36,7 +36,7 @@
     },
     "providers": {
       "type": "array",
-      "description": "Optional: List of provider version updates to apply in terraform required_providers blocks",
+      "description": "Optional: List of provider version updates to apply in terraform required_providers blocks. Each name may appear only once; the runtime loader rejects a repeat, which this schema cannot express",
       "items": {
         "type": "object",
         "required": ["name", "version"],
