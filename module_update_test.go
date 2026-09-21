@@ -602,3 +602,61 @@ func TestTerraformFileWrite_WarnsWhenBackupCannotBeRemoved(t *testing.T) {
 		t.Errorf("content = %q, want %q", got, moduleAt("2.0.0"))
 	}
 }
+
+// The skip count reports the modules left unpinned, which is what the run's summary turns into a
+// line of its own. A module the config excludes or one already at the target version was skipped
+// as asked and does not count.
+func TestUpdateModuleVersionWithCount_CountsSkipsThatLeaveBlocksUnpinned(t *testing.T) {
+	tests := []struct {
+		name, module, source string
+		forceAdd             bool
+		wantSkipped          int
+		wantWarning          string
+	}{
+		{
+			name: "missing version", module: "module \"vpc\" {\n  source = \"example/module\"\n}\n",
+			source: "example/module", wantSkipped: 1,
+			wantWarning: "has no version attribute, skipping",
+		},
+		{
+			name: "force-add cannot add a version", module: "module \"vpc\" {\n  source = \"github.com/example/module\"\n}\n",
+			source: "github.com/example/module", forceAdd: true, wantSkipped: 1,
+			wantWarning: "is not a registry module and cannot use a version attribute, skipping",
+		},
+		{
+			name: "already at the target version", module: "module \"vpc\" {\n  source  = \"example/module\"\n  version = \"2.0.0\"\n}\n",
+			source: "example/module", wantSkipped: 0,
+		},
+		{
+			name: "excluded by an ignore pattern", module: "module \"vpc\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n",
+			source: "example/module", wantSkipped: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := writeTestFile(t, t.TempDir(), "main.tf", tt.module)
+			ignorePatterns := []string(nil)
+			if tt.name == "excluded by an ignore pattern" {
+				ignorePatterns = []string{"vpc"}
+			}
+
+			var updated bool
+			var skipped int
+			var err error
+			warnings := captureStderr(t, func() {
+				updated, _, skipped, err = updateModuleVersionWithCount(file, tt.source, "2.0.0",
+					nil, nil, ignorePatterns, tt.forceAdd, true, false, "text")
+			})
+
+			if err != nil || updated || skipped != tt.wantSkipped {
+				t.Fatalf("updated=%v skipped=%d err=%v, want no update and %d skip(s)", updated, skipped, err, tt.wantSkipped)
+			}
+			if tt.wantWarning == "" && warnings != "" {
+				t.Fatalf("warnings = %q, want none", warnings)
+			}
+			if tt.wantWarning != "" && !strings.Contains(warnings, tt.wantWarning) {
+				t.Fatalf("warnings = %q, want one containing %q", warnings, tt.wantWarning)
+			}
+		})
+	}
+}

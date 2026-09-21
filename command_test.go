@@ -1088,7 +1088,7 @@ func TestProcessFilesSkipsReportBookkeepingWhenDisabled(t *testing.T) {
 
 	var updatesApplied, updateErrors int
 	captureStdout(t, func() {
-		updatesApplied, updateErrors = processFiles([]string{file}, updates, flags)
+		updatesApplied, _, updateErrors = processFiles([]string{file}, updates, flags)
 	})
 
 	if updatesApplied != 1 || updateErrors != 0 {
@@ -1687,5 +1687,50 @@ func TestCommandAuditReportsAnInvalidConfig(t *testing.T) {
 	want := "Error loading config file: module at index 0 is missing 'source' field\n"
 	if result.exitCode != 1 || result.diagnostics != want {
 		t.Errorf("result = %#v, want diagnostic %q", result, want)
+	}
+}
+
+// A module the tool found, recognised and declined to pin is left unpinned, which is the worst
+// state a block can be in: Terraform resolves whatever the registry serves. The run warns, so
+// the summary counts the warning rather than letting a run that changed nothing and pinned
+// nothing read exactly like a run that had nothing to do.
+func TestCommandSkippedModulesAreCounted(t *testing.T) {
+	tests := map[string][]string{
+		"direct": {"-module", "example/module", "-to", "2.0.0"},
+		"config": nil,
+	}
+	for name, operation := range tests {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			// No version attribute, and no -force-add: the block stays unpinned.
+			file := writeTestFile(t, dir, "main.tf", "module \"vpc\" {\n  source = \"example/module\"\n}\n")
+			args := append([]string{"tf-version-bump", "-pattern", file}, operation...)
+			if operation == nil {
+				config := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n")
+				args = []string{"tf-version-bump", "-pattern", file, "-config", config}
+			}
+
+			result := runMainCommand(t, args)
+
+			wantWarning := "Warning: Module 'vpc' in " + file + " (source: 'example/module') has no version attribute, skipping\n"
+			wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\n1 module(s) skipped; see the warnings on stderr\n"
+			if result.stdout != wantStdout || result.warnings != wantWarning || result.diagnostics != "" || result.exitCode != -1 {
+				t.Fatalf("result = %#v, want stdout %q and warning %q", result, wantStdout, wantWarning)
+			}
+		})
+	}
+}
+
+// A module excluded by a filter, or already at the target version, was skipped exactly as asked,
+// so counting it would make the line noise rather than a signal.
+func TestCommandFilteredModulesAreNotCountedAsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"legacy-vpc\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	config := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n    ignore_modules:\n      - \"legacy-*\"\n")
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config})
+
+	if strings.Contains(result.stdout, "skipped;") || result.diagnostics != "" || result.exitCode != -1 {
+		t.Fatalf("result = %#v, want no skip count for a module the config excludes", result)
 	}
 }

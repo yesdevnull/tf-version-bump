@@ -388,7 +388,7 @@ func loadResolvedConfig(configFile, branch string) (*Config, error) {
 // an update meets the changes earlier updates made to it, in a dry run as in a real run. A file that
 // cannot be read or parsed counts one error per update; each failed write counts one error, and the
 // file is read again for the updates after it, and a file whose write kept its backup refuses that read.
-func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (totalUpdates, totalErrors int) {
+func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (totalUpdates, totalSkips, totalErrors int) {
 	for _, file := range files {
 		parsed, readErr := readTerraformFile(file)
 		// Index rather than copy: gocritic's rangeValCopy rejects ranging over ModuleUpdate by value.
@@ -399,7 +399,8 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (tota
 				totalErrors++
 				continue
 			}
-			updated, changedBlocks, err := applyModuleVersion(parsed, update.Source, update.Version, update.From, update.IgnoreVersions, update.resolvedIgnoreModules, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
+			updated, changedBlocks, skipped, err := applyModuleVersion(parsed, update.Source, update.Version, update.From, update.IgnoreVersions, update.resolvedIgnoreModules, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
+			totalSkips += skipped
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				totalErrors++
@@ -427,7 +428,7 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (tota
 			}
 		}
 	}
-	return totalUpdates, totalErrors
+	return totalUpdates, totalSkips, totalErrors
 }
 
 // failureNote reports the updates that failed, so a summary of what succeeded is never mistaken
@@ -441,34 +442,46 @@ func failureNote(errorCount int) string {
 	return fmt.Sprintf("%d update(s) failed; see the errors on stderr\n", errorCount)
 }
 
+// skipNote reports the modules the run left unpinned, so a run that declined to act on a block
+// it recognised does not read like a run with nothing to do. The skips it counts are the ones
+// the run warns about, which is why it names the warnings rather than repeating them.
+func skipNote(skipCount int) string {
+	if skipCount == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d module(s) skipped; see the warnings on stderr\n", skipCount)
+}
+
 // printRunSummary prints one run's summary line followed by its failures. A run that updated
 // nothing reports why instead of the line, which would otherwise claim a clean zero it cannot
 // vouch for: a mistyped source, a glob over the wrong tree and an already-current file all
 // counted as a success. The wording promises no tool that answers "which", because -audit-file
 // needs a config and -verbose lists only the modules a filter skipped.
-func printRunSummary(line string, totalUpdates, errorCount int, dryRun bool) {
+func printRunSummary(line string, totalUpdates, errorCount, skipCount int, dryRun bool) {
 	fmt.Println()
 	switch {
 	case totalUpdates > 0:
 		fmt.Println(line)
-	case errorCount > 0:
-		// The failures below are the whole summary.
+	case errorCount > 0 || skipCount > 0:
+		// The notes below are the whole summary: nothing was updated, and something failed or was
+		// left unpinned, so neither a success line nor a nothing-to-do line would be true.
 	case dryRun:
 		fmt.Println("No updates would be performed. Every selected file is already at the target version or matched nothing.")
 	default:
 		fmt.Println("No updates were performed. Every selected file is already at the target version or matched nothing.")
 	}
 	fmt.Print(failureNote(errorCount))
+	fmt.Print(skipNote(skipCount))
 }
 
 // printSummary prints the final summary of updates. A direct run carries one module operation,
 // so the count is always a count of files.
-func printSummary(totalUpdates, errorCount int, dryRun bool) {
+func printSummary(totalUpdates, errorCount, skipCount int, dryRun bool) {
 	line := fmt.Sprintf("Successfully updated %d file(s)", totalUpdates)
 	if dryRun {
 		line = fmt.Sprintf("Dry run: would update %d file(s)", totalUpdates)
 	}
-	printRunSummary(line, totalUpdates, errorCount, dryRun)
+	printRunSummary(line, totalUpdates, errorCount, skipCount, dryRun)
 }
 
 func main() {
@@ -866,7 +879,7 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 		return 0, fmt.Errorf("Error: config contains no updates") //nolint:staticcheck // User-facing CLI diagnostic.
 	}
 
-	var terraformUpdates, terraformErrors, providerUpdates, providerErrors, moduleUpdates, moduleErrors int
+	var terraformUpdates, terraformErrors, providerUpdates, providerErrors, moduleUpdates, moduleSkips, moduleErrors int
 
 	// Process terraform version if specified
 	if config.TerraformVersion != "" {
@@ -882,7 +895,7 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 
 	// Process module updates if specified
 	if len(config.Modules) > 0 {
-		moduleUpdates, moduleErrors = processFiles(files, config.Modules, flags)
+		moduleUpdates, moduleSkips, moduleErrors = processFiles(files, config.Modules, flags)
 	}
 
 	// Print summary
@@ -890,6 +903,7 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 		terraformUpdates: terraformUpdates, terraformErrors: terraformErrors,
 		providerUpdates: providerUpdates, providerErrors: providerErrors,
 		moduleUpdates: moduleUpdates, moduleErrors: moduleErrors,
+		moduleSkips: moduleSkips,
 	}
 	printConfigSummary(outcome, flags.dryRun)
 	if outcome.onlyModuleErrors() {
@@ -929,8 +943,9 @@ func runCLIMode(files []string, flags *cliFlags) (int, error) {
 	default:
 		updates = loadModuleUpdates(flags)
 		var totalErrors int
-		totalUpdates, totalErrors = processFiles(files, updates, flags)
-		printSummary(totalUpdates, totalErrors, flags.dryRun)
+		var totalSkips int
+		totalUpdates, totalSkips, totalErrors = processFiles(files, updates, flags)
+		printSummary(totalUpdates, totalErrors, totalSkips, flags.dryRun)
 		if totalErrors > 0 {
 			return totalUpdates, fmt.Errorf("Error: %d module update error(s)", totalErrors) //nolint:staticcheck // User-facing CLI diagnostic.
 		}
@@ -946,6 +961,7 @@ type configOutcome struct {
 	terraformUpdates, terraformErrors int
 	providerUpdates, providerErrors   int
 	moduleUpdates, moduleErrors       int
+	moduleSkips                       int
 }
 
 // updates counts the Terraform, provider and module version updates.
@@ -992,32 +1008,36 @@ func printConfigSummary(outcome configOutcome, dryRun bool) {
 				fmt.Printf("Modules: %d update(s) applied\n", outcome.moduleUpdates)
 			}
 		}
-	case outcome.errors() > 0:
-		// Nothing was updated and something failed, so the failures below are the whole summary.
-		// A "nothing to do" message here would blame the config for a file-level fault.
+	case outcome.errors() > 0 || outcome.moduleSkips > 0:
+		// Nothing was updated and something failed or was left unpinned, so the notes below are
+		// the whole summary. A "nothing to do" message here would blame the config for a
+		// file-level fault, or claim as settled a module the run declined to pin.
 		fmt.Println()
 	default:
 		fmt.Println("\nNo updates were performed. Every configured update is already applied, skipped or matched nothing; use -audit-file to see which.")
 	}
 	fmt.Print(failureNote(outcome.errors()))
+	fmt.Print(skipNote(outcome.moduleSkips))
 }
 
 // printTerraformSummary prints the summary for terraform version updates
 func printTerraformSummary(totalUpdates, errorCount int, dryRun bool) {
+	// A Terraform version update has no module to skip.
 	line := fmt.Sprintf("Successfully updated Terraform version in %d file(s)", totalUpdates)
 	if dryRun {
 		line = fmt.Sprintf("Dry run: would update Terraform version in %d file(s)", totalUpdates)
 	}
-	printRunSummary(line, totalUpdates, errorCount, dryRun)
+	printRunSummary(line, totalUpdates, errorCount, 0, dryRun)
 }
 
 // printProviderSummary prints the summary for provider version updates
 func printProviderSummary(providerName string, totalUpdates, errorCount int, dryRun bool, outputFormat string) {
+	// A provider update has no module to skip.
 	line := fmt.Sprintf("Successfully updated %s provider version in %d file(s)", quote(providerName, outputFormat), totalUpdates)
 	if dryRun {
 		line = fmt.Sprintf("Dry run: would update %s provider version in %d file(s)", quote(providerName, outputFormat), totalUpdates)
 	}
-	printRunSummary(line, totalUpdates, errorCount, dryRun)
+	printRunSummary(line, totalUpdates, errorCount, 0, dryRun)
 }
 
 // containsVersion checks if a version string is present in a slice of versions.
@@ -1387,11 +1407,12 @@ func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
 // Returns:
 //   - updated: true if at least one module operation was applied (or would be applied in dry-run mode)
 //   - changedBlocks: indexes of module blocks whose version values differ from the target
+//   - skipped: modules left unpinned by a skip the run warns about
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateModuleVersionWithCount(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, changedBlocks []int, err error) {
+func updateModuleVersionWithCount(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, changedBlocks []int, skipped int, err error) {
 	file, err := readTerraformFile(filename)
 	if err != nil {
-		return false, nil, err
+		return false, nil, 0, err
 	}
 	return applyModuleVersion(file, moduleSource, version, fromVersions, ignoreVersions, ignorePatterns, forceAdd, dryRun, verbose, outputFormat)
 }
@@ -1594,7 +1615,7 @@ func removeBackup(backup string) {
 
 // applyModuleVersion applies one module update to a parsed file, changing it in memory so a later
 // update to the same file meets this one's result, and writes the file unless dryRun is set.
-func applyModuleVersion(file *terraformFile, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, changedBlocks []int, err error) {
+func applyModuleVersion(file *terraformFile, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, changedBlocks []int, skipped int, err error) {
 	opts := moduleUpdateOptions{
 		filename:       file.name,
 		moduleSource:   moduleSource,
@@ -1608,7 +1629,10 @@ func applyModuleVersion(file *terraformFile, moduleSource, version string, fromV
 	}
 
 	for blockIndex, block := range file.hcl.Body().Blocks() {
-		blockUpdated, blockChanged := updateModuleBlockResult(block, &opts)
+		blockUpdated, blockChanged, blockSkipped := updateModuleBlockResult(block, &opts)
+		if blockSkipped {
+			skipped++
+		}
 		if blockUpdated {
 			updated = true
 			if blockChanged {
@@ -1619,11 +1643,11 @@ func applyModuleVersion(file *terraformFile, moduleSource, version string, fromV
 
 	if updated && !dryRun {
 		if err := file.write(); err != nil {
-			return false, nil, err
+			return false, nil, skipped, err
 		}
 	}
 
-	return updated, changedBlocks, nil
+	return updated, changedBlocks, skipped, nil
 }
 
 type moduleUpdateOptions struct {
@@ -1638,28 +1662,31 @@ type moduleUpdateOptions struct {
 	outputFormat   string
 }
 
-func updateModuleBlockResult(block *hclwrite.Block, opts *moduleUpdateOptions) (updated, changed bool) {
+// The third result reports a skip that leaves the block unpinned or defeats an explicit
+// -force-add, which the run counts. A module excluded by a filter, a local module and a module
+// already at the target version were all skipped as asked, so they do not count.
+func updateModuleBlockResult(block *hclwrite.Block, opts *moduleUpdateOptions) (updated, changed, skipped bool) {
 	if block.Type() != "module" {
-		return false, false
+		return false, false, false
 	}
 
 	moduleName := moduleBlockName(block)
 	sourceValue, ok := moduleSourceValue(block)
 	if !ok || sourceValue != opts.moduleSource {
-		return false, false
+		return false, false, false
 	}
 
 	if isLocalModule(sourceValue) {
 		fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) is a local module and cannot be version-bumped, skipping\n",
 			quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat))
-		return false, false
+		return false, false, false
 	}
 
 	if shouldIgnoreModule(moduleName, opts.ignorePatterns) {
 		if opts.verbose {
 			fmt.Printf("  ⊗ Skipped module %s in %s (matches ignore pattern)\n", quote(moduleName, opts.outputFormat), opts.filename)
 		}
-		return false, false
+		return false, false, false
 	}
 
 	versionAttr := block.Body().GetAttribute("version")
@@ -1667,27 +1694,27 @@ func updateModuleBlockResult(block *hclwrite.Block, opts *moduleUpdateOptions) (
 		if !opts.forceAdd {
 			fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) has no version attribute, skipping\n",
 				quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat))
-			return false, false
+			return false, false, true
 		}
 		if !isRegistryModule(sourceValue) {
 			fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) is not a registry module and cannot use a version attribute, skipping\n",
 				quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat))
-			return false, false
+			return false, false, true
 		}
 	} else {
 		currentVersion := attributeStringValue(versionAttr)
 		if shouldSkipModuleVersion(moduleName, currentVersion, opts) {
-			return false, false
+			return false, false, false
 		}
 		if attributeHasStringValue(versionAttr, opts.version) {
-			return false, false
+			return false, false, false
 		}
 		block.Body().SetAttributeValue("version", cty.StringVal(opts.version))
-		return true, true
+		return true, true, false
 	}
 
 	block.Body().SetAttributeValue("version", cty.StringVal(opts.version))
-	return true, true
+	return true, true, false
 }
 
 func moduleBlockName(block *hclwrite.Block) string {

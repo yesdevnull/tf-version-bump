@@ -272,7 +272,7 @@ func TestBuildAudit_AgreesWithTheUpdaterOnChainedEntries(t *testing.T) {
 	var updaterChanges []int
 	for index := range config.Modules {
 		update := &config.Modules[index]
-		_, changedBlocks, err := updateModuleVersionWithCount(moduleFile, update.Source, update.Version,
+		_, changedBlocks, _, err := updateModuleVersionWithCount(moduleFile, update.Source, update.Version,
 			update.From, update.IgnoreVersions, update.resolvedIgnoreModules, false, false, false, "text")
 		if err != nil {
 			t.Fatalf("updateModuleVersionWithCount: %v", err)
@@ -307,7 +307,7 @@ func TestBuildAudit_AgreesWithTheUpdaterOnModulesItWouldChange(t *testing.T) {
 	var changedBlocks []int
 	update := &config.Modules[0]
 	warnings := captureStderr(t, func() {
-		_, changedBlocks, err = updateModuleVersionWithCount(moduleFile, update.Source, update.Version,
+		_, changedBlocks, _, err = updateModuleVersionWithCount(moduleFile, update.Source, update.Version,
 			update.From, update.IgnoreVersions, update.resolvedIgnoreModules, false, true, false, "text")
 	})
 	if err != nil {
@@ -356,7 +356,7 @@ func TestBuildAudit_AgreesWithTheUpdaterOnBranchScopedIgnoreModules(t *testing.T
 			}
 
 			update := &config.Modules[0]
-			_, changedBlocks, err := updateModuleVersionWithCount(moduleFile, update.Source, update.Version,
+			_, changedBlocks, _, err := updateModuleVersionWithCount(moduleFile, update.Source, update.Version,
 				update.From, update.IgnoreVersions, update.resolvedIgnoreModules, false, true, false, "text")
 			if err != nil {
 				t.Fatalf("updateModuleVersionWithCount: %v", err)

@@ -60,12 +60,16 @@ func withFlagArgs(t *testing.T, args []string, fn func()) {
 type commandResult struct {
 	stdout      string
 	diagnostics string
-	exitCode    int
+	// warnings holds what the command wrote straight to stderr rather than through the logger,
+	// which is where every 'Warning:' goes. Capturing it keeps test output free of application
+	// output and lets a test assert the warning a counted skip reports.
+	warnings string
+	exitCode int
 }
 
 //nolint:unparam // The adapter preserves the production call shape used by focused tests.
 func updateModuleVersion(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (bool, error) {
-	updated, _, err := updateModuleVersionWithCount(filename, moduleSource, version, fromVersions, ignoreVersions, ignorePatterns, forceAdd, dryRun, verbose, outputFormat)
+	updated, _, _, err := updateModuleVersionWithCount(filename, moduleSource, version, fromVersions, ignoreVersions, ignorePatterns, forceAdd, dryRun, verbose, outputFormat)
 	return updated, err
 }
 
@@ -123,11 +127,31 @@ func runMainCommand(t *testing.T, args []string) commandResult {
 	os.Stdout = stdoutWriter
 	defer func() { os.Stdout = originalStdout }()
 
-	var stdout bytes.Buffer
+	stderrReader, stderrWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stderr pipe: %v", err)
+	}
+	defer func() {
+		if err := stderrReader.Close(); err != nil {
+			t.Errorf("failed to close stderr reader: %v", err)
+		}
+	}()
+	defer func() { _ = stderrWriter.Close() }()
+
+	originalStderr := os.Stderr
+	os.Stderr = stderrWriter
+	defer func() { os.Stderr = originalStderr }()
+
+	var stdout, warnings bytes.Buffer
 	stdoutDone := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(&stdout, stdoutReader)
 		close(stdoutDone)
+	}()
+	stderrDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&warnings, stderrReader)
+		close(stderrDone)
 	}()
 
 	withFlagArgs(t, args, func() {
@@ -145,10 +169,15 @@ func runMainCommand(t *testing.T, args []string) commandResult {
 		t.Fatalf("failed to close stdout writer: %v", err)
 	}
 	<-stdoutDone
+	if err := stderrWriter.Close(); err != nil {
+		t.Fatalf("failed to close stderr writer: %v", err)
+	}
+	<-stderrDone
 
 	return commandResult{
 		stdout:      stdout.String(),
 		diagnostics: diagnostics.String(),
+		warnings:    warnings.String(),
 		exitCode:    *code,
 	}
 }
