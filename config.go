@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -162,13 +163,17 @@ func (c *Config) declaresNoUpdates() bool {
 	return c.TerraformVersion == "" && len(c.Providers) == 0 && len(c.Modules) == 0
 }
 
+// errConfigDeclaresNoUpdates is what both readers of declaresNoUpdates report, so the predicate
+// and the words describing it stay together: a wording change cannot reach one reader alone.
+var errConfigDeclaresNoUpdates = errors.New("config contains no updates")
+
 func validateConfigFile(filename string) error {
 	config, err := loadConfig(filename)
 	if err != nil {
 		return err
 	}
 	if config.declaresNoUpdates() {
-		return fmt.Errorf("config contains no updates")
+		return errConfigDeclaresNoUpdates
 	}
 	return nil
 }

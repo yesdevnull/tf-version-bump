@@ -622,6 +622,13 @@ func TestUpdateModuleVersionWithCount_CountsSkipsThatLeaveBlocksUnpinned(t *test
 			name: "already at the target version", module: "module \"vpc\" {\n  source  = \"example/module\"\n  version = \"2.0.0\"\n}\n",
 			source: "example/module", wantSkipped: 0,
 		},
+		{
+			// Warned about, but nothing is left outstanding: Terraform gives a local module no
+			// version attribute, so there is nothing the operator could pin.
+			name: "local module", module: "module \"vpc\" {\n  source = \"./modules/vpc\"\n}\n",
+			source: "./modules/vpc", wantSkipped: 0,
+			wantWarning: "is a local module and cannot be version-bumped, skipping",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

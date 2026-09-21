@@ -1866,3 +1866,63 @@ func TestCommandSkippedProvidersAreCounted(t *testing.T) {
 		})
 	}
 }
+
+// A dry run performed nothing and wrote nothing, so it says so in both modes. Config mode kept
+// the write-run tense when direct mode learnt the dry-run one, which is the asymmetry #163 was
+// raised about, in the same pair of messages.
+func TestCommandConfigDryRunSaysWhatItWouldDo(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"2.0.0\"\n}\n")
+	config := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n")
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config, "-dry-run"})
+
+	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n" +
+		"Running in dry-run mode - no files will be modified\n\n" +
+		"No updates would be performed. Every configured update is already applied, skipped or matched nothing; use -audit-file to see which.\n"
+	if result.stdout != wantStdout || result.diagnostics != "" || result.warnings != "" || result.exitCode != -1 {
+		t.Fatalf("result = %#v, want stdout %q", result, wantStdout)
+	}
+}
+
+// The refusal lives in the update runner, not the shared loader, so audit mode keeps auditing a
+// config that asks for nothing. Moving it into loadResolvedConfig would fail the report
+// automation that audits every state branch, and nothing else pins that at command level.
+func TestCommandAuditAcceptsAConfigDeclaringNoUpdates(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	config := writeTestFile(t, dir, "versions.yml", "# nothing to update\n")
+	audit := dir + "/audit.json"
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config, "-audit-file", audit})
+
+	if result.exitCode != -1 || result.diagnostics != "" {
+		t.Fatalf("result = %#v, want a normal return", result)
+	}
+	wantAudit := "{\n  \"schema_version\": 1,\n  \"terraform\": [],\n  \"providers\": [],\n  \"modules\": []\n}\n"
+	if got := readTestFile(t, audit); got != wantAudit {
+		t.Fatalf("audit = %q, want %q", got, wantAudit)
+	}
+}
+
+// When the run invalidated the report and the removal also fails, the operator is told both
+// things: the run's own failure, and that the report it could not replace is still there.
+func TestCommandReportsAFailedStaleReportRemoval(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	report := writeTestFile(t, dir, "report.json", "previous report\n")
+	failReportPublish(t, errors.New("injected rename failure"))
+	failReportRemoval(t, errors.New("injected removal failure"))
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-report-file", report,
+	})
+
+	wantDiagnostics := "Error writing update report: injected rename failure; failed to remove the stale report: injected removal failure\n"
+	if result.exitCode != 1 || result.diagnostics != wantDiagnostics {
+		t.Fatalf("result = %#v, want diagnostics %q and exit 1", result, wantDiagnostics)
+	}
+	if got := readTestFile(t, report); got != "previous report\n" {
+		t.Errorf("report = %q, want the stale report still there, as the diagnostic says", got)
+	}
+}
