@@ -443,8 +443,9 @@ func failureNote(errorCount int) string {
 }
 
 // skipNote reports the modules the run left unpinned, so a run that declined to act on a block
-// it recognised does not read like a run with nothing to do. The skips it counts are the ones
-// the run warns about, which is why it names the warnings rather than repeating them.
+// it recognised does not read like a run with nothing to do. Every skip it counts is warned
+// about, which is why it names the warnings rather than repeating them, but not every warned
+// skip counts: a local module can never carry a version, so nothing is left outstanding.
 func skipNote(skipCount int) string {
 	if skipCount == 0 {
 		return ""

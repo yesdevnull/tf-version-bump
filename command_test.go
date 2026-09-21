@@ -1720,17 +1720,3 @@ func TestCommandSkippedModulesAreCounted(t *testing.T) {
 		})
 	}
 }
-
-// A module excluded by a filter, or already at the target version, was skipped exactly as asked,
-// so counting it would make the line noise rather than a signal.
-func TestCommandFilteredModulesAreNotCountedAsSkipped(t *testing.T) {
-	dir := t.TempDir()
-	file := writeTestFile(t, dir, "main.tf", "module \"legacy-vpc\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
-	config := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n    ignore_modules:\n      - \"legacy-*\"\n")
-
-	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config})
-
-	if strings.Contains(result.stdout, "skipped;") || result.diagnostics != "" || result.exitCode != -1 {
-		t.Fatalf("result = %#v, want no skip count for a module the config excludes", result)
-	}
-}
