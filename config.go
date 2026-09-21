@@ -109,7 +109,8 @@ type Config struct {
 }
 
 // loadConfig reads and parses a YAML configuration file containing module, terraform version,
-// and provider updates. It validates that all required fields are present.
+// and provider updates. It trims and validates every entry through sanitizeProviderUpdates and
+// sanitizeModuleUpdates.
 //
 // Parameters:
 //   - filename: Path to the YAML configuration file
@@ -179,8 +180,8 @@ func validateConfigFile(filename string) error {
 }
 
 // sanitizeProviderUpdates trims and validates provider entries. A provider may appear only once:
-// an entry has no filters, so a second entry for the same name cannot narrow the first, only
-// contradict it, leaving a check that never passes and an audit that never matches.
+// an entry has no filters, so a second entry for the same name can at best repeat the first, and
+// otherwise contradicts it, leaving a check that never passes and an audit that never matches.
 func sanitizeProviderUpdates(providers []ProviderUpdate) error {
 	firstIndex := make(map[string]int, len(providers))
 	for i := range providers {

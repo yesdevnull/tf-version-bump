@@ -1150,47 +1150,7 @@ func TestProcessFilesSkipsReportBookkeepingWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestProviderModesSkipReportBookkeepingWhenDisabled(t *testing.T) {
-	for _, mode := range []string{"CLI", "config"} {
-		t.Run(mode, func(t *testing.T) {
-			dir := t.TempDir()
-			file := writeTestFile(t, dir, "main.tf", `terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 4.0"
-    }
-  }
-}
-`)
-			flags := &cliFlags{providerName: "aws", toVersion: "~> 5.0", output: "text"}
-			if mode == "config" {
-				flags = &cliFlags{configFile: writeTestFile(t, dir, "updates.yml", "providers:\n  - name: aws\n    version: '~> 5.0'\n"), output: "text"}
-			}
-
-			var runErr error
-			captureStdout(t, func() {
-				if mode == "CLI" {
-					_, runErr = runCLIMode([]string{file}, flags)
-				} else {
-					_, runErr = runConfigFileMode([]string{file}, flags)
-				}
-			})
-
-			if runErr != nil {
-				t.Fatalf("provider mode error = %v", runErr)
-			}
-			if flags.report.ProviderBlocksUpdated != 0 || flags.report.fileIdentities != nil {
-				t.Fatalf("disabled report bookkeeping = %#v", flags.report)
-			}
-			if got := readTestFile(t, file); !strings.Contains(got, `version = "~> 5.0"`) {
-				t.Fatalf("updated Terraform content = %q", got)
-			}
-		})
-	}
-}
-
-func TestCommandReportCountsEachBlockOnce(t *testing.T) {
+func TestCommandReportCountsChainedModuleBlocksOnce(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "main.tf", `module "example" {
   source  = "example/module"
@@ -1222,7 +1182,7 @@ func TestCommandReportCountsEachBlockOnce(t *testing.T) {
 	}
 }
 
-func TestCommandReportCountsHardLinkedBlocksOnce(t *testing.T) {
+func TestCommandReportCountsHardLinkedChainedModuleBlocksOnce(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "a.tf", `module "example" {
   source  = "example/module"

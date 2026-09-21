@@ -136,7 +136,7 @@ A branch-scoped entry without `-branch` is a hard error: silently dropping the e
 
 ### Config shape (`config.go`)
 
-Parsed with `KnownFields(true)` — unknown YAML keys are an error. `FromVersions` has a custom `UnmarshalYAML` accepting either a string or a list. Values are whitespace-trimmed and empties dropped (`trimNonEmptyStrings`). A provider `name` may appear only once (`sanitizeProviderUpdates`): an entry has no filters, so a repeat could only contradict the first, and the report's provider count relies on it, having no de-duplication of its own. Module sources may repeat, because their entries chain.
+Parsed with `KnownFields(true)` — unknown YAML keys are an error. `FromVersions` has a custom `UnmarshalYAML` accepting either a string or a list. Values are whitespace-trimmed and empties dropped (`trimNonEmptyStrings`). A provider `name` may appear only once (`sanitizeProviderUpdates`): an entry has no filters, so a repeat can at best restate the first and otherwise contradicts it, and `recordProviderBlocks` relies on the rule, since it counts without de-duplicating. Module sources may repeat, because their entries chain.
 
 ```go
 type ModuleUpdate struct {
