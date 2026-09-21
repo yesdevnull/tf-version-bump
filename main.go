@@ -841,6 +841,12 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	// -validate-config rejects a config that asks for nothing, so an update run does too: a file
+	// truncated by a bad merge would otherwise be a cheerful no-op. The refusal lives here rather
+	// than in the loader, which audit mode shares and which must keep reporting such a config.
+	if config.declaresNoUpdates() {
+		return 0, fmt.Errorf("Error: config contains no updates") //nolint:staticcheck // User-facing CLI diagnostic.
+	}
 
 	var terraformUpdates, terraformErrors, providerUpdates, providerErrors, moduleUpdates, moduleErrors int
 
@@ -866,7 +872,6 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 		terraformUpdates: terraformUpdates, terraformErrors: terraformErrors,
 		providerUpdates: providerUpdates, providerErrors: providerErrors,
 		moduleUpdates: moduleUpdates, moduleErrors: moduleErrors,
-		declaresNothing: config.declaresNoUpdates(),
 	}
 	printConfigSummary(outcome, flags.dryRun)
 	if outcome.onlyModuleErrors() {
@@ -923,7 +928,6 @@ type configOutcome struct {
 	terraformUpdates, terraformErrors int
 	providerUpdates, providerErrors   int
 	moduleUpdates, moduleErrors       int
-	declaresNothing                   bool
 }
 
 // updates counts the Terraform, provider and module version updates.
@@ -974,8 +978,6 @@ func printConfigSummary(outcome configOutcome, dryRun bool) {
 		// Nothing was updated and something failed, so the failures below are the whole summary.
 		// A "nothing to do" message here would blame the config for a file-level fault.
 		fmt.Println()
-	case outcome.declaresNothing:
-		fmt.Println("\nNo updates were performed. The config declares no updates.")
 	default:
 		fmt.Println("\nNo updates were performed. Every configured update is already applied, skipped or matched nothing; use -audit-file to see which.")
 	}

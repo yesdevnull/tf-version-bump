@@ -154,9 +154,10 @@ func loadConfig(filename string) (*Config, error) {
 }
 
 // declaresNoUpdates reports whether the config asks for nothing: no Terraform version, no
-// providers and no modules. Sharing the predicate keeps the two readers agreeing on which configs
-// declare nothing, while they deliberately act on it differently: -validate-config rejects such a
-// config, an update run reports it and exits 0.
+// providers and no modules. Both -validate-config and an update run refuse such a config, so the
+// shared predicate keeps them agreeing on the answer as well as on what it means. Audit mode
+// deliberately does not consult it: an audit of a config that asks for nothing is an empty audit,
+// which is a true answer.
 func (c *Config) declaresNoUpdates() bool {
 	return c.TerraformVersion == "" && len(c.Providers) == 0 && len(c.Modules) == 0
 }

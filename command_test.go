@@ -730,11 +730,12 @@ func TestCommandConfigFilteredModuleIsNotReportedAsApplied(t *testing.T) {
 	}
 }
 
-// A config that declares nothing is named as such, rather than left to share the wording of a
-// config whose updates are all already applied. A config that parses to empty values says it
-// just as one holding only comments does, so the predicate both readers share is pinned
-// against a parsed config and not only against the degenerate file that never reaches it.
-func TestCommandConfigDeclaringNoUpdatesSaysSo(t *testing.T) {
+// A config that declares nothing is a config the tool's own validator rejects, so an update run
+// refuses it too rather than reporting a cheerful no-op. A file truncated by a bad merge or a
+// templating step that wrote nothing would otherwise keep CI green for as long as nobody looked.
+// The predicate is pinned against a parsed config as well as the degenerate file that never
+// reaches it, since both readers share it.
+func TestCommandConfigDeclaringNoUpdatesIsFatal(t *testing.T) {
 	tests := map[string]string{
 		"comments only": "# nothing to update\n",
 		"empty values":  "modules: []\nproviders: []\nterraform_version: \"  \"\n",
@@ -748,9 +749,9 @@ func TestCommandConfigDeclaringNoUpdatesSaysSo(t *testing.T) {
 
 			result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", configFile})
 
-			wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\nNo updates were performed. The config declares no updates.\n"
-			if result.stdout != wantStdout || result.diagnostics != "" || result.exitCode != -1 {
-				t.Fatalf("result = %#v, want stdout %q and normal return", result, wantStdout)
+			wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n"
+			if result.stdout != wantStdout || result.diagnostics != "Error: config contains no updates\n" || result.exitCode != 1 {
+				t.Fatalf("result = %#v, want stdout %q, the empty-config diagnostic and exit 1", result, wantStdout)
 			}
 			if got := readTestFile(t, file); got != input {
 				t.Errorf("content = %q, want unchanged %q", got, input)
