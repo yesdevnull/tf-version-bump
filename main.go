@@ -544,6 +544,9 @@ func runUpdateMode(files []string, flags *cliFlags) (int, error) {
 			if discardErr := preparedReport.discard(); discardErr != nil {
 				err = fmt.Errorf("%w; failed to discard prepared report: %v", err, discardErr)
 			}
+			if removeErr := preparedReport.removeDestination(); removeErr != nil {
+				err = fmt.Errorf("%w; failed to remove the stale report: %v", err, removeErr)
+			}
 		}
 		return totalUpdates, err
 	}
@@ -620,6 +623,21 @@ func (prepared *preparedReportFile) publish(document any) error {
 	prepared.file = nil
 	if err := os.Rename(temporaryName, prepared.destination); err != nil {
 		_ = os.Remove(temporaryName)
+		return err
+	}
+	return nil
+}
+
+// removeDestination deletes a report an earlier run left at the destination. A failed run has
+// usually already changed files, so that report describes a tree which no longer exists, and a
+// consumer reading it without checking the exit status would act on counts for another run.
+// Audit mode deliberately keeps its existing file instead: a failed audit changes nothing on
+// disk, so the previous audit is still a true snapshot.
+func (prepared *preparedReportFile) removeDestination() error {
+	if prepared == nil {
+		return nil
+	}
+	if err := os.Remove(prepared.destination); err != nil && !stderrors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return nil

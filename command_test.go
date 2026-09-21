@@ -1357,28 +1357,40 @@ func TestCommandRejectsReportDirectoryBeforeUpdating(t *testing.T) {
 	}
 }
 
-func TestCommandDiscardsPreparedReportAfterUpdateFailure(t *testing.T) {
+// A failed run has usually already changed files, so a report an earlier run left behind now
+// describes a tree that no longer exists. Removing it makes a consumer that reads the file
+// without checking the exit status fail loudly rather than act on confident counts for the
+// wrong run, and it leaves no prepared temporary file behind either.
+func TestCommandRemovesStaleReportAfterUpdateFailure(t *testing.T) {
 	dir := t.TempDir()
-	file := writeTestFile(t, dir, "main.tf", "!!!\n")
-	reportContent := "previous report\n"
-	report := writeTestFile(t, dir, "report.json", reportContent)
+	writeTestFile(t, dir, "01.tf", "!!!\n")
+	good := writeTestFile(t, dir, "02.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	report := writeTestFile(t, dir, "report.json", "previous report\n")
 
 	result := runMainCommand(t, []string{
-		"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-report-file", report,
+		"tf-version-bump", "-pattern", dir + "/*.tf", "-module", "example/module", "-to", "2.0.0", "-report-file", report,
 	})
 
 	if result.exitCode != 1 || !strings.Contains(result.diagnostics, "Error: 1 module update error(s)") {
 		t.Errorf("result = %#v, want module update failure", result)
 	}
+	// The run did change a file, which is what makes the previous run's report misleading.
+	if got := readTestFile(t, good); !strings.Contains(got, "2.0.0") {
+		t.Errorf("content = %q, want the valid file updated", got)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read temporary directory: %v", err)
 	}
-	if len(entries) != 2 || entries[0].Name() != "main.tf" || entries[1].Name() != "report.json" {
-		t.Errorf("temporary directory entries = %v, want main.tf and report.json", entries)
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
 	}
-	if got := readTestFile(t, report); got != reportContent {
-		t.Errorf("report = %q, want preserved %q", got, reportContent)
+	if len(names) != 2 || names[0] != "01.tf" || names[1] != "02.tf" {
+		t.Errorf("temporary directory entries = %v, want the Terraform files alone, with no report and no prepared temporary file", names)
+	}
+	if _, err := os.Stat(report); !os.IsNotExist(err) {
+		t.Errorf("stat report = %v, want the stale report removed", err)
 	}
 }
 
