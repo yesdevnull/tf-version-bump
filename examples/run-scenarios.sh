@@ -69,6 +69,17 @@ run_binary() {
     fail "$log run exited with status $command_status: $reason"
 }
 
+# Fails unless every line a run wrote to stderr is the one expected, so a scenario that expects a
+# warning still catches any other diagnostic beside it.
+assert_only_warning() {
+    local name=$1 expected=$2
+    grep -F "$expected" "$workspace/$name.stderr" >/dev/null \
+        || fail "$name run did not report: $expected"
+    if grep -vF "$expected" "$workspace/$name.stderr" | grep -q .; then
+        fail "$name run produced unexpected diagnostics beside the expected warning: $(<"$workspace/$name.stderr")"
+    fi
+}
+
 # Fails when a run that should be quiet reported a warning, such as a module the updater skipped.
 assert_empty_stderr() {
     [[ ! -s "$workspace/$1.stderr" ]] \
@@ -97,8 +108,7 @@ assert_second_run_changes_nothing() {
     grep -F 'No updates were performed.' "$workspace/$name-second.stdout" >/dev/null \
         || fail "second $name run did not report an already-current configuration"
     if [[ -n $second_run_expected_warning ]]; then
-        grep -F "$second_run_expected_warning" "$workspace/$name-second.stderr" >/dev/null \
-            || fail "second $name run did not repeat the expected warning"
+        assert_only_warning "$name-second" "$second_run_expected_warning"
         second_run_expected_warning=""
     else
         assert_empty_stderr "$name-second"
@@ -151,8 +161,7 @@ cmp -s "$provider_directory/main.tf" \
     || fail "provider-targeting scenario did not produce the exact expected provider configuration"
 # The scenario's azurerm entry is an object with no version, which an update does not add even
 # under -force-add, so the run reports it as skipped rather than leaving it silently unpinned.
-grep -F "Warning: Provider 'azurerm' in" "$workspace/provider-targeting-first.stderr" >/dev/null \
-    || fail "provider-targeting scenario did not report the unpinned provider"
+assert_only_warning provider-targeting-first "Warning: Provider 'azurerm' in"
 grep -F '1 provider(s) skipped' "$workspace/provider-targeting-first.stdout" >/dev/null \
     || fail "provider-targeting scenario did not count the unpinned provider"
 

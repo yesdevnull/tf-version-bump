@@ -109,7 +109,7 @@ func (audit *auditReport) recordRequiredProvider(filename string, requiredProvid
 			audit.Providers = append(audit.Providers, providerAuditEntry{File: filename, Name: provider.Name, Actual: actual, Expected: provider.Version, Matches: matches})
 		}
 	}
-	if objExpr, expression, ok := providerAttributeObject(requiredProviders, provider.Name); ok {
+	if objExpr, expression, ok, _ := providerAttributeObject(requiredProviders, provider.Name); ok {
 		actual, matches := auditedObjectVersion(objExpr, expression, provider.Version)
 		audit.Providers = append(audit.Providers, providerAuditEntry{File: filename, Name: provider.Name, Actual: actual, Expected: provider.Version, Matches: matches})
 	}

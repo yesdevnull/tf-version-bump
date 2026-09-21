@@ -581,10 +581,12 @@ func runUpdateMode(files []string, flags *cliFlags) (int, error) {
 		// A report describes the tree it was written from. Only a run that changed that tree and
 		// then failed leaves one describing a tree that no longer exists, so only such a run takes
 		// it away: a run refused for its config, a run whose every file failed and a dry run all
-		// leave the tree, and the report, exactly as they found them. The publish failure reaches
-		// here too, which is the case most certain to need it — the files changed and the counts
-		// describing them never landed.
-		if totalUpdates > 0 && !flags.dryRun {
+		// leave the tree, and the report, exactly as they found them. A file a write left
+		// untrusted counts as changed even though no update is counted for it, because it holds
+		// neither version for certain. The publish failure reaches here too, which is the case
+		// most certain to need it — the files changed and the counts describing them never
+		// landed.
+		if (totalUpdates > 0 && !flags.dryRun) || anyUntrusted() {
 			if removeErr := preparedReport.removeDestination(); removeErr != nil {
 				err = fmt.Errorf("%w; failed to remove the stale report: %v", err, removeErr)
 			}
@@ -650,11 +652,14 @@ func (prepared *preparedReportFile) publish(document any) error {
 		return err
 	}
 	temporaryName := prepared.file.Name()
-	if err := prepared.file.Close(); err != nil {
-		_ = os.Remove(temporaryName)
-		return err
-	}
+	// Closing consumes the handle whether or not it succeeds, so the caller's discard must not
+	// close it again and report a failure the run did not have.
+	closeErr := prepared.file.Close()
 	prepared.file = nil
+	if closeErr != nil {
+		_ = os.Remove(temporaryName)
+		return closeErr
+	}
 	if err := renameReportFile(temporaryName, prepared.destination); err != nil {
 		_ = os.Remove(temporaryName)
 		return err
@@ -1134,12 +1139,12 @@ func processTerraformVersion(files []string, version string, dryRun bool, output
 //   - totalErrors: Number of files that could not be processed
 func processProviderVersion(files []string, providerName, version string, dryRun bool, outputFormat string, report *updateReport) (totalUpdates, totalSkips, totalErrors int) {
 	for _, file := range files {
-		updated, changedBlocks, skipped, err := updateProviderVersionWithCount(file, providerName, version, dryRun)
-		// An entry matched and left unpinned is warned about per entry, as an unpinned module is.
-		for range skipped {
-			fmt.Fprintf(os.Stderr, "Warning: Provider %s in %s has no version argument and updates cannot add one, skipping\n", quote(providerName, outputFormat), file)
+		updated, changedBlocks, skipReasons, err := updateProviderVersionWithCount(file, providerName, version, dryRun)
+		// An entry this run matched and would not change is warned about per entry, as a module is.
+		for _, reason := range skipReasons {
+			fmt.Fprintf(os.Stderr, "Warning: Provider %s in %s %s, skipping\n", quote(providerName, outputFormat), file, reason)
 		}
-		totalSkips += skipped
+		totalSkips += len(skipReasons)
 		if err != nil {
 			log.Printf("Error processing %s: %v", file, err)
 			totalErrors++
@@ -1229,16 +1234,16 @@ func updateTerraformVersionWithCount(filename, version string, dryRun bool) (upd
 //   - updated: true if a provider operation was applied (or would be applied in dry-run mode)
 //   - changedBlocks: locations of provider blocks whose version values differ from the target
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateProviderVersionWithCount(filename, providerName, version string, dryRun bool) (updated bool, changedBlocks []string, skipped int, err error) {
+func updateProviderVersionWithCount(filename, providerName, version string, dryRun bool) (updated bool, changedBlocks, skipReasons []string, err error) {
 	file, err := readTerraformFile(filename)
 	if err != nil {
-		return false, nil, 0, err
+		return false, nil, nil, err
 	}
 
 	for blockIndex, block := range file.hcl.Body().Blocks() {
-		blockUpdated, blockChanges, blockSkipped := updateProviderTerraformBlockResult(block, providerName, version)
+		blockUpdated, blockChanges, blockSkipReasons := updateProviderTerraformBlockResult(block, providerName, version)
 		updated = updated || blockUpdated
-		skipped += blockSkipped
+		skipReasons = append(skipReasons, blockSkipReasons...)
 		for _, blockChange := range blockChanges {
 			changedBlocks = append(changedBlocks, fmt.Sprintf("%d/%s", blockIndex, blockChange))
 		}
@@ -1246,16 +1251,16 @@ func updateProviderVersionWithCount(filename, providerName, version string, dryR
 
 	if updated && !dryRun {
 		if err := file.write(); err != nil {
-			return false, nil, skipped, err
+			return false, nil, skipReasons, err
 		}
 	}
 
-	return updated, changedBlocks, skipped, nil
+	return updated, changedBlocks, skipReasons, nil
 }
 
-func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, version string) (updated bool, changedBlocks []string, skipped int) {
+func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, version string) (updated bool, changedBlocks, skipReasons []string) {
 	if block.Type() != "terraform" {
-		return false, nil, 0
+		return false, nil, nil
 	}
 
 	updated = false
@@ -1272,9 +1277,9 @@ func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, ver
 			}
 			continue
 		}
-		attributeUpdated, attributeChanged, attributeSkipped := updateProviderAttributeVersionResult(nestedBlock, providerName, version)
-		if attributeSkipped {
-			skipped++
+		attributeUpdated, attributeChanged, skipReason := updateProviderAttributeVersionResult(nestedBlock, providerName, version)
+		if skipReason != "" {
+			skipReasons = append(skipReasons, skipReason)
 		}
 		if attributeUpdated {
 			updated = true
@@ -1284,7 +1289,7 @@ func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, ver
 		}
 	}
 
-	return updated, changedBlocks, skipped
+	return updated, changedBlocks, skipReasons
 }
 
 func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, version string) (updated bool, changedBlocks []int) {
@@ -1308,52 +1313,58 @@ func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, 
 
 // updateProviderAttributeVersion updates the version value within a provider attribute's object expression
 // This handles the attribute-based syntax: aws = { source = "..." version = "..." }
-// The third result reports an entry this run matched and left unpinned: an object with no version
-// argument, which an update does not add. Block syntax cannot reach it, because a missing version
-// there is simply set.
-func updateProviderAttributeVersionResult(nestedBlock *hclwrite.Block, providerName, newVersion string) (updated, changed, skipped bool) {
-	objExpr, expression, ok := providerAttributeObject(nestedBlock, providerName)
+// The third result describes an entry this run matched and would not change, in the words the
+// warning reports, or is empty when there is nothing to report. Block syntax never reaches it,
+// because a missing version there is simply set.
+func updateProviderAttributeVersionResult(nestedBlock *hclwrite.Block, providerName, newVersion string) (updated, changed bool, skipReason string) {
+	objExpr, expression, ok, present := providerAttributeObject(nestedBlock, providerName)
 	if !ok {
-		return false, false, false
+		if !present {
+			return false, false, ""
+		}
+		return false, false, "is a version string rather than an object or block, which updates do not change"
 	}
 
 	updatedExpression, hasVersion, changed := replaceProviderObjectVersion(objExpr, expression, newVersion)
 	if !hasVersion {
-		return false, false, true
+		return false, false, "has no version argument and updates cannot add one"
 	}
 	if !changed {
-		return false, false, false
+		return false, false, ""
 	}
 
 	newAttribute := append([]byte(providerName+" = "), updatedExpression...)
 	newExpr, diags := hclwrite.ParseConfig(newAttribute, "inline", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return false, false, false
+		return false, false, ""
 	}
 
 	for _, newAttr := range newExpr.Body().Attributes() {
 		nestedBlock.Body().SetAttributeRaw(providerName, newAttr.Expr().BuildTokens(nil))
-		return true, changed, false
+		return true, changed, ""
 	}
 
-	return false, false, false
+	return false, false, ""
 }
 
-func providerAttributeObject(nestedBlock *hclwrite.Block, providerName string) (*hclsyntax.ObjectConsExpr, []byte, bool) {
+// The last result separates an entry this run cannot change from one that is not there at all: a
+// provider given as a bare version string is matched, and left at the version it names, because
+// updates change the object and block forms only.
+func providerAttributeObject(nestedBlock *hclwrite.Block, providerName string) (objExpr *hclsyntax.ObjectConsExpr, expression []byte, ok, present bool) {
 	attr, exists := nestedBlock.Body().Attributes()[providerName]
 	if !exists {
-		return nil, nil, false
+		return nil, nil, false, false
 	}
 
 	tokens := attr.Expr().BuildTokens(nil)
-	expression := tokens.Bytes()
+	expression = tokens.Bytes()
 	expr, diags := hclsyntax.ParseExpression(expression, "inline", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return nil, nil, false
+		return nil, nil, false, true
 	}
 
-	objExpr, ok := expr.(*hclsyntax.ObjectConsExpr)
-	return objExpr, expression, ok
+	objExpr, ok = expr.(*hclsyntax.ObjectConsExpr)
+	return objExpr, expression, ok, true
 }
 
 func replaceProviderObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression []byte, newVersion string) (updated []byte, hasVersion, changed bool) {
@@ -1492,6 +1503,15 @@ var (
 	untrustedMu    sync.Mutex
 	untrustedFiles []untrustedFile // refused by readTerraformFile for the rest of the run
 )
+
+// anyUntrusted reports whether a write left a file whose content cannot be confirmed. Such a file
+// was changed by this run, and no update is counted for it, so the update total alone cannot say
+// whether the tree still matches a report an earlier run left behind.
+func anyUntrusted() bool {
+	untrustedMu.Lock()
+	defer untrustedMu.Unlock()
+	return len(untrustedFiles) > 0
+}
 
 func markUntrusted(info os.FileInfo, backup string) {
 	untrustedMu.Lock()
