@@ -442,11 +442,21 @@ func failureNote(errorCount int) string {
 }
 
 // printRunSummary prints one run's summary line followed by its failures. A run that updated
-// nothing and failed omits the line rather than reporting a clean zero it cannot vouch for.
-func printRunSummary(line string, totalUpdates, errorCount int) {
+// nothing reports why instead of the line, which would otherwise claim a clean zero it cannot
+// vouch for: a mistyped source, a glob over the wrong tree and an already-current file all
+// counted as a success. The wording promises no tool that answers "which", because -audit-file
+// needs a config and -verbose lists only the modules a filter skipped.
+func printRunSummary(line string, totalUpdates, errorCount int, dryRun bool) {
 	fmt.Println()
-	if totalUpdates > 0 || errorCount == 0 {
+	switch {
+	case totalUpdates > 0:
 		fmt.Println(line)
+	case errorCount > 0:
+		// The failures below are the whole summary.
+	case dryRun:
+		fmt.Println("No updates would be performed. Every selected file is already at the target version or matched nothing.")
+	default:
+		fmt.Println("No updates were performed. Every selected file is already at the target version or matched nothing.")
 	}
 	fmt.Print(failureNote(errorCount))
 }
@@ -458,7 +468,7 @@ func printSummary(totalUpdates, errorCount int, dryRun bool) {
 	if dryRun {
 		line = fmt.Sprintf("Dry run: would update %d file(s)", totalUpdates)
 	}
-	printRunSummary(line, totalUpdates, errorCount)
+	printRunSummary(line, totalUpdates, errorCount, dryRun)
 }
 
 func main() {
@@ -978,7 +988,7 @@ func printTerraformSummary(totalUpdates, errorCount int, dryRun bool) {
 	if dryRun {
 		line = fmt.Sprintf("Dry run: would update Terraform version in %d file(s)", totalUpdates)
 	}
-	printRunSummary(line, totalUpdates, errorCount)
+	printRunSummary(line, totalUpdates, errorCount, dryRun)
 }
 
 // printProviderSummary prints the summary for provider version updates
@@ -987,7 +997,7 @@ func printProviderSummary(providerName string, totalUpdates, errorCount int, dry
 	if dryRun {
 		line = fmt.Sprintf("Dry run: would update %s provider version in %d file(s)", quote(providerName, outputFormat), totalUpdates)
 	}
-	printRunSummary(line, totalUpdates, errorCount)
+	printRunSummary(line, totalUpdates, errorCount, dryRun)
 }
 
 // containsVersion checks if a version string is present in a slice of versions.

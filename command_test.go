@@ -342,7 +342,7 @@ func TestCommandCheckReturnsSuccessWhenCurrent(t *testing.T) {
 
 	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n" +
 		"Running in check mode - no files will be modified\n\n" +
-		"Dry run: would update 0 file(s)\n"
+		"No updates would be performed. Every selected file is already at the target version or matched nothing.\n"
 	if result.stdout != wantStdout || result.diagnostics != "" || result.exitCode != -1 {
 		t.Fatalf("result = %#v, want stdout %q and normal return", result, wantStdout)
 	}
@@ -508,7 +508,7 @@ func TestCommandNoMatchingModuleIsSuccess(t *testing.T) {
 	dir := t.TempDir()
 	file := writeTestFile(t, dir, "main.tf", "module \"x\" {\n  source = \"other/module\"\n  version = \"1.0.0\"\n}\n")
 	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0"})
-	if result.stdout != "Found 1 file(s) matching pattern '"+file+"'\n\nSuccessfully updated 0 file(s)\n" || result.diagnostics != "" || result.exitCode != -1 || readTestFile(t, file) != "module \"x\" {\n  source = \"other/module\"\n  version = \"1.0.0\"\n}\n" {
+	if result.stdout != "Found 1 file(s) matching pattern '"+file+"'\n\nNo updates were performed. Every selected file is already at the target version or matched nothing.\n" || result.diagnostics != "" || result.exitCode != -1 || readTestFile(t, file) != "module \"x\" {\n  source = \"other/module\"\n  version = \"1.0.0\"\n}\n" {
 		t.Fatalf("result %#v content %q", result, readTestFile(t, file))
 	}
 }
