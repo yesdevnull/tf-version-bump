@@ -1753,20 +1753,32 @@ func TestCommandRemovesStaleReportWhenPublishFails(t *testing.T) {
 // as it was. Removing it there would destroy a valid report as a side effect of rejecting input.
 func TestCommandKeepsReportWhenNothingWasChanged(t *testing.T) {
 	reportContent := "previous report\n"
-	tests := map[string][]string{
-		"config declares nothing":                   nil,
-		"dry run over a file that cannot be parsed": {"-module", "example/module", "-to", "2.0.0", "-dry-run"},
-		"every file failed":                         {"-module", "example/module", "-to", "2.0.0"},
+	tests := map[string]struct {
+		operation []string
+		// A dry run that would update something writes nothing all the same, so the guard keeping
+		// the report has to hold for a positive update total, not only a zero one.
+		withUpdatableFile bool
+	}{
+		"config declares nothing":                   {},
+		"dry run over a file that cannot be parsed": {operation: []string{"-module", "example/module", "-to", "2.0.0", "-dry-run"}},
+		"every file failed":                         {operation: []string{"-module", "example/module", "-to", "2.0.0"}},
+		"dry run that would update a file":          {operation: []string{"-module", "example/module", "-to", "2.0.0", "-dry-run"}, withUpdatableFile: true},
 	}
-	for name, operation := range tests {
+	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			file := writeTestFile(t, dir, "main.tf", "!!!\n")
+			pattern := file
+			if tt.withUpdatableFile {
+				writeTestFile(t, dir, "good.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+				pattern = dir + "/*.tf"
+			}
 			report := writeTestFile(t, dir, "report.json", reportContent)
-			args := append([]string{"tf-version-bump", "-pattern", file, "-report-file", report}, operation...)
+			operation := tt.operation
+			args := append([]string{"tf-version-bump", "-pattern", pattern, "-report-file", report}, operation...)
 			if operation == nil {
 				config := writeTestFile(t, dir, "versions.yml", "# nothing to update\n")
-				args = []string{"tf-version-bump", "-pattern", file, "-config", config, "-report-file", report}
+				args = []string{"tf-version-bump", "-pattern", pattern, "-config", config, "-report-file", report}
 			}
 
 			result := runMainCommand(t, args)
