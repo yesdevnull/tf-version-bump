@@ -458,8 +458,9 @@ func skipNote(skipCount int) string {
 // printRunSummary prints one run's summary line followed by its failures. A run that updated
 // nothing reports why instead of the line, which would otherwise claim a clean zero it cannot
 // vouch for: a mistyped source, a glob over the wrong tree and an already-current file all
-// counted as a success. The wording promises no tool that answers "which", because -audit-file
-// needs a config and -verbose lists only the modules a filter skipped.
+// counted as a success. It names every cause it cannot tell apart, including the skips the count
+// below leaves out, so it never denies a skip the run has just printed. It promises no tool that
+// answers "which", because -audit-file needs a config and -verbose lists only filtered modules.
 func printRunSummary(line string, totalUpdates, errorCount, skipCount int, dryRun bool) {
 	fmt.Println()
 	switch {
@@ -469,9 +470,9 @@ func printRunSummary(line string, totalUpdates, errorCount, skipCount int, dryRu
 		// The notes below are the whole summary: nothing was updated, and something failed or was
 		// left unpinned, so neither a success line nor a nothing-to-do line would be true.
 	case dryRun:
-		fmt.Println("No updates would be performed. Every selected file is already at the target version or matched nothing.")
+		fmt.Println("No updates would be performed. Nothing matched, or every match was already at the target version or skipped.")
 	default:
-		fmt.Println("No updates were performed. Every selected file is already at the target version or matched nothing.")
+		fmt.Println("No updates were performed. Nothing matched, or every match was already at the target version or skipped.")
 	}
 	fmt.Print(failureNote(errorCount))
 	fmt.Print(skipNote(skipCount))
