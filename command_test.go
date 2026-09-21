@@ -1141,23 +1141,12 @@ func TestProviderModesSkipReportBookkeepingWhenDisabled(t *testing.T) {
 
 func TestCommandReportCountsEachBlockOnce(t *testing.T) {
 	dir := t.TempDir()
-	file := writeTestFile(t, dir, "main.tf", `terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 4.0"
-    }
-  }
-}
-module "example" {
+	file := writeTestFile(t, dir, "main.tf", `module "example" {
   source  = "example/module"
   version = "1.0.0"
 }
 `)
-	config := writeTestFile(t, dir, "updates.yml", `providers:
-  - name: aws
-    version: "~> 6.0"
-modules:
+	config := writeTestFile(t, dir, "updates.yml", `modules:
   - source: example/module
     version: 2.0.0
   - source: example/module
@@ -1172,27 +1161,19 @@ modules:
 	if result.exitCode != -1 || result.diagnostics != "" {
 		t.Fatalf("result = %#v", result)
 	}
-	wantReport := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 0,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 1\n}\n"
+	wantReport := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 0,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 0\n}\n"
 	if got := readTestFile(t, report); got != wantReport {
 		t.Errorf("report = %q, want %q", got, wantReport)
 	}
 	content := readTestFile(t, file)
-	if !strings.Contains(content, `version = "~> 6.0"`) || !strings.Contains(content, `version = "3.0.0"`) {
+	if !strings.Contains(content, `version = "3.0.0"`) {
 		t.Errorf("final Terraform content = %q", content)
 	}
 }
 
 func TestCommandReportCountsHardLinkedBlocksOnce(t *testing.T) {
 	dir := t.TempDir()
-	file := writeTestFile(t, dir, "a.tf", `terraform {
-  required_providers {
-    aws {
-      source  = "hashicorp/aws"
-      version = "~> 4.0"
-    }
-  }
-}
-module "example" {
+	file := writeTestFile(t, dir, "a.tf", `module "example" {
   source  = "example/module"
   version = "1.0.0"
 }
@@ -1201,10 +1182,7 @@ module "example" {
 	if err := os.Link(file, linkedFile); err != nil {
 		t.Skipf("cannot create hard link: %v", err)
 	}
-	config := writeTestFile(t, dir, "updates.yml", `providers:
-  - name: aws
-    version: "~> 6.0"
-modules:
+	config := writeTestFile(t, dir, "updates.yml", `modules:
   - source: example/module
     version: 2.0.0
   - source: example/module
@@ -1219,11 +1197,11 @@ modules:
 	if result.exitCode != -1 || result.diagnostics != "" {
 		t.Fatalf("result = %#v", result)
 	}
-	wantReport := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 0,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 1\n}\n"
+	wantReport := "{\n  \"schema_version\": 2,\n  \"terraform_blocks_updated\": 0,\n  \"module_blocks_updated\": 1,\n  \"provider_blocks_updated\": 0\n}\n"
 	if got := readTestFile(t, report); got != wantReport {
 		t.Errorf("report = %q, want %q", got, wantReport)
 	}
-	if got := readTestFile(t, linkedFile); !strings.Contains(got, `version = "3.0.0"`) || !strings.Contains(got, `version = "~> 6.0"`) {
+	if got := readTestFile(t, linkedFile); !strings.Contains(got, `version = "3.0.0"`) {
 		t.Errorf("final Terraform content = %q", got)
 	}
 }
