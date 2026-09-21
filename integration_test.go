@@ -7,8 +7,8 @@ import (
 
 func TestRunCLIModeContinuesAfterFileFailure(t *testing.T) {
 	tests := []struct{ name, bad, valid, output, errText, wantHCL string }{
-		{"terraform", `terraform {`, "terraform {\n  required_version = \">= 1.0\"\n}\n", "✓ Updated Terraform required_version to '>= 1.5' in ", "1 Terraform version update error(s)", "terraform {\n  required_version = \">= 1.5\"\n}\n"},
-		{"provider", `terraform {`, "terraform {\n  required_providers {\n    aws = {\n      source = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\n", "✓ Updated provider 'aws' to version '~> 5.0' in ", "1 provider update error(s)", "terraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 5.0\"\n    }\n  }\n}\n"},
+		{"terraform", `terraform {`, "terraform {\n  required_version = \">= 1.0\"\n}\n", "✓ Updated Terraform required_version to '>= 1.5' in ", "Error: 1 Terraform version update error(s)", "terraform {\n  required_version = \">= 1.5\"\n}\n"},
+		{"provider", `terraform {`, "terraform {\n  required_providers {\n    aws = {\n      source = \"hashicorp/aws\"\n      version = \"~> 4.0\"\n    }\n  }\n}\n", "✓ Updated provider 'aws' to version '~> 5.0' in ", "Error: 1 provider update error(s)", "terraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 5.0\"\n    }\n  }\n}\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -152,7 +152,7 @@ modules:
 		return err
 	})
 	wantPrefix := "✓ Updated Terraform required_version to '>= 1.6' in " + good + "\n✓ Updated provider 'aws' to version '~> 5.0' in " + good + "\n✓ Updated provider 'azurerm' to version '~> 4.0' in " + good + "\n✓ Updated module source 'terraform-aws-modules/vpc/aws' to version '5.0.0' in " + good + "\n✓ Updated module source 'terraform-aws-modules/ec2-instance/aws' to version '6.0.0' in " + good + "\n\n==================================================\nConfig File Update Summary\n==================================================\nTerraform version: 1 file(s) updated\nProviders: 2 update(s) applied\nModules: 2 update(s) applied\n10 update(s) failed; see the errors on stderr\n"
-	if err == nil || err.Error() != "10 update error(s)" || stdout != wantPrefix {
+	if err == nil || err.Error() != "Error: 10 update error(s)" || stdout != wantPrefix {
 		t.Fatalf("stdout=%q diag=%q err=%v content=%q", stdout, diag, err, readTestFile(t, good))
 	}
 	parser := "failed to parse HCL: " + bad1 + ":1,17-18: Unclosed configuration block; There is no closing brace for this block before the end of the file. This may be caused by incorrect brace nesting elsewhere in this file.\n"

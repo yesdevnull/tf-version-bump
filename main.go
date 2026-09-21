@@ -866,10 +866,10 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 	}
 	printConfigSummary(outcome, flags.dryRun)
 	if outcome.onlyModuleErrors() {
-		return outcome.updates(), fmt.Errorf("%d module update error(s)", outcome.moduleErrors)
+		return outcome.updates(), fmt.Errorf("Error: %d module update error(s)", outcome.moduleErrors) //nolint:staticcheck // User-facing CLI diagnostic.
 	}
 	if outcome.errors() > 0 {
-		return outcome.updates(), fmt.Errorf("%d update error(s)", outcome.errors())
+		return outcome.updates(), fmt.Errorf("Error: %d update error(s)", outcome.errors()) //nolint:staticcheck // User-facing CLI diagnostic.
 	}
 	return outcome.updates(), nil
 }
@@ -885,7 +885,7 @@ func runCLIMode(files []string, flags *cliFlags) (int, error) {
 		totalUpdates, totalErrors = processTerraformVersion(files, flags.terraformVersion, flags.dryRun, flags.output, flags.reportRecorder())
 		printTerraformSummary(totalUpdates, totalErrors, flags.dryRun)
 		if totalErrors > 0 {
-			return totalUpdates, fmt.Errorf("%d Terraform version update error(s)", totalErrors)
+			return totalUpdates, fmt.Errorf("Error: %d Terraform version update error(s)", totalErrors) //nolint:staticcheck // User-facing CLI diagnostic.
 		}
 		return totalUpdates, nil
 	case flags.providerName != "":
@@ -896,7 +896,7 @@ func runCLIMode(files []string, flags *cliFlags) (int, error) {
 		totalUpdates, totalErrors = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output, flags.reportRecorder())
 		printProviderSummary(flags.providerName, totalUpdates, totalErrors, flags.dryRun, flags.output)
 		if totalErrors > 0 {
-			return totalUpdates, fmt.Errorf("%d provider update error(s)", totalErrors)
+			return totalUpdates, fmt.Errorf("Error: %d provider update error(s)", totalErrors) //nolint:staticcheck // User-facing CLI diagnostic.
 		}
 		return totalUpdates, nil
 	default:
@@ -905,7 +905,7 @@ func runCLIMode(files []string, flags *cliFlags) (int, error) {
 		totalUpdates, totalErrors = processFiles(files, updates, flags)
 		printSummary(totalUpdates, len(updates), totalErrors, flags.dryRun)
 		if totalErrors > 0 {
-			return totalUpdates, fmt.Errorf("%d module update error(s)", totalErrors)
+			return totalUpdates, fmt.Errorf("Error: %d module update error(s)", totalErrors) //nolint:staticcheck // User-facing CLI diagnostic.
 		}
 		return totalUpdates, nil
 	}

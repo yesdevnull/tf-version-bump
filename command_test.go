@@ -367,7 +367,7 @@ func TestCommandCheckProcessingErrorWinsOverUpdatesRequired(t *testing.T) {
 		"Running in check mode - no files will be modified\n" +
 		"→ Would update module source 'example/module' to version '2.0.0' in " + good + "\n\n" +
 		"Dry run: would update 1 file(s)\n1 update(s) failed; see the errors on stderr\n"
-	if result.exitCode != 1 || result.stdout != wantStdout || !strings.Contains(result.diagnostics, "Error processing "+bad) || !strings.Contains(result.diagnostics, "1 module update error(s)") {
+	if result.exitCode != 1 || result.stdout != wantStdout || !strings.Contains(result.diagnostics, "Error processing "+bad) || !strings.Contains(result.diagnostics, "Error: 1 module update error(s)") {
 		t.Fatalf("result = %#v, want stdout %q, processing diagnostics and exit 1", result, wantStdout)
 	}
 	if got := readTestFile(t, good); got != goodInput {
@@ -674,7 +674,7 @@ func TestCommandConfigFailedWriteRestartsLaterEntriesFromDisk(t *testing.T) {
 	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config})
 
 	writeFailure := "Error processing " + file + ": failed to write file: open " + file + ": permission denied\n"
-	wantDiagnostics := writeFailure + writeFailure + "2 module update error(s)\n"
+	wantDiagnostics := writeFailure + writeFailure + "Error: 2 module update error(s)\n"
 	if result.diagnostics != wantDiagnostics || result.exitCode != 1 || strings.Contains(result.stdout, "✓") {
 		t.Fatalf("result = %#v, want diagnostics %q, no success lines and exit 1", result, wantDiagnostics)
 	}
@@ -689,9 +689,9 @@ func TestCommandConfigFailedWriteRestartsLaterEntriesFromDisk(t *testing.T) {
 // names the modules in its error.
 func TestCommandConfigEveryUpdateFailedReportsTheFailures(t *testing.T) {
 	tests := []struct{ name, config, errText string }{
-		{"terraform", "terraform_version: \">= 1.5\"\n", "1 update error(s)"},
-		{"provider", "providers:\n  - name: aws\n    version: \"~> 5.0\"\n", "1 update error(s)"},
-		{"module", "modules:\n  - source: example/module\n    version: 2.0.0\n", "1 module update error(s)"},
+		{"terraform", "terraform_version: \">= 1.5\"\n", "Error: 1 update error(s)"},
+		{"provider", "providers:\n  - name: aws\n    version: \"~> 5.0\"\n", "Error: 1 update error(s)"},
+		{"module", "modules:\n  - source: example/module\n    version: 2.0.0\n", "Error: 1 module update error(s)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -766,9 +766,9 @@ func TestCommandEveryUpdateFailedReportsTheFailures(t *testing.T) {
 		name, errText string
 		operation     []string
 	}{
-		{"module", "1 module update error(s)", []string{"-module", "example/module", "-to", "2.0.0"}},
-		{"terraform", "1 Terraform version update error(s)", []string{"-terraform-version", ">= 1.5"}},
-		{"provider", "1 provider update error(s)", []string{"-provider", "aws", "-to", "~> 5.0"}},
+		{"module", "Error: 1 module update error(s)", []string{"-module", "example/module", "-to", "2.0.0"}},
+		{"terraform", "Error: 1 Terraform version update error(s)", []string{"-terraform-version", ">= 1.5"}},
+		{"provider", "Error: 1 provider update error(s)", []string{"-provider", "aws", "-to", "~> 5.0"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -808,7 +808,7 @@ func TestCommandConfigRefusesFileWhoseWriteKeptBackup(t *testing.T) {
 	}
 	failure := "Error processing " + file + ": failed to write file: injected failure; restoring the original also failed: injected failure; original content is in " + kept[0] + "\n"
 	refused := "Error processing " + file + ": file left untrusted by an earlier failed write; original content is in " + kept[0] + "\n"
-	wantDiagnostics := failure + refused + refused + "3 update error(s)\n"
+	wantDiagnostics := failure + refused + refused + "Error: 3 update error(s)\n"
 	if result.diagnostics != wantDiagnostics || result.exitCode != 1 {
 		t.Fatalf("result = %#v, want diagnostics %q and exit 1", result, wantDiagnostics)
 	}
@@ -1366,7 +1366,7 @@ func TestCommandDiscardsPreparedReportAfterUpdateFailure(t *testing.T) {
 		"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-report-file", report,
 	})
 
-	if result.exitCode != 1 || !strings.Contains(result.diagnostics, "1 module update error(s)") {
+	if result.exitCode != 1 || !strings.Contains(result.diagnostics, "Error: 1 module update error(s)") {
 		t.Errorf("result = %#v, want module update failure", result)
 	}
 	entries, err := os.ReadDir(dir)
@@ -1488,7 +1488,7 @@ func TestCommandReportsAggregateFileFailure(t *testing.T) {
 				wantStdout += "==================================================\nConfig File Update Summary\n==================================================\nModules: 1 update(s) applied\n"
 			}
 			wantStdout += "1 update(s) failed; see the errors on stderr\n"
-			wantDiag := "Error processing " + bad + ": failed to parse HCL: " + bad + ":1,1-2: Argument or block definition required; An argument or block definition is required here.\n1 module update error(s)\n"
+			wantDiag := "Error processing " + bad + ": failed to parse HCL: " + bad + ":1,1-2: Argument or block definition required; An argument or block definition is required here.\nError: 1 module update error(s)\n"
 			wantHCL := "module \"example\" {\n  source  = \"example/module\"\n  version = \"2.0.0\"\n}\n"
 			if r.stdout != wantStdout || r.diagnostics != wantDiag || r.exitCode != 1 || readTestFile(t, good) != wantHCL {
 				t.Fatalf("result %#v content=%q", r, readTestFile(t, good))
