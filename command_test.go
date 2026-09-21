@@ -1720,3 +1720,59 @@ func TestCommandSkippedModulesAreCounted(t *testing.T) {
 		})
 	}
 }
+
+// The report a run cannot write is the one most certain to be out of date: the files changed and
+// the counts describing them never landed. Removing the previous report is what stops a consumer
+// reading it as this run's answer.
+func TestCommandRemovesStaleReportWhenPublishFails(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	report := writeTestFile(t, dir, "report.json", "previous report\n")
+	failReportPublish(t, errors.New("injected rename failure"))
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-report-file", report,
+	})
+
+	if result.exitCode != 1 || !strings.Contains(result.diagnostics, "Error writing update report: injected rename failure") {
+		t.Fatalf("result = %#v, want the publish failure reported and exit 1", result)
+	}
+	if got := readTestFile(t, file); !strings.Contains(got, "2.0.0") {
+		t.Errorf("content = %q, want the file updated", got)
+	}
+	if _, err := os.Stat(report); !os.IsNotExist(err) {
+		t.Errorf("stat report = %v, want the stale report removed", err)
+	}
+}
+
+// A run that changed nothing leaves the tree, and so any report already at the destination, exactly
+// as it was. Removing it there would destroy a valid report as a side effect of rejecting input.
+func TestCommandKeepsReportWhenNothingWasChanged(t *testing.T) {
+	reportContent := "previous report\n"
+	tests := map[string][]string{
+		"config declares nothing":                   nil,
+		"dry run over a file that cannot be parsed": {"-module", "example/module", "-to", "2.0.0", "-dry-run"},
+		"every file failed":                         {"-module", "example/module", "-to", "2.0.0"},
+	}
+	for name, operation := range tests {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			file := writeTestFile(t, dir, "main.tf", "!!!\n")
+			report := writeTestFile(t, dir, "report.json", reportContent)
+			args := append([]string{"tf-version-bump", "-pattern", file, "-report-file", report}, operation...)
+			if operation == nil {
+				config := writeTestFile(t, dir, "versions.yml", "# nothing to update\n")
+				args = []string{"tf-version-bump", "-pattern", file, "-config", config, "-report-file", report}
+			}
+
+			result := runMainCommand(t, args)
+
+			if result.exitCode != 1 {
+				t.Fatalf("result = %#v, want exit 1", result)
+			}
+			if got := readTestFile(t, report); got != reportContent {
+				t.Errorf("report = %q, want it left alone as %q", got, reportContent)
+			}
+		})
+	}
+}

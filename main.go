@@ -69,6 +69,8 @@ var (
 		log.Printf(format, v...)
 		exitFunc(1)
 	}
+	// renameReportFile moves a written report onto its destination, the last step of publishing it.
+	renameReportFile = os.Rename
 	// openFileForRewrite opens a Terraform file to rewrite it in place: without O_CREATE, so a file
 	// deleted since its parse is not recreated, and without O_TRUNC, so a failed write can be undone.
 	openFileForRewrite = func(name string) (rewritableFile, error) {
@@ -553,24 +555,32 @@ func runUpdateMode(files []string, flags *cliFlags) (int, error) {
 	} else {
 		totalUpdates, err = runCLIMode(files, flags)
 	}
-	if err != nil {
-		if preparedReport != nil {
-			if discardErr := preparedReport.discard(); discardErr != nil {
-				err = fmt.Errorf("%w; failed to discard prepared report: %v", err, discardErr)
-			}
+	if err == nil && preparedReport != nil {
+		flags.report.SchemaVersion = 2
+		if publishErr := preparedReport.publish(&flags.report); publishErr != nil {
+			err = fmt.Errorf("Error writing update report: %v", publishErr) //nolint:staticcheck // User-facing CLI diagnostic.
+		}
+	}
+	if err == nil {
+		return totalUpdates, nil
+	}
+	if preparedReport != nil {
+		if discardErr := preparedReport.discard(); discardErr != nil {
+			err = fmt.Errorf("%w; failed to discard prepared report: %v", err, discardErr)
+		}
+		// A report describes the tree it was written from. Only a run that changed that tree and
+		// then failed leaves one describing a tree that no longer exists, so only such a run takes
+		// it away: a run refused for its config, a run whose every file failed and a dry run all
+		// leave the tree, and the report, exactly as they found them. The publish failure reaches
+		// here too, which is the case most certain to need it — the files changed and the counts
+		// describing them never landed.
+		if totalUpdates > 0 && !flags.dryRun {
 			if removeErr := preparedReport.removeDestination(); removeErr != nil {
 				err = fmt.Errorf("%w; failed to remove the stale report: %v", err, removeErr)
 			}
 		}
-		return totalUpdates, err
 	}
-	if preparedReport != nil {
-		flags.report.SchemaVersion = 2
-		if publishErr := preparedReport.publish(&flags.report); publishErr != nil {
-			return totalUpdates, fmt.Errorf("Error writing update report: %v", publishErr) //nolint:staticcheck // User-facing CLI diagnostic.
-		}
-	}
-	return totalUpdates, nil
+	return totalUpdates, err
 }
 
 func validateRequiredOperationFlags(flags *cliFlags) {
@@ -635,18 +645,19 @@ func (prepared *preparedReportFile) publish(document any) error {
 		return err
 	}
 	prepared.file = nil
-	if err := os.Rename(temporaryName, prepared.destination); err != nil {
+	if err := renameReportFile(temporaryName, prepared.destination); err != nil {
 		_ = os.Remove(temporaryName)
 		return err
 	}
 	return nil
 }
 
-// removeDestination deletes a report an earlier run left at the destination. A failed run has
-// usually already changed files, so that report describes a tree which no longer exists, and a
-// consumer reading it without checking the exit status would act on counts for another run.
-// Audit mode deliberately keeps its existing file instead: a failed audit changes nothing on
-// disk, so the previous audit is still a true snapshot.
+// removeDestination deletes a report an earlier run left at the destination. Its caller decides
+// when that is right: only a failed run that changed files leaves a report describing a tree which
+// no longer exists, where a consumer reading it without checking the exit status would act on
+// counts for another run. Audit mode never removes its own destination, for the same reason a run
+// that changed nothing does not: a failed audit changes nothing on disk, so the previous audit is
+// still a true snapshot.
 func (prepared *preparedReportFile) removeDestination() error {
 	if prepared == nil {
 		return nil

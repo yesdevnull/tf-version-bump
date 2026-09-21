@@ -399,6 +399,21 @@ func (f *failingFile) Close() error {
 	return nil
 }
 
+// failReportPublish makes publishing a prepared report fail at the point it is moved onto its
+// destination, which is the last step and the one that can leave a previous report in place.
+func failReportPublish(t *testing.T, failure error) {
+	t.Helper()
+	hookMu.Lock()
+	original := renameReportFile
+	renameReportFile = func(string, string) error { return failure }
+	hookMu.Unlock()
+	t.Cleanup(func() {
+		hookMu.Lock()
+		renameReportFile = original
+		hookMu.Unlock()
+	})
+}
+
 // failRewrite makes every Terraform file opened for rewriting behave as target describes. The lock
 // is held only while swapping the hook, because runMainCommand holds hookMu for a whole run.
 func failRewrite(t *testing.T, target *failingFile) {
