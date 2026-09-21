@@ -1938,3 +1938,70 @@ func TestCommandReportsAFailedStaleReportRemoval(t *testing.T) {
 		t.Errorf("report = %q, want the stale report still there, as the diagnostic says", got)
 	}
 }
+
+// A write that reaches the file and then cannot confirm what it left is the other way a failed run
+// changes the tree: the file holds neither version for certain, and no update is counted for it. A
+// report from an earlier run describes the tree as it was before that, so it goes too — the update
+// total alone would keep it, which is the case the removal exists for at its worst.
+func TestCommandRemovesStaleReportWhenAWriteLeftAFileUntrusted(t *testing.T) {
+	backups := useTempDir(t)
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+	report := writeTestFile(t, dir, "report.json", "previous report\n")
+	failRewrite(t, &failingFile{failOn: map[string][]int{"Close": {1}}})
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", file, "-module", "example/module", "-to", "2.0.0", "-report-file", report,
+	})
+
+	if len(backupsIn(t, backups)) != 1 {
+		t.Fatalf("backups = %v, want the one a write kept; result = %#v", backupsIn(t, backups), result)
+	}
+	if result.exitCode != 1 {
+		t.Fatalf("result = %#v, want exit 1", result)
+	}
+	if _, err := os.Stat(report); !os.IsNotExist(err) {
+		t.Errorf("stat report = %v, want the stale report removed", err)
+	}
+}
+
+// A destination that does not exist yet is the common case for a failed run, and removing nothing
+// is not a failure to report. Saying otherwise would append a second, invented clause to the
+// diagnostic of every such run.
+func TestCommandFailedRunWithNoPreviousReportSaysNothingExtra(t *testing.T) {
+	dir := t.TempDir()
+	bad := writeTestFile(t, dir, "01.tf", "!!!\n")
+	good := writeTestFile(t, dir, "02.tf", "module \"example\" {\n  source  = \"example/module\"\n  version = \"1.0.0\"\n}\n")
+
+	result := runMainCommand(t, []string{
+		"tf-version-bump", "-pattern", dir + "/*.tf", "-module", "example/module", "-to", "2.0.0", "-report-file", dir + "/report.json",
+	})
+
+	wantDiagnostics := "Error processing " + bad + ": failed to parse HCL: " + bad + ":1,1-2: Argument or block definition required; An argument or block definition is required here.\nError: 1 module update error(s)\n"
+	if result.exitCode != 1 || result.diagnostics != wantDiagnostics {
+		t.Fatalf("result = %#v, want exactly %q", result, wantDiagnostics)
+	}
+	if got := readTestFile(t, good); !strings.Contains(got, "2.0.0") {
+		t.Errorf("content = %q, want the valid file updated", got)
+	}
+}
+
+// A provider given as a bare version string is matched and left at the version it names, because
+// updates change the object and block forms only. It is pinned, unlike an object with no version,
+// so the warning says what it is rather than calling it unpinned — but the run still declined to
+// act on an entry the operator named, so it is counted and reported.
+func TestCommandSkippedProviderShorthandIsCounted(t *testing.T) {
+	dir := t.TempDir()
+	input := "terraform {\n  required_providers {\n    aws = \"~> 4.0\"\n  }\n}\n"
+	file := writeTestFile(t, dir, "main.tf", input)
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-provider", "aws", "-to", "~> 5.0"})
+
+	wantWarning := "Warning: Provider 'aws' in " + file + " is a version string rather than an object or block, which updates do not change, skipping\n"
+	if result.warnings != wantWarning || !strings.Contains(result.stdout, "1 provider(s) skipped") || result.exitCode != -1 {
+		t.Fatalf("result = %#v, want warning %q and the skip counted", result, wantWarning)
+	}
+	if got := readTestFile(t, file); got != input {
+		t.Errorf("content = %q, want unchanged %q", got, input)
+	}
+}

@@ -348,7 +348,7 @@ An invalid pattern or a pattern with no matching files is a fatal command error.
 ## Output and error behaviour
 
 - Per-file success messages and summaries go to standard output.
-- Local modules, matching modules without versions, and object-syntax provider entries without a `version` argument produce warnings on standard error. A summary line on standard output counts the modules and providers those warnings left unpinned; a local module is not counted, because Terraform gives it no version to set. When a file's backup cannot be removed after a successful write, a `Warning: could not remove backup <path>: <err>` line also appears on standard error.
+- Local modules, matching modules without versions, object-syntax provider entries without a `version` argument, and providers given as a bare version string produce warnings on standard error. A summary line on standard output counts the modules and providers those warnings left unpinned; a local module is not counted, because Terraform gives it no version to set. When a file's backup cannot be removed after a successful write, a `Warning: could not remove backup <path>: <err>` line also appears on standard error.
 - `-verbose` adds explanations for name and version filter skips.
 - `-dry-run` parses every selected file and reports proposed updates without writing.
 - `-check` performs the same no-write preview, exits 0 when no eligible version value would change, and exits 2 after a successful run that found updates. Errors exit 1 and take precedence over status 2.
