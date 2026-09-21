@@ -393,6 +393,9 @@ func loadResolvedConfig(configFile, branch string) (*Config, error) {
 func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (totalUpdates, totalSkips, totalErrors int) {
 	for _, file := range files {
 		parsed, readErr := readTerraformFile(file)
+		// Entries for one source are applied to the same file in turn, so one unpinned module is
+		// skipped once per entry. The count speaks for modules, so the blocks are unioned.
+		skippedBlocks := make(map[int]struct{})
 		// Index rather than copy: gocritic's rangeValCopy rejects ranging over ModuleUpdate by value.
 		for i := range updates {
 			update := &updates[i]
@@ -401,8 +404,10 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (tota
 				totalErrors++
 				continue
 			}
-			updated, changedBlocks, skipped, err := applyModuleVersion(parsed, update.Source, update.Version, update.From, update.IgnoreVersions, update.resolvedIgnoreModules, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
-			totalSkips += skipped
+			updated, changedBlocks, blocksSkipped, err := applyModuleVersion(parsed, update.Source, update.Version, update.From, update.IgnoreVersions, update.resolvedIgnoreModules, flags.forceAdd, flags.dryRun, flags.verbose, flags.output)
+			for _, blockIndex := range blocksSkipped {
+				skippedBlocks[blockIndex] = struct{}{}
+			}
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				totalErrors++
@@ -429,6 +434,7 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (tota
 				totalUpdates++
 			}
 		}
+		totalSkips += len(skippedBlocks)
 	}
 	return totalUpdates, totalSkips, totalErrors
 }
@@ -1420,12 +1426,12 @@ func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
 // Returns:
 //   - updated: true if at least one module operation was applied (or would be applied in dry-run mode)
 //   - changedBlocks: indexes of module blocks whose version values differ from the target
-//   - skipped: modules left unpinned by a skip the run warns about
+//   - skippedBlocks: indexes of module blocks left unpinned by a skip the run warns about
 //   - error: Any error encountered during file reading, parsing, or writing
-func updateModuleVersionWithCount(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, changedBlocks []int, skipped int, err error) {
+func updateModuleVersionWithCount(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, changedBlocks, skippedBlocks []int, err error) {
 	file, err := readTerraformFile(filename)
 	if err != nil {
-		return false, nil, 0, err
+		return false, nil, nil, err
 	}
 	return applyModuleVersion(file, moduleSource, version, fromVersions, ignoreVersions, ignorePatterns, forceAdd, dryRun, verbose, outputFormat)
 }
@@ -1628,7 +1634,7 @@ func removeBackup(backup string) {
 
 // applyModuleVersion applies one module update to a parsed file, changing it in memory so a later
 // update to the same file meets this one's result, and writes the file unless dryRun is set.
-func applyModuleVersion(file *terraformFile, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, changedBlocks []int, skipped int, err error) {
+func applyModuleVersion(file *terraformFile, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, changedBlocks, skippedBlocks []int, err error) {
 	opts := moduleUpdateOptions{
 		filename:       file.name,
 		moduleSource:   moduleSource,
@@ -1644,7 +1650,7 @@ func applyModuleVersion(file *terraformFile, moduleSource, version string, fromV
 	for blockIndex, block := range file.hcl.Body().Blocks() {
 		blockUpdated, blockChanged, blockSkipped := updateModuleBlockResult(block, &opts)
 		if blockSkipped {
-			skipped++
+			skippedBlocks = append(skippedBlocks, blockIndex)
 		}
 		if blockUpdated {
 			updated = true
@@ -1656,11 +1662,11 @@ func applyModuleVersion(file *terraformFile, moduleSource, version string, fromV
 
 	if updated && !dryRun {
 		if err := file.write(); err != nil {
-			return false, nil, skipped, err
+			return false, nil, skippedBlocks, err
 		}
 	}
 
-	return updated, changedBlocks, skipped, nil
+	return updated, changedBlocks, skippedBlocks, nil
 }
 
 type moduleUpdateOptions struct {

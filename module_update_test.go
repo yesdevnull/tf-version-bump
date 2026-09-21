@@ -628,15 +628,15 @@ func TestUpdateModuleVersionWithCount_CountsSkipsThatLeaveBlocksUnpinned(t *test
 			file := writeTestFile(t, t.TempDir(), "main.tf", tt.module)
 
 			var updated bool
-			var skipped int
+			var skippedBlocks []int
 			var err error
 			warnings := captureStderr(t, func() {
-				updated, _, skipped, err = updateModuleVersionWithCount(file, tt.source, "2.0.0",
+				updated, _, skippedBlocks, err = updateModuleVersionWithCount(file, tt.source, "2.0.0",
 					nil, nil, nil, tt.forceAdd, true, false, "text")
 			})
 
-			if err != nil || updated || skipped != tt.wantSkipped {
-				t.Fatalf("updated=%v skipped=%d err=%v, want no update and %d skip(s)", updated, skipped, err, tt.wantSkipped)
+			if err != nil || updated || len(skippedBlocks) != tt.wantSkipped {
+				t.Fatalf("updated=%v skippedBlocks=%v err=%v, want no update and %d skip(s)", updated, skippedBlocks, err, tt.wantSkipped)
 			}
 			if tt.wantWarning == "" && warnings != "" {
 				t.Fatalf("warnings = %q, want none", warnings)

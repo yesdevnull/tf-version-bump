@@ -1805,3 +1805,23 @@ func TestCommandFilteredDirectRunDoesNotDenyTheSkip(t *testing.T) {
 		})
 	}
 }
+
+// Entries for one source chain, so a file is judged once per entry and an unpinned module is
+// warned about once per entry too. The count says modules, so it counts the module once however
+// many entries reached it.
+func TestCommandSkipCountCountsAModuleOnce(t *testing.T) {
+	dir := t.TempDir()
+	file := writeTestFile(t, dir, "main.tf", "module \"vpc\" {\n  source = \"example/module\"\n}\n")
+	config := writeTestFile(t, dir, "versions.yml", "modules:\n  - source: example/module\n    version: 2.0.0\n    from: 1.0.0\n  - source: example/module\n    version: 3.0.0\n    from: 2.0.0\n")
+
+	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config})
+
+	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\n1 module(s) skipped; see the warnings on stderr\n"
+	if result.stdout != wantStdout || result.exitCode != -1 {
+		t.Fatalf("result = %#v, want stdout %q", result, wantStdout)
+	}
+	// The warning is per entry and stays that way; only the count speaks for modules.
+	if got := strings.Count(result.warnings, "has no version attribute, skipping"); got != 2 {
+		t.Errorf("warnings = %q, want the per-entry warning twice", result.warnings)
+	}
+}
