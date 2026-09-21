@@ -414,6 +414,21 @@ func failReportPublish(t *testing.T, failure error) {
 	})
 }
 
+// failReportRemoval makes removing a report left at the destination fail, which is the second
+// thing to go wrong in a run that had already failed.
+func failReportRemoval(t *testing.T, failure error) {
+	t.Helper()
+	hookMu.Lock()
+	original := removeReportFile
+	removeReportFile = func(string) error { return failure }
+	hookMu.Unlock()
+	t.Cleanup(func() {
+		hookMu.Lock()
+		removeReportFile = original
+		hookMu.Unlock()
+	})
+}
+
 // failRewrite makes every Terraform file opened for rewriting behave as target describes. The lock
 // is held only while swapping the hook, because runMainCommand holds hookMu for a whole run.
 func failRewrite(t *testing.T, target *failingFile) {

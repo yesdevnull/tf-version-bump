@@ -70,7 +70,7 @@ The report has this stable shape:
 }
 ```
 
-Counts represent unique individual Terraform, module, and provider blocks whose version value changed across the complete command. Repeated config entries that update the same block count it once. Blocks already at the requested version are excluded. Dry runs write zero counts because they do not change files. The report is written only after the update operation completes without errors. Its destination is validated before Terraform files are modified and cannot be one of the selected Terraform or YAML config inputs. Changed-file counts are outside this report; automation can derive them from its version-control diff.
+Counts represent unique individual Terraform, module, and provider blocks whose version value changed across the complete command. Repeated config entries that update the same block count it once. Blocks already at the requested version are excluded. Dry runs write zero counts because they do not change files. The report is written only after the update operation completes without errors. A run that changed files and then failed, including one whose report could not be written, removes any report already at the destination, so automation reading the file without checking the exit status fails loudly rather than acting on counts for a tree that has since changed; a run that changed nothing leaves it alone, and `-audit-file` never removes its own destination. Its destination is validated before Terraform files are modified and cannot be one of the selected Terraform or YAML config inputs. Changed-file counts are outside this report; automation can derive them from its version-control diff.
 
 ### Machine-readable version audit
 
@@ -348,10 +348,11 @@ An invalid pattern or a pattern with no matching files is a fatal command error.
 ## Output and error behaviour
 
 - Per-file success messages and summaries go to standard output.
-- Local modules and matching modules without versions produce warnings on standard error. When a file's backup cannot be removed after a successful write, a `Warning: could not remove backup <path>: <err>` line also appears on standard error.
+- Local modules, matching modules without versions, and object-syntax provider entries without a `version` argument produce warnings on standard error. A summary line on standard output counts the modules and providers those warnings left unpinned; a local module is not counted, because Terraform gives it no version to set. When a file's backup cannot be removed after a successful write, a `Warning: could not remove backup <path>: <err>` line also appears on standard error.
 - `-verbose` adds explanations for name and version filter skips.
 - `-dry-run` parses every selected file and reports proposed updates without writing.
 - `-check` performs the same no-write preview, exits 0 when no eligible version value would change, and exits 2 after a successful run that found updates. Errors exit 1 and take precedence over status 2.
+- A config that declares no `terraform_version`, `providers` or `modules` exits 1 without selecting any update, as `-validate-config` does. `-audit-file` still audits such a config.
 - `-audit-file` writes its audit and exits 0 whatever the audit contains; a selected file that cannot be read or parsed exits 1 without writing it.
 - Parse, stat, read, and write errors for an individual file are logged and processing continues with later files or updates.
 

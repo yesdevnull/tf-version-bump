@@ -133,7 +133,7 @@ terraform validate
 
 For CI, use `-check` instead of `-dry-run`. It writes nothing and exits 0 when no eligible version value would change, 2 when updates are required, and 1 on an error. Ignored modules, unmatched targets, and matching modules skipped for a missing `version` can still return 0. Check mode cannot be combined with `-dry-run` or `-report-file`.
 
-Automation can pass `-report-file update-report.json` in write mode to receive exact updated Terraform, module, and provider block counts as JSON. See the [usage reference](docs/USAGE.md#machine-readable-update-report) for the report contract and the [examples cookbook](examples/README.md#automation-cookbook) for a complete workflow.
+Automation can pass `-report-file update-report.json` in write mode to receive exact updated Terraform, module, and provider block counts as JSON. A run that changed files and then failed removes any report already at that path rather than leaving an earlier run's counts to be read as this one's. See the [usage reference](docs/USAGE.md#machine-readable-update-report) for the report contract and the [examples cookbook](examples/README.md#automation-cookbook) for a complete workflow.
 
 To compare files with a config without changing them, pass `-audit-file audit.json` in config mode instead. The audit lists every configured value's current and expected version; the [usage reference](docs/USAGE.md#machine-readable-version-audit) describes it.
 

@@ -90,7 +90,7 @@ jq '{terraform_blocks_updated, module_blocks_updated, provider_blocks_updated}' 
   update-report.json
 ```
 
-The report is schema version 2. It counts changed Terraform, module, and provider blocks, not files. Dry-run reports contain zero counts because no updates were applied. Check mode rejects `-report-file` so it remains entirely write-free.
+The report is schema version 2. It counts changed Terraform, module, and provider blocks, not files. Check the exit status before reading it: a run that changed files and then failed removes the file rather than leaving the previous run's counts in place, so `jq` on a missing file is the signal that the run did not finish. Dry-run reports contain zero counts because no updates were applied. Check mode rejects `-report-file` so it remains entirely write-free.
 
 ## Runnable scenarios
 

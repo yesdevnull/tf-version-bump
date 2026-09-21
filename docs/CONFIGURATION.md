@@ -35,7 +35,7 @@ modules:
     version: "4.0.0"
 ```
 
-At least one of `terraform_version`, `providers`, or `modules` must be present: `-validate-config` and an update run both reject a config that asks for nothing, so a file truncated by a bad merge fails rather than passing as a no-op. Unknown fields are rejected by the runtime YAML decoder. Leading and trailing whitespace is removed from names, sources, and version strings; empty items in module filter lists are discarded.
+At least one of `terraform_version`, `providers`, or `modules` must be present: `-validate-config` and an update run both reject a config that asks for nothing, so a file truncated by a bad merge fails rather than passing as a no-op. `-audit-file` is the exception and audits such a config, writing an audit with empty sections, because an audit of a config that asks for nothing is a true answer. Unknown fields are rejected by the runtime YAML decoder. Leading and trailing whitespace is removed from names, sources, and version strings; empty items in module filter lists are discarded.
 
 The repository's [JSON Schema](../schema/config-schema.json) provides editor completion and validates Terraform-style version-constraint syntax. The CLI's YAML loader does not execute that JSON Schema, so use an editor or separate schema validator when you need schema enforcement. The maintained configurations under [`examples/`](../examples/README.md#yaml-configurations) include the schema declaration shown above and can be copied as editor-enabled starting points.
 

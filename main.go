@@ -71,6 +71,8 @@ var (
 	}
 	// renameReportFile moves a written report onto its destination, the last step of publishing it.
 	renameReportFile = os.Rename
+	// removeReportFile deletes a report an earlier run left where this run's report was to go.
+	removeReportFile = os.Remove
 	// openFileForRewrite opens a Terraform file to rewrite it in place: without O_CREATE, so a file
 	// deleted since its parse is not recreated, and without O_TRUNC, so a failed write can be undone.
 	openFileForRewrite = func(name string) (rewritableFile, error) {
@@ -670,7 +672,7 @@ func (prepared *preparedReportFile) removeDestination() error {
 	if prepared == nil {
 		return nil
 	}
-	if err := os.Remove(prepared.destination); err != nil && !stderrors.Is(err, fs.ErrNotExist) {
+	if err := removeReportFile(prepared.destination); err != nil && !stderrors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return nil
@@ -896,7 +898,7 @@ func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 	// truncated by a bad merge would otherwise be a cheerful no-op. The refusal lives here rather
 	// than in the loader, which audit mode shares and which must keep reporting such a config.
 	if config.declaresNoUpdates() {
-		return 0, fmt.Errorf("Error: config contains no updates") //nolint:staticcheck // User-facing CLI diagnostic.
+		return 0, fmt.Errorf("Error: %w", errConfigDeclaresNoUpdates) //nolint:staticcheck // User-facing CLI diagnostic.
 	}
 
 	var terraformUpdates, terraformErrors, providerUpdates, providerSkips, providerErrors, moduleUpdates, moduleSkips, moduleErrors int
@@ -1035,6 +1037,8 @@ func printConfigSummary(outcome configOutcome, dryRun bool) {
 		// "nothing to do" message here would blame the config for a file-level fault. A skip does
 		// not suppress it, because the message names skipping and the note then quantifies it.
 		fmt.Println()
+	case dryRun:
+		fmt.Println("\nNo updates would be performed. Every configured update is already applied, skipped or matched nothing; use -audit-file to see which.")
 	default:
 		fmt.Println("\nNo updates were performed. Every configured update is already applied, skipped or matched nothing; use -audit-file to see which.")
 	}
