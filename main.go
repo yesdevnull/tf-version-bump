@@ -1390,6 +1390,9 @@ func replaceProviderObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression 
 	return updated, hasVersion, changed
 }
 
+// expressionHasStringValue reports whether expression evaluates to value as an update would write
+// it. cty strings are NFC-normalised, so value is normalised the same way; otherwise a version
+// written from a decomposed string would never read back as applied.
 func expressionHasStringValue(expression []byte, value string) bool {
 	expr, diags := hclsyntax.ParseExpression(expression, "inline", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
@@ -1397,7 +1400,7 @@ func expressionHasStringValue(expression []byte, value string) bool {
 	}
 	expressionValue, diags := expr.Value(&hcl.EvalContext{})
 	return !diags.HasErrors() && expressionValue.IsKnown() && !expressionValue.IsNull() &&
-		expressionValue.Type().Equals(cty.String) && expressionValue.AsString() == value
+		expressionValue.Type().Equals(cty.String) && expressionValue.Equals(cty.StringVal(value)).True()
 }
 
 func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
