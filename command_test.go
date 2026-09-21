@@ -1713,7 +1713,11 @@ func TestCommandSkippedModulesAreCounted(t *testing.T) {
 			result := runMainCommand(t, args)
 
 			wantWarning := "Warning: Module 'vpc' in " + file + " (source: 'example/module') has no version attribute, skipping\n"
-			wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\n1 module(s) skipped; see the warnings on stderr\n"
+			explanation := "No updates were performed. Nothing matched, or every match was already at the target version or skipped.\n"
+			if operation == nil {
+				explanation = "No updates were performed. Every configured update is already applied, skipped or matched nothing; use -audit-file to see which.\n"
+			}
+			wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\n" + explanation + "1 module(s) skipped; see the warnings on stderr\n"
 			if result.stdout != wantStdout || result.warnings != wantWarning || result.diagnostics != "" || result.exitCode != -1 {
 				t.Fatalf("result = %#v, want stdout %q and warning %q", result, wantStdout, wantWarning)
 			}
@@ -1816,12 +1820,49 @@ func TestCommandSkipCountCountsAModuleOnce(t *testing.T) {
 
 	result := runMainCommand(t, []string{"tf-version-bump", "-pattern", file, "-config", config})
 
-	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\n1 module(s) skipped; see the warnings on stderr\n"
+	wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\nNo updates were performed. Every configured update is already applied, skipped or matched nothing; use -audit-file to see which.\n1 module(s) skipped; see the warnings on stderr\n"
 	if result.stdout != wantStdout || result.exitCode != -1 {
 		t.Fatalf("result = %#v, want stdout %q", result, wantStdout)
 	}
 	// The warning is per entry and stays that way; only the count speaks for modules.
 	if got := strings.Count(result.warnings, "has no version attribute, skipping"); got != 2 {
 		t.Errorf("warnings = %q, want the per-entry warning twice", result.warnings)
+	}
+}
+
+// An object-syntax provider entry with no version is matched and then left alone, because updates
+// do not add one. The entry is unpinned exactly as an unpinned module is, so the run warns and
+// counts it rather than reporting a clean nothing-to-do.
+func TestCommandSkippedProvidersAreCounted(t *testing.T) {
+	tests := map[string][]string{
+		"direct": {"-provider", "aws", "-to", "~> 5.0"},
+		"config": nil,
+	}
+	for name, operation := range tests {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			input := "terraform {\n  required_providers {\n    aws = {\n      source = \"hashicorp/aws\"\n    }\n  }\n}\n"
+			file := writeTestFile(t, dir, "main.tf", input)
+			args := append([]string{"tf-version-bump", "-pattern", file}, operation...)
+			if operation == nil {
+				config := writeTestFile(t, dir, "versions.yml", "providers:\n  - name: aws\n    version: \"~> 5.0\"\n")
+				args = []string{"tf-version-bump", "-pattern", file, "-config", config}
+			}
+
+			result := runMainCommand(t, args)
+
+			wantWarning := "Warning: Provider 'aws' in " + file + " has no version argument and updates cannot add one, skipping\n"
+			explanation := "No updates were performed. Nothing matched, or every match was already at the target version or skipped.\n"
+			if operation == nil {
+				explanation = "No updates were performed. Every configured update is already applied, skipped or matched nothing; use -audit-file to see which.\n"
+			}
+			wantStdout := "Found 1 file(s) matching pattern '" + file + "'\n\n" + explanation + "1 provider(s) skipped; see the warnings on stderr\n"
+			if result.stdout != wantStdout || result.warnings != wantWarning || result.diagnostics != "" || result.exitCode != -1 {
+				t.Fatalf("result = %#v, want stdout %q and warning %q", result, wantStdout, wantWarning)
+			}
+			if got := readTestFile(t, file); got != input {
+				t.Errorf("content = %q, want unchanged %q", got, input)
+			}
+		})
 	}
 }

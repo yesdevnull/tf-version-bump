@@ -75,6 +75,11 @@ assert_empty_stderr() {
         || fail "$1 run produced unexpected diagnostics: $(<"$workspace/$1.stderr")"
 }
 
+# Set before assert_second_run_changes_nothing when a scenario's second run is expected to warn
+# again, such as a provider entry the updater cannot pin however often it runs. The assertion
+# clears it.
+second_run_expected_warning=""
+
 # Applies a scenario's config again, passing any extra flags, and fails unless the run leaves the
 # Terraform bytes and modification time unchanged and reports that nothing needed updating.
 assert_second_run_changes_nothing() {
@@ -91,7 +96,13 @@ assert_second_run_changes_nothing() {
         || fail "second $name run changed the Terraform modification time"
     grep -F 'No updates were performed.' "$workspace/$name-second.stdout" >/dev/null \
         || fail "second $name run did not report an already-current configuration"
-    assert_empty_stderr "$name-second"
+    if [[ -n $second_run_expected_warning ]]; then
+        grep -F "$second_run_expected_warning" "$workspace/$name-second.stderr" >/dev/null \
+            || fail "second $name run did not repeat the expected warning"
+        second_run_expected_warning=""
+    else
+        assert_empty_stderr "$name-second"
+    fi
 }
 
 binary="$workspace/tf-version-bump"
@@ -138,8 +149,14 @@ run_binary provider-targeting-first -pattern "$provider_directory/main.tf" -conf
 cmp -s "$provider_directory/main.tf" \
     "$repository_root/examples/scenarios/provider-targeting/expected.tf.golden" \
     || fail "provider-targeting scenario did not produce the exact expected provider configuration"
-assert_empty_stderr provider-targeting-first
+# The scenario's azurerm entry is an object with no version, which an update does not add even
+# under -force-add, so the run reports it as skipped rather than leaving it silently unpinned.
+grep -F "Warning: Provider 'azurerm' in" "$workspace/provider-targeting-first.stderr" >/dev/null \
+    || fail "provider-targeting scenario did not report the unpinned provider"
+grep -F '1 provider(s) skipped' "$workspace/provider-targeting-first.stdout" >/dev/null \
+    || fail "provider-targeting scenario did not count the unpinned provider"
 
+second_run_expected_warning="Warning: Provider 'azurerm' in"
 assert_second_run_changes_nothing provider-targeting -force-add
 
 same_source_directory="$workspace/same-source-ranges"
