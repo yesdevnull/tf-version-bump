@@ -28,11 +28,11 @@ PROCESS_TEST_CALL_LOG=""
 TEST_TMP_ROOT=$(mktemp -d)
 TEST_TMP_ROOT=$(realpath "$TEST_TMP_ROOT")
 
-TF_VERSION_BUMP_VERSION="v1.0.0-rc.16"
-TF_VERSION_BUMP_ARCHIVE_SHA256="096b8b9840bdfc2a885b93956c7788c1b6017ddb03d464615734fd49e45487ce"
+TF_VERSION_BUMP_VERSION="v1.0.0-rc.17"
+TF_VERSION_BUMP_ARCHIVE_SHA256="137eac8239d08e2a93409e9eda1fd59b52abcf3d774fa7c3882ce53534f56a4d"
 # Release-pin tooling maintains this explicit URL alongside the runtime digest.
 # shellcheck disable=SC2034
-TF_VERSION_BUMP_ARCHIVE_URL="https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0-rc.16/tf-version-bump_1.0.0-rc.16_linux_x86_64.tar.gz"
+TF_VERSION_BUMP_ARCHIVE_URL="https://github.com/yesdevnull/tf-version-bump/releases/download/v1.0.0-rc.17/tf-version-bump_1.0.0-rc.17_linux_x86_64.tar.gz"
 TERRAFORM_VERSION="1.15.5"
 TERRAFORM_IMAGE="hashicorp/terraform:1.15.5@sha256:15bf5a08b1fb9c9747c8ff01098aeeefb4aec9a6c24eb13e7661bdf9447e4aee"
 
