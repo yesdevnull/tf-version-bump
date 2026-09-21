@@ -178,7 +178,11 @@ func validateConfigFile(filename string) error {
 	return nil
 }
 
+// sanitizeProviderUpdates trims and validates provider entries. A provider may appear only once:
+// an entry has no filters, so a second entry for the same name cannot narrow the first, only
+// contradict it, leaving a check that never passes and an audit that never matches.
 func sanitizeProviderUpdates(providers []ProviderUpdate) error {
+	firstIndex := make(map[string]int, len(providers))
 	for i := range providers {
 		providers[i].Name = strings.TrimSpace(providers[i].Name)
 		providers[i].Version = strings.TrimSpace(providers[i].Version)
@@ -189,6 +193,10 @@ func sanitizeProviderUpdates(providers []ProviderUpdate) error {
 		if providers[i].Version == "" {
 			return fmt.Errorf("provider at index %d is missing 'version' field", i)
 		}
+		if first, repeated := firstIndex[providers[i].Name]; repeated {
+			return fmt.Errorf("provider at index %d repeats name '%s' from index %d", i, providers[i].Name, first)
+		}
+		firstIndex[providers[i].Name] = i
 	}
 
 	return nil
