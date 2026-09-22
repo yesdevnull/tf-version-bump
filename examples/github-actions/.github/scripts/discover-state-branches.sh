@@ -71,6 +71,31 @@ branch_is_excluded() {
     return 1
 }
 
+# Keeps one branch per prefix, so a preview processes a sample rather than the whole policy. A
+# branch belongs to the first prefix it matches; the pick is the first 15 hex digits of
+# sha256("<seed>\t<prefix>") modulo the prefix's branch count, which stays within bash's signed
+# 64-bit arithmetic and is stable while that prefix's branches are unchanged.
+sample_branch_records() {
+    local prefix record digest
+    local -a owned sampled=()
+    declare -A seen_prefixes=()
+    for prefix in "${selection_prefixes[@]}"; do
+        [[ -z "${seen_prefixes[$prefix]-}" ]] || continue
+        seen_prefixes[$prefix]=1
+        owned=()
+        for record in "${branch_records[@]}"; do
+            [[ "${branch_owners[${record%%$'\t'*}]}" != "$prefix" ]] || owned+=("$record")
+        done
+        if [[ ${#owned[@]} -eq 0 ]]; then
+            echo "::warning::branch prefix '${prefix//'%'/%25}' owns no branch to preview" >&2
+            continue
+        fi
+        digest=$(printf '%s\t%s' "$preview_seed" "$prefix" | sha256sum)
+        sampled+=("${owned[$((16#${digest:0:15} % ${#owned[@]}))]}")
+    done
+    readarray -t branch_records < <(printf '%s\n' "${sampled[@]}" | sort)
+}
+
 : "${DISCOVERY_DEFAULT_BRANCH:?DISCOVERY_DEFAULT_BRANCH must be set}"
 : "${DISCOVERY_CALLER_REF:?DISCOVERY_CALLER_REF must be set}"
 : "${CONTROL_CHECKOUT:?CONTROL_CHECKOUT must be set}"
@@ -90,7 +115,6 @@ if [[ "$preview" == true ]]; then
     # cannot disagree with the pull request, and a manual prefix only arises from a dispatch.
     [[ "$DISCOVERY_CALLER_REF" =~ ^refs/pull/([1-9][0-9]*)/merge$ ]] \
         || fail_discovery caller "preview caller ref must be refs/pull/<number>/merge"
-    # shellcheck disable=SC2034 # Consumed by the sampling this preview adds in a later task.
     preview_seed=${BASH_REMATCH[1]}
     [[ -z "$DISCOVERY_MANUAL_PREFIX" ]] \
         || fail_discovery input "a preview cannot take a manual prefix"
@@ -157,6 +181,7 @@ if ! git -C "$control_checkout" ls-remote --heads --refs origin >"$remote_heads_
 fi
 
 branch_records=()
+declare -A branch_owners=()
 declare -A matched_exclusions=()
 while IFS=$'\t' read -r oid ref; do
     branch=${ref#refs/heads/}
@@ -167,6 +192,7 @@ while IFS=$'\t' read -r oid ref; do
     for prefix in "${selection_prefixes[@]}"; do
         if [[ "$branch" == "$prefix"* ]]; then
             branch_records+=("$branch"$'\t'"$oid")
+            branch_owners[$branch]=$prefix
             break
         fi
     done
@@ -188,6 +214,7 @@ done
     || fail_discovery matrix "more than 256 branches matched; narrow or partition the prefix policy"
 
 readarray -t branch_records < <(printf '%s\n' "${branch_records[@]}" | sort)
+[[ "$preview" != true ]] || sample_branch_records
 # Git ref names cannot contain a tab (or any control character), so a tab-separated record per
 # branch is a safe carrier into the single jq pass below that replaces one jq -cn per branch.
 tsv_records=()

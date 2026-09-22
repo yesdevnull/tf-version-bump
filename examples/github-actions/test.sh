@@ -767,6 +767,73 @@ test_discovery_preview_accepts_only_pull_request_merge_refs() {
 }
 
 
+test_discovery_preview_samples_one_branch_per_prefix() {
+    # Production break caught: a preview processes every branch, picks differently on each push,
+    # or samples a branch its caller excludes.
+    setup_discovery_repository
+    local name
+    for name in alpha bravo charlie; do
+        add_discovery_branch "state/staging/$name"
+        add_discovery_branch "state/production/$name"
+    done
+    add_discovery_branch "state/production/excluded"
+    DISCOVERY_ALLOWED_PREFIXES=$'state/staging/\nstate/production/\n!state/production/excluded'
+    DISCOVERY_PREVIEW=true
+    local output stderr_file="$DISCOVERY_TMP_ROOT/sample.stderr"
+
+    # Known answers: the first 15 hex digits of sha256("<number>\t<prefix>"), modulo the three
+    # branches each prefix owns, index the sorted branches. Pull request 42 picks index 2 of
+    # state/production/ and 0 of state/staging/; pull request 43 picks index 1 of both.
+    DISCOVERY_CALLER_REF="refs/pull/42/merge"
+    output=$(run_discovery 2>"$stderr_file")
+    jq -e '.include | map(.branch) == ["state/production/charlie", "state/staging/alpha"]' \
+        <<<"$output" >/dev/null || fail "pull request 42 did not sample its known branches: $output"
+    [[ ! -s "$stderr_file" ]] || fail "sampling reported a warning: $(<"$stderr_file")"
+    output=$(run_discovery)
+    jq -e '.include | map(.branch) == ["state/production/charlie", "state/staging/alpha"]' \
+        <<<"$output" >/dev/null || fail "a repeat preview of pull request 42 sampled differently: $output"
+
+    DISCOVERY_CALLER_REF="refs/pull/43/merge"
+    output=$(run_discovery)
+    jq -e '.include | map(.branch) == ["state/production/bravo", "state/staging/bravo"]' \
+        <<<"$output" >/dev/null || fail "pull request 43 did not sample its known branches: $output"
+}
+
+
+test_discovery_preview_warns_for_prefixes_that_own_no_branch() {
+    # Production break caught: a prefix with nothing to preview passes silently, a narrower prefix
+    # listed after a broader one is reported as matching nothing without saying why, a repeated
+    # prefix previews its branch twice, or live runs gain the warning.
+    setup_discovery_repository
+    add_discovery_branch "state/staging/alpha"
+    DISCOVERY_ALLOWED_PREFIXES=$'state/\nstate/staging/\nstate/\naws-state/100%/'
+    local output stderr_file="$DISCOVERY_TMP_ROOT/unowned.stderr"
+
+    output=$(run_discovery 2>"$stderr_file")
+    [[ ! -s "$stderr_file" ]] || fail "a live run reported unowned prefixes: $(<"$stderr_file")"
+
+    DISCOVERY_PREVIEW=true
+    DISCOVERY_CALLER_REF="refs/pull/42/merge"
+    output=$(run_discovery 2>"$stderr_file")
+    jq -e '.include | map(.branch) == ["state/staging/alpha"]' <<<"$output" >/dev/null \
+        || fail "a preview did not sample the one owned branch exactly once: $output"
+    [[ "$(<"$stderr_file")" == "::warning::branch prefix 'state/staging/' owns no branch to preview"$'\n'"::warning::branch prefix 'aws-state/100%25/' owns no branch to preview" ]] \
+        || fail "a preview did not name each prefix that owns no branch once: $(<"$stderr_file")"
+}
+
+
+test_discovery_preview_keeps_the_live_matrix_limit() {
+    # Production break caught: a policy the live run refuses for exceeding the matrix limit
+    # previews green because the sample itself is small.
+    setup_discovery_repository
+    add_numbered_discovery_branches 0 256
+    DISCOVERY_ALLOWED_PREFIXES="state/limit/"
+    DISCOVERY_PREVIEW=true
+    DISCOVERY_CALLER_REF="refs/pull/42/merge"
+    assert_discovery_failure "discovery matrix error:" "a preview of more than 256 branches"
+}
+
+
 test_discovery_treats_hostile_refs_as_inert_data() {
     # Production break caught: shell evaluation, word splitting, option parsing, locale filtering,
     # or JSON interpolation executes or corrupts a Git-valid remote branch name.
