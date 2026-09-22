@@ -2017,8 +2017,9 @@ test_callers_preview_pull_requests() {
         ' >/dev/null || fail "the $policy caller does not preview pull requests with its live inputs"
         # The aliases keep one copy of each policy value, so a pull request's edits reach its preview.
         grep -qxF '    with: *policy-inputs' "$workflow" \
-            && grep -qxF '    secrets: *policy-secrets' "$workflow" \
             || fail "the $policy caller's preview does not reuse the live job's inputs by alias"
+        grep -qxF '    secrets: *policy-secrets' "$workflow" \
+            || fail "the $policy caller's preview does not reuse the live job's secrets by alias"
     done
 }
 
