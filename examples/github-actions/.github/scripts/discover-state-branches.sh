@@ -9,6 +9,8 @@ usage() {
 Usage: discover-state-branches.sh --help
 
 Discover immutable inputs for configured Terraform state branches.
+With DISCOVERY_PREVIEW=true, run from refs/pull/<number>/merge and select one
+sampled branch per prefix instead of every matching branch.
 EOF
 }
 
@@ -80,9 +82,23 @@ branch_is_excluded() {
 : "${DISCOVERY_ALLOWED_PREFIXES?DISCOVERY_ALLOWED_PREFIXES must be set}"
 : "${DISCOVERY_MANUAL_PREFIX?DISCOVERY_MANUAL_PREFIX must be set}"
 
-expected_caller_ref="refs/heads/$DISCOVERY_DEFAULT_BRANCH"
-[[ "$DISCOVERY_CALLER_REF" == "$expected_caller_ref" ]] \
-    || fail_discovery caller "caller ref must be $expected_caller_ref"
+preview=${DISCOVERY_PREVIEW-false}
+[[ "$preview" == true || "$preview" == false ]] \
+    || fail_discovery input "DISCOVERY_PREVIEW must be true or false"
+if [[ "$preview" == true ]]; then
+    # A preview runs from a pull request's merge ref. Its number seeds the sample, so the seed
+    # cannot disagree with the pull request, and a manual prefix only arises from a dispatch.
+    [[ "$DISCOVERY_CALLER_REF" =~ ^refs/pull/([1-9][0-9]*)/merge$ ]] \
+        || fail_discovery caller "preview caller ref must be refs/pull/<number>/merge"
+    # shellcheck disable=SC2034 # Consumed by the sampling this preview adds in a later task.
+    preview_seed=${BASH_REMATCH[1]}
+    [[ -z "$DISCOVERY_MANUAL_PREFIX" ]] \
+        || fail_discovery input "a preview cannot take a manual prefix"
+else
+    expected_caller_ref="refs/heads/$DISCOVERY_DEFAULT_BRANCH"
+    [[ "$DISCOVERY_CALLER_REF" == "$expected_caller_ref" ]] \
+        || fail_discovery caller "caller ref must be $expected_caller_ref"
+fi
 # shellcheck disable=SC2153 # Set by the reusable workflow or the focused harness.
 [[ "$CONTROL_CHECKOUT" == /* && -d "$CONTROL_CHECKOUT" ]] \
     || fail_discovery input "CONTROL_CHECKOUT must be an absolute existing directory"
