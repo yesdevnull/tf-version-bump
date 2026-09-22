@@ -361,6 +361,7 @@ assert_processing_failure() {
 
 setup_discovery_repository() {
     cleanup_discovery_repository
+    unset DISCOVERY_PREVIEW
     DISCOVERY_ALLOWED_PREFIXES=""
     DISCOVERY_MANUAL_PREFIX=""
     DISCOVERY_POLICY_ID="nonproduction"
@@ -414,6 +415,7 @@ add_numbered_discovery_branches() {
 run_discovery() {
     (
         cd "$DISCOVERY_REPO"
+        [[ -z "${DISCOVERY_PREVIEW+set}" ]] || export DISCOVERY_PREVIEW
         DISCOVERY_ALLOWED_PREFIXES=${DISCOVERY_ALLOWED_PREFIXES-} \
             DISCOVERY_MANUAL_PREFIX=${DISCOVERY_MANUAL_PREFIX-} \
             DISCOVERY_POLICY_ID=${DISCOVERY_POLICY_ID-nonproduction} \
@@ -722,6 +724,46 @@ test_discovery_rejects_invalid_inputs_by_stage() {
     DISCOVERY_ALLOWED_PREFIXES="state/prod/"
     DISCOVERY_CALLER_REF="refs/heads/feature"
     assert_discovery_failure "discovery caller error:" "non-default caller ref"
+}
+
+
+test_discovery_preview_accepts_only_pull_request_merge_refs() {
+    # Production break caught: relaxing the default-branch guard for previews lets any ref drive
+    # discovery, a pull-request ref passes without asking for a preview, or a preview's seed can
+    # disagree with the pull request it runs for.
+    setup_discovery_repository
+    add_discovery_branch "state/prod/example"
+    DISCOVERY_ALLOWED_PREFIXES="state/prod/"
+
+    DISCOVERY_CALLER_REF="refs/pull/42/merge"
+    assert_discovery_failure "discovery caller error: caller ref must be refs/heads/main" \
+        "a pull-request ref without a preview"
+
+    DISCOVERY_PREVIEW=true
+    local output
+    output=$(run_discovery)
+    jq -e '.include | map(.branch) == ["state/prod/example"]' <<<"$output" >/dev/null \
+        || fail "preview discovery refused a pull-request merge ref: $output"
+
+    local ref
+    for ref in refs/heads/main refs/pull/0/merge refs/pull/042/merge refs/pull/7/head refs/pull/x/merge; do
+        DISCOVERY_CALLER_REF=$ref
+        assert_discovery_failure "discovery caller error: preview caller ref must be refs/pull/<number>/merge" \
+            "a preview from $ref"
+    done
+
+    DISCOVERY_CALLER_REF="refs/pull/42/merge"
+    DISCOVERY_MANUAL_PREFIX="state/prod/"
+    assert_discovery_failure "discovery input error: a preview cannot take a manual prefix" \
+        "a preview with a manual prefix"
+
+    DISCOVERY_MANUAL_PREFIX=""
+    local value
+    for value in "" TRUE yes; do
+        DISCOVERY_PREVIEW=$value
+        assert_discovery_failure "discovery input error: DISCOVERY_PREVIEW must be true or false" \
+            "a preview flag of '$value'"
+    done
 }
 
 
