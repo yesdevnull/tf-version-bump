@@ -126,6 +126,8 @@ run_publish() {
     PATH="$FIXTURE_BIN:$PATH" \
         GH_CAPTURE_DIR="$FIXTURE_GH_CAPTURE" \
         RECONCILE_RUN_URL=https://github.com/yesdevnull/reconciliation-test/actions/runs/100 \
+        RECONCILE_CALLER_REF=${RECONCILE_CALLER_REF-refs/heads/main} \
+        RECONCILE_DEFAULT_BRANCH=main \
         RECONCILE_RUN_ID=${RECONCILE_RUN_ID-100} \
         RECONCILE_RUN_ATTEMPT=${RECONCILE_RUN_ATTEMPT-1} \
         RECONCILE_AUTOMATION_POLICY_ID=nonproduction \
@@ -447,13 +449,36 @@ test_failure_issue_create_reopen_and_invalid_status() {
     done
 }
 
+test_publication_runs_only_from_the_default_branch() {
+    # Production break caught: a preview whose publish gate is lost, or any other run from a
+    # non-default ref, pushes update refs or changes pull requests and issues from unmerged config.
+    local caller_ref dry_run remote
+    for caller_ref in refs/pull/7/merge refs/heads/feature; do
+        for dry_run in true false; do
+            setup_success_fixture
+            remote=$FIXTURE_REMOTE
+            if RECONCILE_CALLER_REF=$caller_ref RECONCILE_DRY_RUN=$dry_run run_publish \
+                >"$FIXTURE_ROOT/stdout" 2>"$FIXTURE_ROOT/stderr"; then
+                fail "publication from $caller_ref (dry run $dry_run) was accepted"
+            fi
+            [[ "$(<"$FIXTURE_ROOT/stderr")" == 'reconciliation error: publication runs only from refs/heads/main' ]] \
+                || fail "publication from $caller_ref reported: $(<"$FIXTURE_ROOT/stderr")"
+            [[ ! -s "$FIXTURE_ROOT/stdout" ]] || fail 'refused publication emitted stdout'
+            [[ ! -f "$FIXTURE_GH_CAPTURE/calls" ]] || fail "publication from $caller_ref called GitHub"
+            [[ -z "$("$TEST_GIT" --git-dir "$remote" for-each-ref --format='%(refname)' refs/heads/update_)" ]] \
+                || fail "publication from $caller_ref pushed an update ref"
+        done
+    done
+}
+
 if [[ $# -eq 0 ]]; then
     tests=(test_publishes_one_owned_commit_from_exact_base test_result_validation_prevents_mutation
         test_rejects_unsafe_candidate_paths_and_modes test_publication_refuses_moved_base_and_foreign_update
         test_stale_results_do_not_reconcile_lifecycle
         test_reconciles_no_change_and_failure_in_order test_api_failures_stop_followup_actions
         test_dry_run_and_automation_do_not_mutate test_exact_lease_rejects_racing_update_ref
-        test_failure_issue_create_reopen_and_invalid_status)
+        test_failure_issue_create_reopen_and_invalid_status
+        test_publication_runs_only_from_the_default_branch)
 else tests=("$@"); fi
 for test_name in "${tests[@]}"; do
     "$test_name"
