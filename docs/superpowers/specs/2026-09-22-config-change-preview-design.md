@@ -8,7 +8,7 @@ The preview is a smoke test, not coverage. It shows the full candidate the merge
 
 ## Scope and assumptions
 
-- The consuming repository is never forked; pull requests come from branches in the same repository, so the `TF_API_TOKEN` and `TERRAFORM_ENV` secrets are available to them. A pull request from a fork, or into a branch other than the default branch, skips the preview rather than failing.
+- The consuming repository is never forked; pull requests come from branches in the same repository, so the `TF_API_TOKEN` and `TERRAFORM_ENV` secrets are available to them. A pull request into a branch other than the default branch skips the preview; one from a fork is skipped by the preview job's `if`, although GitHub may instead fail it at startup because its token is read-only (unverified).
 - Anyone who can open such a pull request can already edit the workflows, so running Terraform with the registry token at pull-request time adds no new exposure. Accidental publication from an unmerged pull request is a new failure mode, so publication gains an independent guard (see [Publication guard](#publication-guard)).
 - A pull-request run executes the merge commit's workflows and scripts. A pull request that also edits the scripts or the reusable workflow is previewed with the edited versions.
 - Each caller previews only its own policy, triggered by its own configuration file or its own caller workflow file. A change to the scripts or the reusable workflow alone does not trigger a preview.
