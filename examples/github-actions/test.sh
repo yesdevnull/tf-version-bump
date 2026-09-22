@@ -1675,6 +1675,7 @@ test_workflow_reports_the_processing_result() {
         | length == 1 and .[0].if == "${{ always() }}"
           and .[0].env.PROCESS_OUTCOME == "${{ steps.process.outcome }}"
           and .[0].env.RESULT_MANIFEST == $result + "/result.json"
+          and .[0].env.PREVIEW == "${{ inputs.preview }}"
     ' >/dev/null || fail 'the report step is not wired to the processing step and its result'
     local work="$TEST_TMP_ROOT/report-step"
     rm -rf -- "$work"
@@ -1784,6 +1785,52 @@ test_workflow_summarises_update_logs() {
 }
 
 
+run_preview_report_step() {
+    run_workflow_step process 'Report processing result' "$3" \
+        PROCESS_OUTCOME="$2" RESULT_MANIFEST="$1" PREVIEW="$4"
+}
+
+
+test_workflow_summarises_the_preview_patch() {
+    # Production break caught: a preview hides the candidate it produced, a live run's summary
+    # gains the patch, or backticks or size in the patch break the summary.
+    local work="$TEST_TMP_ROOT/report-patch"
+    rm -rf -- "$work"
+    mkdir -p "$work/logs"
+    local manifest="$work/result.json" summary="$work/summary.md" diagnostics="$work/stderr"
+    local report
+
+    write_report_manifest "$manifest" success null '["."]'
+    printf '%s\n' '-  version = "1.0.0"' '+  version = "2.0.0"' '```' >"$work/candidate.patch"
+    assert_silent_success 'summarising a preview patch' "$work/stdout" "$diagnostics" \
+        run_preview_report_step "$manifest" success "$summary" true
+    report=$(<"$summary")
+    [[ "$report" == *'#### Candidate patch'* && "$report" == *'+  version = "2.0.0"'* ]] \
+        || fail "the preview summary omits the candidate patch: $report"
+    [[ $(grep -cx '````' "$summary") -eq 2 ]] \
+        || fail "the patch's fence does not outlast the backticks inside it: $report"
+
+    assert_silent_success 'summarising a live result' "$work/stdout" "$diagnostics" \
+        run_preview_report_step "$manifest" success "$summary" false
+    [[ "$(<"$summary")" != *'Candidate patch'* ]] \
+        || fail 'a live run summary shows the candidate patch'
+
+    awk 'BEGIN { for (i = 1; i <= 1200; i++) printf "+line %04d %060d\n", i, 0 }' \
+        >"$work/candidate.patch"
+    assert_silent_success 'summarising an oversized preview patch' "$work/stdout" "$diagnostics" \
+        run_preview_report_step "$manifest" success "$summary" true
+    [[ "$(<"$summary")" == *$'\n```\n\nThis patch was truncated'* ]] \
+        || fail "an oversized patch was not truncated with its closing fence on its own line: $(<"$summary")"
+
+    rm -f -- "$work/candidate.patch"
+    write_report_manifest "$manifest" no-change
+    assert_silent_success 'summarising a preview without a patch' "$work/stdout" "$diagnostics" \
+        run_preview_report_step "$manifest" success "$summary" true
+    [[ "$(<"$summary")" != *'Candidate patch'* ]] \
+        || fail 'a preview without a candidate patch claims one'
+}
+
+
 run_dry_run_report_step() {
     run_workflow_step publish 'Report dry-run outcome' "$2" RESULT_MANIFEST="$1"
 }
@@ -1858,7 +1905,7 @@ test_workflow_fails_the_process_job_on_processing_failure() {
 workflow_publishes_after_processing_failures() {
     local workflow=$1
     yq -o=json '.jobs' "$workflow" \
-        | jq -e --arg condition "\${{ always() && needs.discover.result == 'success' }}" '
+        | jq -e --arg condition "\${{ always() && needs.discover.result == 'success' && !inputs.preview }}" '
             .process.strategy["fail-fast"] == false and
             .publish.strategy["fail-fast"] == false and
             .publish.if == $condition
@@ -1881,6 +1928,11 @@ test_workflow_publishes_every_branch_after_processing_failures() {
     yq 'del(.jobs.publish.if)' "$REUSABLE_WORKFLOW" >"$mutant"
     ! workflow_publishes_after_processing_failures "$mutant" \
         || fail 'the guard passes when publication runs only after every process leg succeeds'
+    mutant="$TEST_TMP_ROOT/publish-without-preview-gate.yml"
+    yq ".jobs.publish.if = \"\${{ always() && needs.discover.result == 'success' }}\"" \
+        "$REUSABLE_WORKFLOW" >"$mutant"
+    ! workflow_publishes_after_processing_failures "$mutant" \
+        || fail 'the guard passes when a preview can reach publication'
 }
 
 test_workflow_offers_input_and_secret_terraform_environment() {
@@ -1928,6 +1980,16 @@ test_workflow_fails_discovery_when_the_script_fails() {
         || fail "the discover step emitted a matrix after discovery failed: $(<"$work/output")"
 }
 
+test_workflow_previews_without_publishing() {
+    # Production break caught: callers cannot ask for a preview, or discovery never hears of it and
+    # processes every branch from a pull request.
+    yq -o=json '.' "$REUSABLE_WORKFLOW" | jq -e '
+        .on.workflow_call.inputs.preview == {type: "boolean", default: false}
+        and ([.jobs.discover.steps[] | select(.id == "discover") | .env.DISCOVERY_PREVIEW]
+             == ["${{ inputs.preview }}"])
+    ' >/dev/null || fail 'the reusable workflow does not offer a preview input wired into discovery'
+}
+
 cleanup_test_repositories() {
     cleanup_discovery_repository
     cleanup_processing_workspace
@@ -1965,7 +2027,9 @@ if [[ $# -eq 0 ]]; then
         test_workflow_publishes_every_branch_after_processing_failures
         test_workflow_offers_input_and_secret_terraform_environment
         test_workflow_fails_discovery_when_the_script_fails
-        test_workflow_summarises_update_logs test_workflow_reports_the_dry_run_outcome)
+        test_workflow_previews_without_publishing
+        test_workflow_summarises_update_logs test_workflow_summarises_the_preview_patch
+        test_workflow_reports_the_dry_run_outcome)
     while IFS= read -r test_name; do tests+=("$test_name"); done < <(compgen -A function test_discovery_)
     for test_name in "${tests[@]}"; do
         "$test_name"

@@ -39,6 +39,9 @@ on:
       dry_run:
         type: boolean
         default: false
+      preview:
+        type: boolean
+        default: false
       max_parallel:
         type: number
         default: 4
@@ -74,6 +77,7 @@ jobs:
           CONTROL_CHECKOUT: ${{ github.workspace }}/control
           DISCOVERY_ALLOWED_PREFIXES: ${{ inputs.allowed_branch_prefixes }}
           DISCOVERY_MANUAL_PREFIX: ${{ inputs.branch_prefix }}
+          DISCOVERY_PREVIEW: ${{ inputs.preview }}
           DISCOVERY_POLICY_ID: ${{ inputs.automation_policy_id }}
           DISCOVERY_RUN_ID: ${{ github.run_id }}
           DISCOVERY_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -166,6 +170,7 @@ jobs:
         env:
           PROCESS_OUTCOME: ${{ steps.process.outcome }}
           RESULT_MANIFEST: ${{ runner.temp }}/result/result.json
+          PREVIEW: ${{ inputs.preview }}
         run: |
           if [[ ! -f "$RESULT_MANIFEST" ]]; then
             echo "Processing wrote no result manifest; publication will not change managed refs, pull requests or issues." >&2
@@ -178,24 +183,34 @@ jobs:
                else "\n- Automation failed with status \(.failure.status); the `Process candidate` step log names the cause, and `logs/` in the processing artefact holds any command output"
                end)' \
             "$RESULT_MANIFEST" >>"$GITHUB_STEP_SUMMARY"
+          # Appends a file in a fence one backtick longer than any run inside it, truncating past
+          # 64 KiB at a line boundary so the closing fence stays on a line of its own.
+          append_fenced_file() {
+            local heading=$1 file=$2 noun=$3 fence='```' longest
+            longest=$({ grep -aoE '`+' "$file" || true; } | awk '{ if (length > max) max = length } END { print max + 0 }')
+            while [[ ${#fence} -le $longest ]]; do fence+='`'; done
+            printf '\n#### %s\n\n%s\n' "$heading" "$fence" >>"$GITHUB_STEP_SUMMARY"
+            if [[ $(wc -c <"$file") -gt 65536 ]]; then
+              head -c 65536 "$file" | sed '$d' >>"$GITHUB_STEP_SUMMARY"
+              printf '%s\n\nThis %s was truncated; the processing artefact holds it in full.\n' "$fence" "$noun" >>"$GITHUB_STEP_SUMMARY"
+            else
+              awk 1 "$file" >>"$GITHUB_STEP_SUMMARY"
+              printf '%s\n' "$fence" >>"$GITHUB_STEP_SUMMARY"
+            fi
+          }
           # Only the updater's log is shown: Terraform's logs can carry a credential a provider echoed.
           index=0
           while IFS= read -r root; do
             index=$((index + 1))
             log="${RESULT_MANIFEST%/*}/logs/update-$index.log"
             [[ -f "$log" ]] || continue
-            fence='```'
-            longest=$({ grep -aoE '`+' "$log" || true; } | awk '{ if (length > max) max = length } END { print max + 0 }')
-            while [[ ${#fence} -le $longest ]]; do fence+='`'; done
-            printf '\n#### Updates in %s\n\n%s\n' "\`$root\`" "$fence" >>"$GITHUB_STEP_SUMMARY"
-            if [[ $(wc -c <"$log") -gt 65536 ]]; then
-              head -c 65536 "$log" | sed '$d' >>"$GITHUB_STEP_SUMMARY"
-              printf '%s\n\nThis log was truncated; the processing artefact holds it in full.\n' "$fence" >>"$GITHUB_STEP_SUMMARY"
-            else
-              awk 1 "$log" >>"$GITHUB_STEP_SUMMARY"
-              printf '%s\n' "$fence" >>"$GITHUB_STEP_SUMMARY"
-            fi
+            append_fenced_file "Updates in \`$root\`" "$log" log
           done < <(jq -r '(.roots // [])[]' "$RESULT_MANIFEST")
+          # The patch holds only Terraform files and root lock files, never Terraform's logs.
+          patch="${RESULT_MANIFEST%/*}/candidate.patch"
+          if [[ "$PREVIEW" == true && -f "$patch" ]]; then
+            append_fenced_file 'Candidate patch' "$patch" patch
+          fi
           classification=$(jq -er '.classification' "$RESULT_MANIFEST")
           if [[ "$PROCESS_OUTCOME" == success \
             && "$classification" != success && "$classification" != no-change ]]; then
@@ -206,7 +221,7 @@ jobs:
   publish:
     name: publish (${{ matrix.branch }})
     needs: [discover, process]
-    if: ${{ always() && needs.discover.result == 'success' }}
+    if: ${{ always() && needs.discover.result == 'success' && !inputs.preview }}
     strategy:
       fail-fast: false
       max-parallel: ${{ inputs.max_parallel }}
