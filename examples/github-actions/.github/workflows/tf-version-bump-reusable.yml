@@ -167,6 +167,7 @@ jobs:
           retention-days: 7
       - name: Report processing result
         if: ${{ always() }}
+        shell: bash
         env:
           PROCESS_OUTCOME: ${{ steps.process.outcome }}
           RESULT_MANIFEST: ${{ runner.temp }}/result/result.json

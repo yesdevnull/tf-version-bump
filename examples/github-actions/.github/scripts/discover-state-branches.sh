@@ -94,6 +94,10 @@ sample_branch_records() {
         sampled+=("${owned[$((16#${digest:0:15} % ${#owned[@]}))]}")
     done
     readarray -t branch_records < <(printf '%s\n' "${sampled[@]}" | sort)
+    # A failing sort inside the process substitution is not seen by set -e, and an empty matrix
+    # runs as zero jobs, so the preview would pass having previewed nothing.
+    [[ ${#sampled[@]} -gt 0 && ${#branch_records[@]} -eq ${#sampled[@]} ]] \
+        || fail_discovery selection "preview sampling did not keep one branch per owning prefix"
 }
 
 : "${DISCOVERY_DEFAULT_BRANCH:?DISCOVERY_DEFAULT_BRANCH must be set}"
