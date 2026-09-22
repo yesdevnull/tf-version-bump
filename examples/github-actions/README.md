@@ -32,7 +32,7 @@ Review and commit the copied files. The example supplies separate callers for:
 
 The same copy adds `tf-version-bump-report.yml`, a read-only version report described [below](#version-report).
 
-Both callers run only from the default branch. Their schedules are Monday 04:17 and Sunday 04:43 respectively in `Australia/Melbourne`. They also run when their control configuration changes, and can be started manually. A manual `branch_prefix` can narrow the configured prefixes but cannot select another branch family.
+Both callers' live runs start only from the default branch; each caller also previews same-repository pull requests into the default branch (see [Preview on pull requests](#preview-on-pull-requests)). Their schedules are Monday 04:17 and Sunday 04:43 respectively in `Australia/Melbourne`. They also run when their control configuration changes, and can be started manually. A manual `branch_prefix` can narrow the configured prefixes but cannot select another branch family.
 
 To leave one branch out of a caller's policy, add a line naming it with a leading `!`:
 
@@ -47,7 +47,7 @@ An exclusion names one exact branch (wildcard characters fail validation), so `s
 
 Allow the workflow's `contents`, `pull-requests` and `issues` write permissions. Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** before live publication.
 
-Create an Actions secret named `TF_API_TOKEN` with read access to your HCP Terraform registry modules and providers. The workflow exposes it as `TF_TOKEN_app_terraform_io` only during processing. The processing checkouts disable persisted Git credentials.
+Create an Actions secret named `TF_API_TOKEN` with read access to your HCP Terraform registry modules and providers. The workflow exposes it as `TF_TOKEN_app_terraform_io` only during processing. The processing checkouts disable persisted Git credentials. Pull-request previews run the same processing job, so they receive the same token.
 
 ## Supply environment variables
 
@@ -75,7 +75,7 @@ Each of the secret's values is registered with `::add-mask::`, which redacts it 
 
 A name may appear only once across both sources. Names the automation or the runner sets are rejected, as are names that would redirect the programs Terraform runs or its configuration, credentials, logging or plug-in sources. The reserved prefixes are `PROCESS_`, `RECONCILE_`, `DISCOVERY_`, `RUNNER_`, `ACTIONS_`, `LD_`, `DYLD_`, `TF_CLI_ARGS`, `TF_LOG`, `TF_PLUGIN_CACHE` and `GIT_`. The reserved exact names are `PATH`, `IFS`, `ENV`, `BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `TF_DATA_DIR`, `TF_IN_AUTOMATION`, `CHECKPOINT_DISABLE`, `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG`, `TF_WORKSPACE`, `HOME`, `TMPDIR`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_OUTPUT`, `GITHUB_STEP_SUMMARY`, `GITHUB_STATE` and `TF_TOKEN_app_terraform_io`. The last of those is reserved in any letter case or other spelling Terraform maps to the `app.terraform.io` host, because it would silently shadow the registry token the workflow injects from the `TF_API_TOKEN` secret; `TF_TOKEN_*` names for other registries remain allowed. The five `GITHUB_*` names are the runner's own command channels rather than provider configuration, which is why `GITHUB_APP_ID` and the provider's other `GITHUB_` variables are accepted while `GITHUB_ENV` is not. Treat the list as best effort rather than exhaustive. The structural protection is a separate rule: a file newly created during a run is only ever publishable if it is a `.terraform.lock.hcl` directly inside a configured Terraform root. A rejected entry never prints its value, and is rejected before any Terraform command runs and before any file in the checkout is modified.
 
-Both supplied callers forward the same repository `TERRAFORM_ENV` secret, so production credentials are also available to non-production state-branch jobs. To separate them, either give each policy its own secret name — mapping, say, `TERRAFORM_ENV_PRODUCTION` and `TERRAFORM_ENV_NONPRODUCTION` onto the reusable workflow's `TERRAFORM_ENV` secret in each caller — or hold the secret in a GitHub Environment named for the caller's `automation_policy_id`. A caller cannot pass an environment's secrets to a reusable workflow, so the reusable workflow's `process` job must then also declare that environment with its job-level `environment` key; GitHub then gives the job the environment's secret rather than the one the caller passes.
+Both supplied callers forward the same repository `TERRAFORM_ENV` secret, so production credentials are also available to non-production state-branch jobs. To separate them, either give each policy its own secret name — mapping, say, `TERRAFORM_ENV_PRODUCTION` and `TERRAFORM_ENV_NONPRODUCTION` onto the reusable workflow's `TERRAFORM_ENV` secret in each caller — or hold the secret in a GitHub Environment named for the caller's `automation_policy_id`. A caller cannot pass an environment's secrets to a reusable workflow, so the reusable workflow's `process` job must then also declare that environment with its job-level `environment` key; GitHub then gives the job the environment's secret rather than the one the caller passes. An Environment's deployment-branch rules also apply to previews, which run from `refs/pull/<number>/merge`, so a rule that admits only the default branch may withhold the secret from a preview or hold it for approval.
 
 ## Configure updates
 
@@ -86,7 +86,7 @@ Edit the control configurations on the default branch:
 .github/tf-version-bump/production.yml
 ```
 
-These are strict `tf-version-bump` configuration files. The workflow owns file selection, so do not add a `pattern` key. Pull requests changing these files run a read-only config validation check; they do not process state branches or run Terraform.
+These are strict `tf-version-bump` configuration files. The workflow owns file selection, so do not add a `pattern` key. Pull requests changing these files run a read-only config validation check and, for same-repository pull requests into the default branch, a preview that processes one sampled state branch per prefix without publishing anything (see [Preview on pull requests](#preview-on-pull-requests)).
 
 The callers process the repository root by default:
 
@@ -143,6 +143,20 @@ Unchanged candidates still run validation. Before any PR or issue reconciliation
 
 Publication uses the built-in `GITHUB_TOKEN`. The helper respects Git's signing configuration; the example does not provision a signing key. If signing is enabled, the runner must have a working key. Do not assume token-created branches and PRs will automatically run your downstream checks; review GitHub's [GITHUB_TOKEN workflow behaviour](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow#triggering-a-workflow-from-a-workflow) when configuring required checks.
 
+## Preview on pull requests
+
+A same-repository pull request into the default branch that changes a caller's configuration file or the caller workflow itself starts that caller's `preview` job. It discovers the policy's branches exactly as a live run does, then processes one branch per configured prefix, with its update, `terraform init`, optional formatting and `terraform validate`, and publishes nothing: the `publish` job is skipped, and publication also refuses any ref but the default branch. Pull requests from forks and pull requests into another branch skip the preview.
+
+The preview job shares the live job's inputs through YAML aliases, so a pull request that edits a pin, a prefix or a root is previewed with its edits. It also runs the pull request's own scripts and reusable workflow, so a pull request that edits those is previewed with the edited versions. A newer push to the pull request cancels its older preview; previews never wait behind or block a live run.
+
+The branch for each prefix is picked from the pull request number, so every push to the same pull request previews the same branches while that prefix's branches are unchanged. Adding, deleting or excluding a branch under a prefix may move the pick, and different pull requests may land on the same branch. A branch belongs to the first prefix it matches, and a prefix that owns no branch is named in a warning annotation. The preview is a smoke test, not coverage: a branch-scoped `ignore_modules` entry is previewed only if its branch happens to be sampled.
+
+Each `process` job's summary shows the updater's log and, for a changed candidate, the candidate patch. The patch is the full candidate the merged configuration would produce, not only what the pull request changes: on a branch whose update pull request has not been merged, it also includes the changes the current configuration would already make.
+
+A sampled branch whose update, initialisation, formatting or validation fails fails its `process` job, and with it the pull request's check. The failure may already exist on that branch, so check the branch's marked failure issue before blaming the pull request, and do not make the preview a required check. An invalid configuration fails every sampled branch at the update stage as `branch-update`, while the configuration validation check reports the cause.
+
+GitHub runs pull-request workflows only for the `opened`, `synchronize` and `reopened` activities, and not at all while the pull request has a merge conflict. A preview is therefore not refreshed when the default branch or the state branches move; push to the pull request or re-run the workflow to refresh it.
+
 ## Version report
 
 `tf-version-bump-report.yml` compares every state branch with its policy's control configuration without changing anything. It runs on Mondays at 06:17 `Australia/Melbourne`, after both scheduled update runs, and can be started manually from the default branch. It has read-only repository access, runs no Terraform and receives no secrets.
@@ -164,6 +178,6 @@ Both CSVs keep values as the audit reports them: as written, except that when a 
 
 Start with a manual run from the default branch and select `dry_run`. This processes and validates candidates and checks publication locally, without pushing refs or changing PRs or issues. Inspect the candidate patch and logs before enabling live publication.
 
-Open the workflow run to inspect `discover`, `process` and `publish`. Each `process` job's summary includes the updater's log for every configured root, so the run overview page shows which versions changed; a long log is truncated there and kept in full in the artefact. Terraform's own logs appear only in the artefact, because a provider can echo a credential into them. In a dry run, each `publish` job's summary states what a live run would have done to the branch's pull request and failure issue. Download its result artefacts to see `result.json`, `candidate.patch` and captured command logs. Artefacts are retained for seven days. Results belong to one run attempt; use **Re-run all jobs**, as partial job reruns are unsupported.
+Open the workflow run to inspect `discover`, `process` and `publish`. Each `process` job's summary includes the updater's log for every configured root, so the run overview page shows which versions changed; a long log is truncated there and kept in full in the artefact. In a preview, the summary also shows each changed branch's candidate patch, truncated the same way. Terraform's own logs appear only in the artefact, because a provider can echo a credential into them. In a dry run, each `publish` job's summary states what a live run would have done to the branch's pull request and failure issue. Download its result artefacts to see `result.json`, `candidate.patch` and captured command logs. Artefacts are retained for seven days. Results belong to one run attempt; use **Re-run all jobs**, as partial job reruns are unsupported.
 
 Before enabling schedules, test in a disposable private repository: run a dry run, publish a valid change twice and check that the same PR is refreshed, then introduce a validation failure and confirm that the PR closes and one failure issue is maintained. Finally, test a valid no-change result and confirm that the issue closes. No live GitHub repository is created or mutated by this repository's local component tests.
