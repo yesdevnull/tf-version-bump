@@ -1990,6 +1990,38 @@ test_workflow_previews_without_publishing() {
     ' >/dev/null || fail 'the reusable workflow does not offer a preview input wired into discovery'
 }
 
+test_callers_preview_pull_requests() {
+    # Production break caught: a preview runs with inputs that differ from its live run, queues
+    # behind or blocks live runs, previews a fork or a non-default base, narrows its permissions so
+    # GitHub refuses to start it, or a live run starts from a pull request.
+    local policy workflow
+    for policy in nonproduction production; do
+        workflow="$SCRIPT_DIR/.github/workflows/tf-version-bump-$policy.yml"
+        yq -o=json '.' "$workflow" | jq -e --arg policy "$policy" '
+            .jobs as $jobs
+            | (has("concurrency") | not)
+              and .on.pull_request == {paths: [$jobs.automation.with.config_path,
+                                              ".github/workflows/tf-version-bump-\($policy).yml"]}
+              and ($jobs | keys) == ["automation", "preview"]
+              and $jobs.automation.if == "${{ github.ref == format('"'"'refs/heads/{0}'"'"', github.event.repository.default_branch) }}"
+              and $jobs.automation.concurrency == {group: "tf-version-bump-\($policy)-${{ github.repository_id }}",
+                                                   "cancel-in-progress": false, queue: "max"}
+              and $jobs.preview.if == "${{ github.event_name == '"'"'pull_request'"'"' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.ref == github.event.repository.default_branch }}"
+              and $jobs.preview.concurrency == {group: "tf-version-bump-\($policy)-preview-${{ github.repository_id }}-${{ github.event.number }}",
+                                                "cancel-in-progress": true}
+              and ($jobs.preview | has("permissions") | not)
+              and $jobs.preview.uses == $jobs.automation.uses
+              and $jobs.preview.with == $jobs.automation.with
+              and $jobs.preview.secrets == $jobs.automation.secrets
+              and $jobs.automation.with.preview == "${{ github.event_name == '"'"'pull_request'"'"' }}"
+        ' >/dev/null || fail "the $policy caller does not preview pull requests with its live inputs"
+        # The aliases keep one copy of each policy value, so a pull request's edits reach its preview.
+        grep -qxF '    with: *policy-inputs' "$workflow" \
+            && grep -qxF '    secrets: *policy-secrets' "$workflow" \
+            || fail "the $policy caller's preview does not reuse the live job's inputs by alias"
+    done
+}
+
 cleanup_test_repositories() {
     cleanup_discovery_repository
     cleanup_processing_workspace
@@ -2028,6 +2060,7 @@ if [[ $# -eq 0 ]]; then
         test_workflow_offers_input_and_secret_terraform_environment
         test_workflow_fails_discovery_when_the_script_fails
         test_workflow_previews_without_publishing
+        test_callers_preview_pull_requests
         test_workflow_summarises_update_logs test_workflow_summarises_the_preview_patch
         test_workflow_reports_the_dry_run_outcome)
     while IFS= read -r test_name; do tests+=("$test_name"); done < <(compgen -A function test_discovery_)
