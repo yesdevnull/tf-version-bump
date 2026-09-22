@@ -15,10 +15,11 @@ the classification. Requires RECONCILE_RESULT_DIR and RECONCILE_RUN_ID,
 RECONCILE_RUN_ATTEMPT, RECONCILE_AUTOMATION_POLICY_ID, RECONCILE_CONTROL_OID,
 RECONCILE_STATE_BRANCH, RECONCILE_BASE_OID, RECONCILE_REF_HASH.
 
-publish additionally checks the clean exact-base RECONCILE_TARGET_CHECKOUT and
-RECONCILE_TERRAFORM_ROOTS, creates one owned update commit, and reconciles marked
-PRs and failure issues, only when RECONCILE_CALLER_REF is refs/heads/ followed by
-RECONCILE_DEFAULT_BRANCH. Requires RECONCILE_DRY_RUN (true/false), RUNNER_TEMP,
+publish refuses to do anything, dry run or not, unless RECONCILE_CALLER_REF is
+refs/heads/ followed by RECONCILE_DEFAULT_BRANCH. It then additionally checks the clean
+exact-base RECONCILE_TARGET_CHECKOUT and RECONCILE_TERRAFORM_ROOTS, creates one owned
+update commit, and reconciles marked PRs and failure issues. Requires RECONCILE_DRY_RUN
+(true/false), RUNNER_TEMP,
 RECONCILE_RUN_URL, RECONCILE_GIT_REMOTE, RECONCILE_REPOSITORY, GH_TOKEN,
 RECONCILE_COMMIT_AUTHOR_NAME, RECONCILE_COMMIT_AUTHOR_EMAIL, and the
 RECONCILE_TERRAFORM_VERSION and RECONCILE_TF_VERSION_BUMP_VERSION their bodies name.

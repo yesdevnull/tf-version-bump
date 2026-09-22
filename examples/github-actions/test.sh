@@ -834,6 +834,25 @@ test_discovery_preview_keeps_the_live_matrix_limit() {
 }
 
 
+test_discovery_preview_fails_when_sampling_loses_its_branches() {
+    # Production break caught: a failing sort inside a process substitution leaves discovery with
+    # an empty matrix, which GitHub runs as zero jobs, so the preview passes having previewed
+    # nothing.
+    setup_discovery_repository
+    add_discovery_branch "state/staging/alpha"
+    DISCOVERY_ALLOWED_PREFIXES="state/staging/"
+    DISCOVERY_PREVIEW=true
+    DISCOVERY_CALLER_REF="refs/pull/42/merge"
+    local failing_sort="$DISCOVERY_TMP_ROOT/failing-sort"
+    mkdir -m 700 "$failing_sort"
+    printf '#!/bin/sh\nexit 1\n' >"$failing_sort/sort"
+    chmod 700 "$failing_sort/sort"
+    DISCOVERY_PATH="$failing_sort:$PATH" assert_discovery_failure \
+        "discovery selection error: preview sampling did not keep one branch per owning prefix" \
+        "a preview whose sampling lost its branches"
+}
+
+
 test_discovery_treats_hostile_refs_as_inert_data() {
     # Production break caught: shell evaluation, word splitting, option parsing, locale filtering,
     # or JSON interpolation executes or corrupts a Git-valid remote branch name.
@@ -1668,11 +1687,14 @@ run_report_step() {
 
 test_workflow_reports_the_processing_result() {
     # The report runs whatever processing did, judges it by the processing step's own
-    # outcome, and reads the manifest from the directory processing writes.
+    # outcome, and reads the manifest from the directory processing writes. `shell: bash` adds
+    # pipefail, so a failed read inside the summary's pipelines fails the step instead of
+    # leaving an empty section.
     yq -o=json '.jobs.process.steps' "$REUSABLE_WORKFLOW" | jq -e '
         (.[] | select(.id == "process") | .env.PROCESS_RESULT_DIR) as $result
         | [.[] | select(.name == "Report processing result")]
         | length == 1 and .[0].if == "${{ always() }}"
+          and .[0].shell == "bash"
           and .[0].env.PROCESS_OUTCOME == "${{ steps.process.outcome }}"
           and .[0].env.RESULT_MANIFEST == $result + "/result.json"
           and .[0].env.PREVIEW == "${{ inputs.preview }}"
