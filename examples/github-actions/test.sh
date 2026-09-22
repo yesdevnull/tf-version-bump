@@ -1204,7 +1204,11 @@ test_workflow_runs_three_jobs_with_current_attempt_results() {
         ([.publish.steps[] | select(.env.TF_TOKEN_app_terraform_io != null)] | length == 0) and
         ([.publish.steps[] | select(.env.RECONCILE_RUN_URL != null)] | length == 1) and
         ([.publish.steps[] | select(.env.RECONCILE_TERRAFORM_VERSION == "${{ inputs.terraform_version }}"
-            and .env.RECONCILE_TF_VERSION_BUMP_VERSION == "${{ inputs.tf_version_bump_version }}")] | length == 1)
+            and .env.RECONCILE_TF_VERSION_BUMP_VERSION == "${{ inputs.tf_version_bump_version }}")] | length == 1) and
+        ([.publish.steps[] | select(.env.RECONCILE_RUN_URL != null)
+              | .env | {RECONCILE_CALLER_REF, RECONCILE_DEFAULT_BRANCH}]
+             == [{RECONCILE_CALLER_REF: "${{ github.ref }}",
+                  RECONCILE_DEFAULT_BRANCH: "${{ github.event.repository.default_branch }}"}])
     ' >/dev/null || fail 'workflow does not wire the three-job current-attempt result contract'
 }
 

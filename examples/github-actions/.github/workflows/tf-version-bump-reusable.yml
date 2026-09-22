@@ -260,6 +260,8 @@ jobs:
           RECONCILE_TARGET_CHECKOUT: ${{ github.workspace }}/target
           RECONCILE_TERRAFORM_ROOTS: ${{ inputs.terraform_directories }}
           RECONCILE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RECONCILE_CALLER_REF: ${{ github.ref }}
+          RECONCILE_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           RECONCILE_GIT_REMOTE: ${{ github.server_url }}/${{ github.repository }}.git
           RECONCILE_REPOSITORY: ${{ github.repository }}
           RECONCILE_DRY_RUN: ${{ inputs.dry_run }}
