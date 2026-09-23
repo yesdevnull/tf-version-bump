@@ -1280,6 +1280,7 @@ test_processing_records_a_deadline_that_expires_between_stages() {
     # stops publication.
     setup_processing_workspace
     local shim_bin="$PROCESS_TMP_ROOT/deadline-bin" marker="$PROCESS_TMP_ROOT/init-finished"
+    local diagnostic='processing status error: terraform validate failed for Terraform root root'
     mkdir "$shim_bin"
     # timeout marks the end of terraform init; from then on date reports a time past any
     # deadline, so the next stage finds none of it left.
@@ -1300,10 +1301,10 @@ if [[ -e "$marker" && "$*" == +%s ]]; then echo 99999999999; else exec date "$@"
 EOF
     chmod 755 "$shim_bin/timeout" "$shim_bin/date"
     PROCESS_PATH_PREFIX=$shim_bin
-    assert_processing_failure 'processing status error: terraform validate failed for Terraform root root' \
+    assert_processing_failure "$diagnostic" \
         'validation after the deadline'
     [[ -e "$marker" ]] || fail 'the deadline shim never saw terraform init finish'
-    [[ "$(<"$PROCESS_TMP_ROOT/failure.stderr")" == 'processing status error: terraform validate failed for Terraform root root' ]] \
+    [[ "$(<"$PROCESS_TMP_ROOT/failure.stderr")" == "$diagnostic" ]] \
         || fail "a stage that never started printed more than its diagnostic: $(<"$PROCESS_TMP_ROOT/failure.stderr")"
     jq -e '.classification == "branch-validation" and .failure.stage == "terraform validate" and
         .failure.status == 124' "$PROCESS_RESULT_DIR/result.json" >/dev/null \
