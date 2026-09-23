@@ -246,8 +246,9 @@ branch_command() {
     run_bounded "$RESULT_STAGE/logs/$log" "$@" || command_status=$?
     if [[ "$command_status" -ne 0 ]]; then
         # The step log shows why the command failed, with the workflow's masks applied;
-        # awk ends an unterminated last line so the diagnostic below starts its own.
-        awk 1 "$RESULT_STAGE/logs/$log" >&2
+        # awk ends an unterminated last line so the diagnostic below starts its own. A
+        # stage that began after the deadline never ran, so it has no log to show.
+        [[ ! -f "$RESULT_STAGE/logs/$log" ]] || awk 1 "$RESULT_STAGE/logs/$log" >&2
         write_result "$classification" "$stage" "$root" "$command_status"
         processing_status_error "$stage failed for Terraform root $root"
     fi
