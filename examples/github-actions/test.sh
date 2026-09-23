@@ -359,6 +359,16 @@ assert_processing_failure() {
 }
 
 
+# A failed command's captured log reaches the step log, where registered masks apply,
+# followed only by the one-line diagnostic, so the cause is readable in the console.
+assert_failure_prints_command_log() {
+    local log="$PROCESS_RESULT_DIR/logs/$1" stderr="$PROCESS_TMP_ROOT/failure.stderr"
+    [[ -s "$log" ]] || fail "the failed command captured no $1"
+    [[ "$(<"$stderr")" == "$(<"$log")"$'\n'"$(tail -n 1 "$stderr")" ]] \
+        || fail "the step log does not show $1 before the diagnostic: $(<"$stderr")"
+}
+
+
 setup_discovery_repository() {
     cleanup_discovery_repository
     unset DISCOVERY_PREVIEW
@@ -1047,6 +1057,7 @@ test_processing_init_upgrade_is_opt_in() {
                 'locked provider conflict without upgrade'
             grep -F 'does not match configured version constraint' "$PROCESS_RESULT_DIR/logs/init-1.log" >/dev/null \
                 || fail "plain init did not report the locked provider conflict"
+            assert_failure_prints_command_log init-1.log
             jq -e '.classification == "branch-init" and
                 .failure.stage == "terraform init"' \
                 "$PROCESS_RESULT_DIR/result.json" >/dev/null \
@@ -1254,6 +1265,7 @@ test_processing_records_real_update_and_format_failures() {
         jq -e --arg c "$classification" '.classification == $c and .failure.status > 0' "$PROCESS_RESULT_DIR/result.json" >/dev/null
         [[ ! -e "$PROCESS_RESULT_DIR/candidate.patch" ]] || fail 'failed processing emitted patch'
         grep -E 'Error|error' "$PROCESS_RESULT_DIR/logs/$log" >/dev/null || fail 'missing command diagnostics'
+        assert_failure_prints_command_log "$log"
     done
 }
 
@@ -1681,7 +1693,8 @@ run_workflow_step() {
 
 
 run_report_step() {
-    run_workflow_step process 'Report processing result' "$3" PROCESS_OUTCOME="$2" RESULT_MANIFEST="$1"
+    run_workflow_step process 'Report processing result' "$3" PROCESS_OUTCOME="$2" RESULT_MANIFEST="$1" \
+        ARTIFACT_URL="${4-}"
 }
 
 
@@ -1698,7 +1711,11 @@ test_workflow_reports_the_processing_result() {
           and .[0].env.PROCESS_OUTCOME == "${{ steps.process.outcome }}"
           and .[0].env.RESULT_MANIFEST == $result + "/result.json"
           and .[0].env.PREVIEW == "${{ inputs.preview }}"
+          and .[0].env.ARTIFACT_URL == "${{ steps.upload.outputs.artifact-url }}"
     ' >/dev/null || fail 'the report step is not wired to the processing step and its result'
+    yq -o=json '.jobs.process.steps' "$REUSABLE_WORKFLOW" | jq -e '
+        [.[] | select(.id == "upload")] | length == 1 and (.[0].uses | startswith("actions/upload-artifact@"))
+    ' >/dev/null || fail 'the report step cannot link the artefact the upload step published'
     local work="$TEST_TMP_ROOT/report-step"
     rm -rf -- "$work"
     mkdir "$work"
@@ -1713,6 +1730,15 @@ test_workflow_reports_the_processing_result() {
     [[ "$report" == *'state/nonproduction/example-thing'* && "$report" == *"\`branch-init\`"* \
         && "$report" == *'terraform init'* && "$report" == *'environments/production'* ]] \
         || fail "the branch failure summary omits the branch, classification, stage or root: $report"
+    [[ "$report" != *'Processing artefact'* ]] \
+        || fail "the summary links an artefact the upload step did not report: $report"
+
+    # The artefact's name is opaque, so the summary links the one this job uploaded.
+    local url='https://github.com/example/repo/actions/runs/1/artifacts/2'
+    assert_silent_success 'linking the processing artefact' "$work/stdout" "$diagnostics" \
+        run_report_step "$manifest" failure "$summary" "$url"
+    grep -qxF -- "- [Processing artefact]($url)" "$summary" \
+        || fail "the summary does not link the uploaded artefact: $(<"$summary")"
 
     # An automation failure's stage and root are unreliable: the EXIT trap records the
     # literal stage `processing` and the first configured root whatever failed, and only

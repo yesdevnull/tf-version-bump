@@ -157,6 +157,7 @@ jobs:
           "$CONTROL_CHECKOUT/.github/scripts/process-state-branch.sh" mask
           "$CONTROL_CHECKOUT/.github/scripts/process-state-branch.sh" process
       - name: Upload processing result
+        id: upload
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         timeout-minutes: 10
@@ -172,6 +173,7 @@ jobs:
           PROCESS_OUTCOME: ${{ steps.process.outcome }}
           RESULT_MANIFEST: ${{ runner.temp }}/result/result.json
           PREVIEW: ${{ inputs.preview }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
         run: |
           if [[ ! -f "$RESULT_MANIFEST" ]]; then
             echo "Processing wrote no result manifest; publication will not change managed refs, pull requests or issues." >&2
@@ -184,6 +186,10 @@ jobs:
                else "\n- Automation failed with status \(.failure.status); the `Process candidate` step log names the cause, and `logs/` in the processing artefact holds any command output"
                end)' \
             "$RESULT_MANIFEST" >>"$GITHUB_STEP_SUMMARY"
+          # Artefact names carry an opaque ref hash, so link the one this job uploaded.
+          if [[ -n "$ARTIFACT_URL" ]]; then
+            printf -- '- [Processing artefact](%s)\n' "$ARTIFACT_URL" >>"$GITHUB_STEP_SUMMARY"
+          fi
           # Appends a file in a fence one backtick longer than any run inside it, truncating past
           # 64 KiB at a line boundary so the closing fence stays on a line of its own.
           append_fenced_file() {
@@ -199,7 +205,8 @@ jobs:
               printf '%s\n' "$fence" >>"$GITHUB_STEP_SUMMARY"
             fi
           }
-          # Only the updater's log is shown: Terraform's logs can carry a credential a provider echoed.
+          # Only the updater's log is shown: Terraform's logs can carry a credential a provider echoed,
+          # so a failed command's log goes to the processing step's log, where masks apply.
           index=0
           while IFS= read -r root; do
             index=$((index + 1))
