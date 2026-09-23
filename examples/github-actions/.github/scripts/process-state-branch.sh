@@ -32,9 +32,10 @@ process. For an invalid environment it prints the name-only diagnostic, emits no
 masks and exits 0, so process reports the failure.
 
 Emits result.json and logs/, plus candidate.patch only for changed, validated
-success. A failed update, init, fmt or validate command's log is also written to
-standard error. Plain init uses -backend=false -input=false; explicit upgrade adds
--upgrade. Every root uses its own temporary TF_DATA_DIR. No commits are created.
+success. When an update, init, fmt or validate command runs and fails, its log is
+also written to standard error. Plain init uses -backend=false -input=false;
+explicit upgrade adds -upgrade. Every root uses its own temporary TF_DATA_DIR. No
+commits are created.
 EOF
 }
 
@@ -245,11 +246,13 @@ branch_command() {
     shift 4
     run_bounded "$RESULT_STAGE/logs/$log" "$@" || command_status=$?
     if [[ "$command_status" -ne 0 ]]; then
-        # The step log shows why the command failed, with the workflow's masks applied;
-        # awk ends an unterminated last line so the diagnostic below starts its own. A
-        # stage that began after the deadline never ran, so it has no log to show.
-        [[ ! -f "$RESULT_STAGE/logs/$log" ]] || awk 1 "$RESULT_STAGE/logs/$log" >&2
+        # The result is recorded first, so a print that fails or is interrupted cannot turn
+        # this branch failure into an automation failure. The step log then shows why the
+        # command failed, with the workflow's masks applied; awk ends an unterminated last
+        # line so the diagnostic below starts its own. A stage reached after the deadline
+        # never starts, so it has no log to show.
         write_result "$classification" "$stage" "$root" "$command_status"
+        [[ ! -f "$PROCESS_RESULT_DIR/logs/$log" ]] || awk 1 "$PROCESS_RESULT_DIR/logs/$log" >&2
         processing_status_error "$stage failed for Terraform root $root"
     fi
 }

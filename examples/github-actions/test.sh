@@ -122,7 +122,7 @@ ensure_processing_container() {
 
 
 setup_processing_workspace() {
-    # Started here rather than on first use, because run_processing is usually called with its
+    # Also started here, not only on first use, because run_processing is usually called with its
     # output redirected, which would hide why the container could not start.
     ensure_processing_container
     cleanup_processing_workspace
@@ -1303,6 +1303,8 @@ EOF
     assert_processing_failure 'processing status error: terraform validate failed for Terraform root root' \
         'validation after the deadline'
     [[ -e "$marker" ]] || fail 'the deadline shim never saw terraform init finish'
+    [[ "$(<"$PROCESS_TMP_ROOT/failure.stderr")" == 'processing status error: terraform validate failed for Terraform root root' ]] \
+        || fail "a stage that never started printed more than its diagnostic: $(<"$PROCESS_TMP_ROOT/failure.stderr")"
     jq -e '.classification == "branch-validation" and .failure.stage == "terraform validate" and
         .failure.status == 124' "$PROCESS_RESULT_DIR/result.json" >/dev/null \
         || fail "an expired deadline was not recorded as a validation failure: $(<"$PROCESS_RESULT_DIR/result.json")"
@@ -1854,7 +1856,7 @@ test_workflow_summarises_update_logs() {
     # fence on a line of its own.
     [[ "$report" == *$'\n```\n\nThis log was truncated'* ]] \
         || fail "the truncated update log's closing fence is not on a line of its own: $report"
-    # Terraform's logs can carry a credential a provider echoed, so they stay in the artefact.
+    # Terraform's logs can carry a credential a provider echoed, so they stay out of the summary.
     [[ "$report" != *SENTINEL* ]] \
         || fail 'the summary exposes a Terraform log'
     grep -qF 'truncated' "$summary" \
