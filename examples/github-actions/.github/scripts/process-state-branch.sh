@@ -246,11 +246,9 @@ branch_command() {
     shift 4
     run_bounded "$RESULT_STAGE/logs/$log" "$@" || command_status=$?
     if [[ "$command_status" -ne 0 ]]; then
-        # The result is recorded first, so a print that fails or is interrupted cannot turn
-        # this branch failure into an automation failure. The step log then shows why the
-        # command failed, with the workflow's masks applied; awk ends an unterminated last
-        # line so the diagnostic below starts its own. A stage reached after the deadline
-        # never starts, so it has no log to show.
+        # Recorded before printing, so a failed print cannot turn this branch failure into an
+        # automation failure. The log shows the cause with the workflow's masks applied; awk
+        # ends an unterminated last line, and a stage past the deadline has no log.
         write_result "$classification" "$stage" "$root" "$command_status"
         [[ ! -f "$PROCESS_RESULT_DIR/logs/$log" ]] || awk 1 "$PROCESS_RESULT_DIR/logs/$log" >&2
         processing_status_error "$stage failed for Terraform root $root"
