@@ -122,6 +122,9 @@ ensure_processing_container() {
 
 
 setup_processing_workspace() {
+    # Started here rather than on first use, because run_processing is usually called with its
+    # output redirected, which would hide why the container could not start.
+    ensure_processing_container
     cleanup_processing_workspace
     unset PROCESS_CONFIG_PATH PROCESS_TERRAFORM_ROOTS RUNNER_TEMP
     unset PROCESS_PREPARATION_DEADLINE_EPOCH
