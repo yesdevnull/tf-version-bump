@@ -364,7 +364,9 @@ assert_processing_failure() {
 assert_failure_prints_command_log() {
     local log="$PROCESS_RESULT_DIR/logs/$1" stderr="$PROCESS_TMP_ROOT/failure.stderr"
     [[ -s "$log" ]] || fail "the failed command captured no $1"
-    [[ "$(<"$stderr")" == "$(<"$log")"$'\n'"$(tail -n 1 "$stderr")" ]] \
+    # Compared byte for byte, because command substitution would drop a log's trailing
+    # blank lines but not the same lines once the diagnostic follows them.
+    cmp -s <(awk 1 "$log") <(sed '$d' "$stderr") && [[ $(tail -n 1 "$stderr") == 'processing status error: '* ]] \
         || fail "the step log does not show $1 before the diagnostic: $(<"$stderr")"
 }
 
@@ -1269,6 +1271,41 @@ test_processing_records_real_update_and_format_failures() {
     done
 }
 
+test_processing_records_a_deadline_that_expires_between_stages() {
+    # Production break caught: a stage that starts after the shared deadline has no log to
+    # print, and failing on that turns a branch failure into an automation failure that
+    # stops publication.
+    setup_processing_workspace
+    local shim_bin="$PROCESS_TMP_ROOT/deadline-bin" marker="$PROCESS_TMP_ROOT/init-finished"
+    mkdir "$shim_bin"
+    # timeout marks the end of terraform init; from then on date reports a time past any
+    # deadline, so the next stage finds none of it left.
+    cat >"$shim_bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+marker="${BASH_SOURCE%/*}/../init-finished"
+PATH=${PATH#*:}
+command_status=0
+timeout "$@" || command_status=$?
+[[ " $* " != *' init '* ]] || touch "$marker"
+exit "$command_status"
+EOF
+    cat >"$shim_bin/date" <<'EOF'
+#!/usr/bin/env bash
+marker="${BASH_SOURCE%/*}/../init-finished"
+PATH=${PATH#*:}
+if [[ -e "$marker" && "$*" == +%s ]]; then echo 99999999999; else exec date "$@"; fi
+EOF
+    chmod 755 "$shim_bin/timeout" "$shim_bin/date"
+    PROCESS_PATH_PREFIX=$shim_bin
+    assert_processing_failure 'processing status error: terraform validate failed for Terraform root root' \
+        'validation after the deadline'
+    [[ -e "$marker" ]] || fail 'the deadline shim never saw terraform init finish'
+    jq -e '.classification == "branch-validation" and .failure.stage == "terraform validate" and
+        .failure.status == 124' "$PROCESS_RESULT_DIR/result.json" >/dev/null \
+        || fail "an expired deadline was not recorded as a validation failure: $(<"$PROCESS_RESULT_DIR/result.json")"
+    [[ ! -e "$PROCESS_RESULT_DIR/logs/validate-1.log" ]] || fail 'validation ran after the deadline'
+}
+
 test_processing_rejects_invalid_inputs_before_updates() {
     local mode expected
     for mode in boolean-upgrade boolean-format root-absolute root-traversal root-missing duplicate config-absolute symlink control-oid base-oid hash deadline; do
@@ -2092,7 +2129,9 @@ if [[ $# -eq 0 ]]; then
         test_processing_scopes_ignored_modules_to_the_state_branch
         test_processing_validates_unchanged_candidates test_processing_init_upgrade_is_opt_in
         test_workflow_runs_three_jobs_with_current_attempt_results
-        test_processing_records_real_update_and_format_failures test_processing_rejects_invalid_inputs_before_updates
+        test_processing_records_real_update_and_format_failures
+        test_processing_records_a_deadline_that_expires_between_stages
+        test_processing_rejects_invalid_inputs_before_updates
         test_processing_invalid_config_reconciles_branch_failure
         test_processing_formats_only_after_dependency_or_lock_changes
         test_processing_rejects_ignored_generated_lock test_processing_rejects_formatter_changes_outside_patch_policy
