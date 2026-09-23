@@ -117,7 +117,8 @@ ensure_processing_container() {
         sleep 1
     done
     docker exec "$PROCESS_CONTAINER_ID" /bin/bash -c \
-        'command -v curl >/dev/null && command -v jq >/dev/null && command -v timeout >/dev/null'
+        'command -v curl >/dev/null && command -v jq >/dev/null && command -v timeout >/dev/null' \
+        || fail 'processing container lacks curl, jq or timeout'
 }
 
 
