@@ -20,6 +20,10 @@ linters:
   settings:
     gocyclo:
       min-complexity: 15
+    staticcheck:
+      # ST1005 wants lower-case error strings; the CLI prints its errors verbatim as diagnostics,
+      # so they are capitalised sentences on purpose.
+      checks: ["all", "-ST1000", "-ST1003", "-ST1005", "-ST1016", "-ST1020", "-ST1021", "-ST1022"]
     gocritic:
       enabled-tags:
         - diagnostic

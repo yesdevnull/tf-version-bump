@@ -78,19 +78,77 @@ func updateProviderVersion(filename, providerName, version string, dryRun bool) 
 	return updated, err
 }
 
-var testOutputMu sync.Mutex
-
-func startPipeDrain(reader *os.File) (output *bytes.Buffer, done <-chan struct{}) {
-	output = new(bytes.Buffer)
-	doneChannel := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(output, reader)
-		close(doneChannel)
-	}()
-	done = doneChannel
-	return output, done
+func updateTerraformVersion(filename, version string, dryRun bool) (bool, error) {
+	updated, _, err := updateTerraformVersionWithCount(filename, version, dryRun)
+	return updated, err
 }
 
+// testOutputMu serialises the tests that redirect the process streams or the standard logger.
+var testOutputMu sync.Mutex
+
+// redirectStream points stream at a pipe until collect is called, which restores the stream and
+// returns everything written to it. The caller must hold testOutputMu.
+func redirectStream(t *testing.T, stream **os.File) (collect func() string) {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create pipe: %v", err)
+	}
+	original := *stream
+	*stream = writer
+
+	var output bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&output, reader)
+		close(done)
+	}()
+
+	collected := false
+	collect = func() string {
+		if collected {
+			return output.String()
+		}
+		collected = true
+		*stream = original
+		if err := writer.Close(); err != nil {
+			t.Errorf("close pipe writer: %v", err)
+		}
+		<-done
+		if err := reader.Close(); err != nil {
+			t.Errorf("close pipe reader: %v", err)
+		}
+		return output.String()
+	}
+	t.Cleanup(func() { collect() })
+	return collect
+}
+
+// redirectLog sends the standard logger to a buffer, without flags or prefix, until collect is
+// called, which restores the logger and returns what it wrote. The caller must hold testOutputMu.
+func redirectLog(t *testing.T) (collect func() string) {
+	t.Helper()
+	var output bytes.Buffer
+	writer, flags, prefix := log.Writer(), log.Flags(), log.Prefix()
+	log.SetOutput(&output)
+	log.SetFlags(0)
+	log.SetPrefix("")
+
+	restored := false
+	collect = func() string {
+		if !restored {
+			restored = true
+			log.SetOutput(writer)
+			log.SetFlags(flags)
+			log.SetPrefix(prefix)
+		}
+		return output.String()
+	}
+	t.Cleanup(func() { collect() })
+	return collect
+}
+
+// runMainCommand runs main with args, capturing its streams and the exit code it asked for.
 func runMainCommand(t *testing.T, args []string) commandResult {
 	t.Helper()
 	testOutputMu.Lock()
@@ -98,61 +156,9 @@ func runMainCommand(t *testing.T, args []string) commandResult {
 
 	restoreExit, code := stubExit(t)
 	defer restoreExit()
-
-	var diagnostics bytes.Buffer
-	originalLogWriter := log.Writer()
-	originalLogFlags := log.Flags()
-	originalLogPrefix := log.Prefix()
-	log.SetOutput(&diagnostics)
-	log.SetFlags(0)
-	log.SetPrefix("")
-	defer func() {
-		log.SetOutput(originalLogWriter)
-		log.SetFlags(originalLogFlags)
-		log.SetPrefix(originalLogPrefix)
-	}()
-
-	stdoutReader, stdoutWriter, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("failed to create stdout pipe: %v", err)
-	}
-	defer func() {
-		if err := stdoutReader.Close(); err != nil {
-			t.Errorf("failed to close stdout reader: %v", err)
-		}
-	}()
-	defer func() { _ = stdoutWriter.Close() }()
-
-	originalStdout := os.Stdout
-	os.Stdout = stdoutWriter
-	defer func() { os.Stdout = originalStdout }()
-
-	stderrReader, stderrWriter, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("failed to create stderr pipe: %v", err)
-	}
-	defer func() {
-		if err := stderrReader.Close(); err != nil {
-			t.Errorf("failed to close stderr reader: %v", err)
-		}
-	}()
-	defer func() { _ = stderrWriter.Close() }()
-
-	originalStderr := os.Stderr
-	os.Stderr = stderrWriter
-	defer func() { os.Stderr = originalStderr }()
-
-	var stdout, warnings bytes.Buffer
-	stdoutDone := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(&stdout, stdoutReader)
-		close(stdoutDone)
-	}()
-	stderrDone := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(&warnings, stderrReader)
-		close(stderrDone)
-	}()
+	diagnostics := redirectLog(t)
+	stdout := redirectStream(t, &os.Stdout)
+	warnings := redirectStream(t, &os.Stderr)
 
 	withFlagArgs(t, args, func() {
 		defer func() {
@@ -165,67 +171,24 @@ func runMainCommand(t *testing.T, args []string) commandResult {
 		main()
 	})
 
-	if err := stdoutWriter.Close(); err != nil {
-		t.Fatalf("failed to close stdout writer: %v", err)
-	}
-	<-stdoutDone
-	if err := stderrWriter.Close(); err != nil {
-		t.Fatalf("failed to close stderr writer: %v", err)
-	}
-	<-stderrDone
-
 	return commandResult{
-		stdout:      stdout.String(),
-		diagnostics: diagnostics.String(),
-		warnings:    warnings.String(),
+		stdout:      stdout(),
+		diagnostics: diagnostics(),
+		warnings:    warnings(),
 		exitCode:    *code,
 	}
 }
 
+// captureRunnerOutput runs a mode runner, capturing its stdout and logged diagnostics.
 func captureRunnerOutput(t *testing.T, run func() error) (stdout, diagnostic string, runnerErr error) {
 	t.Helper()
 	testOutputMu.Lock()
 	defer testOutputMu.Unlock()
 
-	stdoutReader, stdoutWriter, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("failed to create stdout pipe: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = stdoutWriter.Close()
-		_ = stdoutReader.Close()
-	})
-	defer func() {
-		if err := stdoutReader.Close(); err != nil {
-			t.Errorf("failed to close stdout reader: %v", err)
-		}
-	}()
-
-	originalStdout := os.Stdout
-	restore := func() { os.Stdout = originalStdout }
-	t.Cleanup(restore)
-	defer restore()
-	os.Stdout = stdoutWriter
-
-	originalLogOutput := log.Writer()
-	originalLogFlags := log.Flags()
-	var logOutput bytes.Buffer
-	log.SetOutput(&logOutput)
-	log.SetFlags(0)
-	defer func() {
-		log.SetOutput(originalLogOutput)
-		log.SetFlags(originalLogFlags)
-	}()
-
-	stdoutBuffer, stdoutDone := startPipeDrain(stdoutReader)
+	collectStdout := redirectStream(t, &os.Stdout)
+	collectLog := redirectLog(t)
 	runnerErr = run()
-
-	if err := stdoutWriter.Close(); err != nil {
-		t.Fatalf("failed to close stdout writer: %v", err)
-	}
-	<-stdoutDone
-
-	return stdoutBuffer.String(), logOutput.String(), runnerErr
+	return collectStdout(), collectLog(), runnerErr
 }
 
 func requireExitCall(t *testing.T, fn func()) {
@@ -264,43 +227,24 @@ func readTestFile(t *testing.T, filename string) string {
 	return string(contents)
 }
 
-func captureStream(t *testing.T, stream **os.File, name string, fn func()) string {
+func captureStream(t *testing.T, stream **os.File, fn func()) string {
 	t.Helper()
 	testOutputMu.Lock()
 	defer testOutputMu.Unlock()
 
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create %s pipe: %v", name, err)
-	}
-	original := *stream
-	restore := func() { *stream = original }
-	t.Cleanup(func() {
-		restore()
-		_ = writer.Close()
-		_ = reader.Close()
-	})
-	defer restore()
-	*stream = writer
-
-	output, outputDone := startPipeDrain(reader)
+	collect := redirectStream(t, stream)
 	fn()
-	restore()
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close %s writer: %v", name, err)
-	}
-	<-outputDone
-	return output.String()
+	return collect()
 }
 
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	return captureStream(t, &os.Stdout, "stdout", fn)
+	return captureStream(t, &os.Stdout, fn)
 }
 
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
-	return captureStream(t, &os.Stderr, "stderr", fn)
+	return captureStream(t, &os.Stderr, fn)
 }
 
 func captureLog(t *testing.T, fn func()) string {
@@ -308,22 +252,9 @@ func captureLog(t *testing.T, fn func()) string {
 	testOutputMu.Lock()
 	defer testOutputMu.Unlock()
 
-	var output bytes.Buffer
-	originalWriter := log.Writer()
-	originalFlags := log.Flags()
-	originalPrefix := log.Prefix()
-	restore := func() {
-		log.SetOutput(originalWriter)
-		log.SetFlags(originalFlags)
-		log.SetPrefix(originalPrefix)
-	}
-	t.Cleanup(restore)
-	defer restore()
-	log.SetOutput(&output)
-	log.SetFlags(0)
-	log.SetPrefix("")
+	collect := redirectLog(t)
 	fn()
-	return output.String()
+	return collect()
 }
 
 var errInjected = errors.New("injected failure")

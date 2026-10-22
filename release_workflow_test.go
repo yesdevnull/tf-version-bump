@@ -552,6 +552,9 @@ func TestUpdateActionsReleasePinRejectsDivergentDuplicateFieldWithoutPartialChan
 }
 
 func TestUpdateActionsReleasePinRejectsUnwritableTargetWithoutPartialChanges(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write read-only files")
+	}
 	repository := copyActionsReleasePinFixture(t)
 	workflow := filepath.Join(repository, "examples", "github-actions", ".github", "workflows", "tf-version-bump-nonproduction.yml")
 	if err := os.Chmod(workflow, 0o444); err != nil {
