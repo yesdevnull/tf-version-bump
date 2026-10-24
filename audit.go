@@ -74,11 +74,11 @@ func buildAudit(files []string, config *Config) (*auditReport, error) {
 func parseAuditedFile(filename string) (*hclwrite.File, error) {
 	src, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, fmt.Errorf("Error auditing %s: failed to read file: %w", filename, err) //nolint:staticcheck // User-facing CLI diagnostic.
+		return nil, fmt.Errorf("Error auditing %s: failed to read file: %w", filename, err)
 	}
 	file, diags := hclwrite.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return nil, fmt.Errorf("Error auditing %s: failed to parse HCL: %s", filename, diags.Error()) //nolint:staticcheck // User-facing CLI diagnostic.
+		return nil, fmt.Errorf("Error auditing %s: failed to parse HCL: %s", filename, diags.Error())
 	}
 	return file, nil
 }
@@ -116,9 +116,9 @@ func (audit *auditReport) recordRequiredProvider(filename string, requiredProvid
 }
 
 // recordModuleBlock records the block once for each config entry with an equal source. A run
-// applies those entries in order, so each entry is judged against the value the entries before it
-// leave: the block's own version until one of them would rewrite it. -audit-file rejects -force-add,
-// so no entry gives a block without a version one.
+// applies those entries in order, so each is judged against the value the entries before it
+// leave: the block's own version until one of them would rewrite it. -audit-file rejects
+// -force-add, so no entry gives a block without a version one.
 func (audit *auditReport) recordModuleBlock(filename string, block *hclwrite.Block, updates []ModuleUpdate) {
 	source, ok := moduleSourceValue(block)
 	if !ok {
@@ -127,7 +127,6 @@ func (audit *auditReport) recordModuleBlock(filename string, block *hclwrite.Blo
 	name := moduleBlockName(block)
 	versionAttribute := block.Body().GetAttribute("version")
 	var rewrittenVersion *string
-	// Index rather than copy: gocritic's hugeParam rejects passing a ModuleUpdate by value.
 	for i := range updates {
 		update := &updates[i]
 		if update.Source != source {
@@ -169,9 +168,8 @@ func moduleAuditSkipFor(name, source string, actual *string, update *ModuleUpdat
 	return nil
 }
 
-// auditedAttribute returns an attribute's value as written, without its quotes, and whether it
-// already evaluates to expected, which is the updater's no-op test. A missing attribute has no
-// value.
+// auditedAttribute returns an attribute's value as written and whether it already evaluates to
+// expected, which is the updater's no-op test. A missing attribute has no value.
 func auditedAttribute(attr *hclwrite.Attribute, expected string) (actual *string, matches bool) {
 	if attr == nil {
 		return nil, false
@@ -180,9 +178,9 @@ func auditedAttribute(attr *hclwrite.Attribute, expected string) (actual *string
 	return &value, attributeHasStringValue(attr, expected)
 }
 
-// runAuditMode writes the audit of files against the config. It validates the destination
-// before reading Terraform files, never writes them, and replaces an existing audit only once
-// every file has been audited.
+// runAuditMode writes the audit of files against the config. It validates the destination before
+// reading Terraform files, never writes them, and replaces an existing audit only once every file
+// has been audited.
 func runAuditMode(files []string, flags *cliFlags) error {
 	config, err := loadResolvedConfig(flags.configFile, flags.branch)
 	if err != nil {
@@ -196,12 +194,12 @@ func runAuditMode(files []string, flags *cliFlags) error {
 	audit, err := buildAudit(files, config)
 	if err != nil {
 		if discardErr := prepared.discard(); discardErr != nil {
-			err = fmt.Errorf("%w; failed to discard prepared audit: %v", err, discardErr)
+			err = fmt.Errorf("%w; failed to discard prepared audit: %w", err, discardErr)
 		}
 		return err
 	}
 	if err := prepared.publish(audit); err != nil {
-		return fmt.Errorf("Error writing audit: %w", err) //nolint:staticcheck // User-facing CLI diagnostic.
+		return fmt.Errorf("Error writing audit: %w", err)
 	}
 	fmt.Printf("✓ Wrote audit to %s\n", quote(flags.auditFile, flags.output))
 	return nil
@@ -210,15 +208,14 @@ func runAuditMode(files []string, flags *cliFlags) error {
 // auditedObjectVersion reads the version item of an object-syntax provider declaration.
 func auditedObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression []byte, expected string) (actual *string, matches bool) {
 	for _, item := range objExpr.Items {
-		keyName, ok := providerObjectItemKey(item)
-		if !ok || keyName != "version" {
+		if key, ok := providerObjectItemKey(item); !ok || key != "version" {
 			continue
 		}
-		valueRange := item.ValueExpr.Range()
-		if valueRange.Start.Byte < 0 || valueRange.End.Byte > len(expression) || valueRange.Start.Byte > valueRange.End.Byte {
+		start, end, ok := objectItemValueRange(item, expression)
+		if !ok {
 			continue
 		}
-		valueExpression := expression[valueRange.Start.Byte:valueRange.End.Byte]
+		valueExpression := expression[start:end]
 		value := trimQuotes(strings.TrimSpace(string(valueExpression)))
 		return &value, expressionHasStringValue(valueExpression, expected)
 	}

@@ -11,113 +11,69 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// FromVersions is a custom type that can unmarshal both string and []string from YAML
+// FromVersions is a version filter that YAML may give as one string or a list of strings.
 type FromVersions []string
 
-// UnmarshalYAML implements custom unmarshaling to handle both string and array formats
+// UnmarshalYAML accepts a string scalar or a sequence of string scalars, rejecting numbers and
+// booleans so a bare 1.5 cannot silently become "1.5".
 func (f *FromVersions) UnmarshalYAML(value *yaml.Node) error {
-	// Check if it's a sequence (array)
-	if value.Kind == yaml.SequenceNode {
+	switch value.Kind {
+	case yaml.SequenceNode:
 		for _, item := range value.Content {
 			if item.ShortTag() != "!!str" {
-				return fmt.Errorf("version filter array contains non-string values")
+				return errors.New("version filter array contains non-string values")
 			}
 		}
-
-		var slice []string
-		if err := value.Decode(&slice); err != nil {
+		var versions []string
+		if err := value.Decode(&versions); err != nil {
 			return fmt.Errorf("version filter array contains non-string values: %w", err)
 		}
-		*f = FromVersions(slice)
+		*f = versions
 		return nil
-	}
-
-	// Check if it's a scalar (single value)
-	if value.Kind == yaml.ScalarNode {
-		// Only accept string scalars, reject numbers and booleans
+	case yaml.ScalarNode:
 		if value.Tag != "!!str" {
 			return fmt.Errorf("version filter must be a string or array of strings, got %s", value.Tag)
 		}
-
-		str := value.Value
-
-		if str == "" {
+		if value.Value == "" {
 			*f = FromVersions{}
 		} else {
-			*f = FromVersions{str}
+			*f = FromVersions{value.Value}
 		}
 		return nil
+	default:
+		return fmt.Errorf("version filter must be either a string or an array of strings, got node kind %v", value.Kind)
 	}
-
-	return fmt.Errorf("version filter must be either a string or an array of strings, got node kind %v", value.Kind)
 }
 
-// ModuleUpdate represents a single module source and its target version.
-// It is used both for single module updates via CLI flags and for batch
-// updates from YAML configuration files.
+// ModuleUpdate is one module source and its target version, from -module flags or a config entry.
 type ModuleUpdate struct {
-	Source         string       `yaml:"source"`          // Module source (e.g., "terraform-aws-modules/vpc/aws")
-	Version        string       `yaml:"version"`         // Target version (e.g., "5.0.0")
-	From           FromVersions `yaml:"from"`            // Optional: only update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
-	IgnoreVersions FromVersions `yaml:"ignore_versions"` // Optional: skip update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
-	IgnoreModules  []string     `yaml:"ignore_modules"`  // Optional: module name patterns, optionally scoped to a branch (e.g., ["vpc", "legacy-*", "release/*/vpc"])
+	Source         string       `yaml:"source"`          // required
+	Version        string       `yaml:"version"`         // required
+	From           FromVersions `yaml:"from"`            // update only from these versions
+	IgnoreVersions FromVersions `yaml:"ignore_versions"` // never update from these versions
+	IgnoreModules  []string     `yaml:"ignore_modules"`  // name patterns, optionally '<branch>/<name>', as written
 
-	// resolvedIgnoreModules holds the module patterns of IgnoreModules that apply to the
-	// supplied branch. Filtering reads this; diagnostics report IgnoreModules as written.
+	// resolvedIgnoreModules holds the IgnoreModules patterns that apply to the supplied branch.
+	// Filtering reads this; diagnostics report IgnoreModules as written.
 	resolvedIgnoreModules []string
 }
 
-// ProviderUpdate represents a provider version update in required_providers blocks
+// ProviderUpdate is one provider and its target version for required_providers.
 type ProviderUpdate struct {
-	Name    string `yaml:"name"`    // Provider name (e.g., "aws", "azurerm")
-	Version string `yaml:"version"` // Target version (e.g., "~> 5.0")
+	Name    string `yaml:"name"`
+	Version string `yaml:"version"`
 }
 
-// Config represents the structure of a YAML configuration file for batch updates.
-// The YAML file can contain:
-// - A "modules" key with a list of module updates
-// - A "terraform_version" key to update Terraform required_version
-// - A "providers" key with a list of provider updates
-//
-// Example YAML:
-//
-//	terraform_version: ">= 1.5"
-//
-//	providers:
-//	  - name: "aws"
-//	    version: "~> 5.0"
-//	  - name: "azurerm"
-//	    version: "~> 3.5"
-//
-//	modules:
-//	  - source: "terraform-aws-modules/vpc/aws"
-//	    version: "5.0.0"
-//	    from: "4.0.0"          # Optional: only update if current version is 4.0.0
-//	    ignore_versions:       # Optional: versions to skip
-//	      - "3.0.0"
-//	      - "~> 3.0"
-//	    ignore_modules:        # Optional: module names or patterns to ignore
-//	      - "legacy-vpc"
-//	      - "test-*"
-//	      - "release/*/vpc"    # Optional: scoped to branches matching "release/*"
-//	  - source: "terraform-aws-modules/s3-bucket/aws"
-//	    version: "4.0.0"
+// Config is a YAML configuration file; every key is optional, but see declaresNoUpdates.
+// docs/CONFIGURATION.md documents the format and examples/ holds sample files.
 type Config struct {
-	TerraformVersion string           `yaml:"terraform_version"` // Optional: Terraform required_version to set
-	Providers        []ProviderUpdate `yaml:"providers"`         // Optional: List of provider updates
-	Modules          []ModuleUpdate   `yaml:"modules"`           // Optional: List of module updates
+	TerraformVersion string           `yaml:"terraform_version"`
+	Providers        []ProviderUpdate `yaml:"providers"`
+	Modules          []ModuleUpdate   `yaml:"modules"`
 }
 
-// loadConfig reads and parses a YAML configuration file containing module, terraform version,
-// and provider updates. It trims and validates every entry through sanitizeProviderUpdates and
-// sanitizeModuleUpdates.
-//
-// Parameters:
-//   - filename: Path to the YAML configuration file
-//
-// Returns:
-//   - *Config: Configuration structure with all updates
-//   - error: Any error encountered during reading, parsing, or validation
+// loadConfig reads a config file strictly, rejecting unknown keys and a second YAML document, and
+// trims and validates every entry. An empty file, or one holding only comments, is an empty config.
 func loadConfig(filename string) (*Config, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -126,25 +82,22 @@ func loadConfig(filename string) (*Config, error) {
 
 	var config Config
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true) // Strict mode: error on unknown fields
+	decoder.KnownFields(true)
 	if err := decoder.Decode(&config); err != nil {
-		// EOF indicates an empty file or a file with only comments, which is valid
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return &Config{}, nil
 		}
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 	var additionalDocument yaml.Node
-	if err := decoder.Decode(&additionalDocument); err != io.EOF {
+	if err := decoder.Decode(&additionalDocument); !errors.Is(err, io.EOF) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse YAML: %w", err)
 		}
-		return nil, fmt.Errorf("multiple YAML documents are not supported")
+		return nil, errors.New("multiple YAML documents are not supported")
 	}
 
-	// Trim and validate terraform_version
 	config.TerraformVersion = strings.TrimSpace(config.TerraformVersion)
-
 	if err := sanitizeProviderUpdates(config.Providers); err != nil {
 		return nil, err
 	}
@@ -155,19 +108,16 @@ func loadConfig(filename string) (*Config, error) {
 	return &config, nil
 }
 
-// declaresNoUpdates reports whether the config asks for nothing: no Terraform version, no
-// providers and no modules. Both -validate-config and an update run refuse such a config, so the
-// shared predicate keeps them agreeing on the answer as well as on what it means. Audit mode
-// deliberately does not consult it: an audit of a config that asks for nothing is an empty audit,
-// which is a true answer.
+// declaresNoUpdates reports whether the config asks for nothing. -validate-config and an update
+// run both refuse such a config with errConfigDeclaresNoUpdates; audit mode does not, because an
+// empty audit is a true answer.
 func (c *Config) declaresNoUpdates() bool {
 	return c.TerraformVersion == "" && len(c.Providers) == 0 && len(c.Modules) == 0
 }
 
-// errConfigDeclaresNoUpdates is what both readers of declaresNoUpdates report, so the predicate
-// and the words describing it stay together: a wording change cannot reach one reader alone.
 var errConfigDeclaresNoUpdates = errors.New("config contains no updates")
 
+// validateConfigFile is the -validate-config check: the config loads and asks for something.
 func validateConfigFile(filename string) error {
 	config, err := loadConfig(filename)
 	if err != nil {
@@ -180,8 +130,8 @@ func validateConfigFile(filename string) error {
 }
 
 // sanitizeProviderUpdates trims and validates provider entries. A provider may appear only once:
-// an entry has no filters, so a second entry for the same name can at best repeat the first, and
-// otherwise contradicts it, leaving a check that never passes and an audit that never matches.
+// an entry has no filters, so a repeat can at best restate the first and otherwise contradicts
+// it, leaving a check that never passes and an audit that never matches.
 func sanitizeProviderUpdates(providers []ProviderUpdate) error {
 	firstIndex := make(map[string]int, len(providers))
 	for i := range providers {
@@ -203,21 +153,24 @@ func sanitizeProviderUpdates(providers []ProviderUpdate) error {
 	return nil
 }
 
+// sanitizeModuleUpdates trims and validates module entries. Sources may repeat, because entries
+// for one source chain in order.
 func sanitizeModuleUpdates(modules []ModuleUpdate) error {
 	for i := range modules {
-		modules[i].Source = strings.TrimSpace(modules[i].Source)
-		modules[i].Version = strings.TrimSpace(modules[i].Version)
-		modules[i].From = FromVersions(trimNonEmptyStrings(modules[i].From))
-		modules[i].IgnoreVersions = FromVersions(trimNonEmptyStrings(modules[i].IgnoreVersions))
-		modules[i].IgnoreModules = trimNonEmptyStrings(modules[i].IgnoreModules)
+		module := &modules[i]
+		module.Source = strings.TrimSpace(module.Source)
+		module.Version = strings.TrimSpace(module.Version)
+		module.From = trimNonEmptyStrings(module.From)
+		module.IgnoreVersions = trimNonEmptyStrings(module.IgnoreVersions)
+		module.IgnoreModules = trimNonEmptyStrings(module.IgnoreModules)
 
-		if modules[i].Source == "" {
+		if module.Source == "" {
 			return fmt.Errorf("module at index %d is missing 'source' field", i)
 		}
-		if modules[i].Version == "" {
+		if module.Version == "" {
 			return fmt.Errorf("module at index %d is missing 'version' field", i)
 		}
-		for _, entry := range modules[i].IgnoreModules {
+		for _, entry := range module.IgnoreModules {
 			if _, _, err := splitIgnoreModuleEntry(entry); err != nil {
 				return fmt.Errorf("module at index %d has an invalid 'ignore_modules' entry: %w", i, err)
 			}
@@ -227,9 +180,9 @@ func sanitizeModuleUpdates(modules []ModuleUpdate) error {
 	return nil
 }
 
-// splitIgnoreModuleEntry divides a branch-scoped ignore entry into its branch and module patterns.
-// Terraform module names cannot contain '/', so the final separator always divides the two.
-// An entry without a separator applies to every branch and yields an empty branch pattern.
+// splitIgnoreModuleEntry divides a branch-scoped ignore entry at its last '/' into branch and
+// module patterns; Terraform module names cannot contain '/'. An entry without a separator
+// applies to every branch and yields an empty branch pattern.
 func splitIgnoreModuleEntry(entry string) (branchPattern, modulePattern string, err error) {
 	segments := strings.Split(entry, "/")
 	if len(segments) == 1 {
@@ -246,6 +199,7 @@ func splitIgnoreModuleEntry(entry string) (branchPattern, modulePattern string, 
 	return strings.Join(segments[:len(segments)-1], "/"), segments[len(segments)-1], nil
 }
 
+// trimNonEmptyStrings trims each value and drops the empty ones.
 func trimNonEmptyStrings(values []string) []string {
 	filtered := make([]string, 0, len(values))
 	for _, value := range values {

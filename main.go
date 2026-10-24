@@ -1,15 +1,12 @@
-// Package main provides a CLI tool for updating Terraform module versions, Terraform versions,
-// and provider versions across multiple files.
+// Package main is tf-version-bump, a CLI that updates Terraform module versions, the Terraform
+// required_version and provider versions across files matched by a glob.
 //
-// The tool supports five modes of operation:
-//  1. Single Module Mode: Update one module at a time via command-line flags
-//  2. Config File Mode: Update multiple modules using a YAML configuration file
-//  3. Config Validation Mode: Validate a YAML configuration file without updating Terraform files
-//  4. Terraform Version Mode: Update Terraform required_version in terraform blocks
-//  5. Provider Version Mode: Update provider versions in terraform required_providers blocks
+// A run performs one operation given by flags (-module, -terraform-version or -provider), applies
+// every update in a YAML config (-config), validates a config (-validate-config) or compares files
+// with a config without changing them (-audit-file).
 //
-// It uses the official HashiCorp HCL library to parse and modify Terraform files while retaining
-// comments and HCL structure. Changed files are normalised by hclwrite.Format.
+// Files are parsed and rewritten with hclwrite, so comments and structure survive; changed files
+// are normalised by hclwrite.Format.
 package main
 
 import (
@@ -35,6 +32,9 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
+// visibleDirFS hides dot-directories from directory listings, so a '**' wildcard never descends
+// into trees such as .terraform or .git. A dot-directory named in the non-glob base path is still
+// reachable, because the base is resolved before the glob.
 type visibleDirFS struct {
 	fs.ReadDirFS
 }
@@ -55,17 +55,18 @@ func (f visibleDirFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	return visible, nil
 }
 
-// Build information set by ldflags
+// Build information set by ldflags.
 var (
 	version = "dev"
 	commit  = "none"
 	date    = "unknown"
 )
 
+// Process and filesystem hooks, swapped by tests to observe exits and inject failures.
 var (
-	hookMu   sync.Mutex // guards test hook variables
+	hookMu   sync.Mutex // guards the hooks below
 	exitFunc = os.Exit
-	fatalf   = func(format string, v ...interface{}) {
+	fatalf   = func(format string, v ...any) {
 		log.Printf(format, v...)
 		exitFunc(1)
 	}
@@ -83,8 +84,8 @@ var (
 		return file, nil
 	}
 	// createBackupFile creates the copy of a Terraform file's original bytes kept while it is
-	// rewritten. It lives in the system temporary directory, which keeps it out of the reach of a
-	// Terraform glob unless that directory is itself inside the tree being globbed.
+	// rewritten. It lives in the system temporary directory, out of reach of a Terraform glob
+	// unless that directory is itself inside the tree being globbed.
 	createBackupFile = func(pattern string) (backupFile, error) {
 		file, err := os.CreateTemp("", pattern)
 		if err != nil {
@@ -94,33 +95,19 @@ var (
 	}
 )
 
-// stringSliceFlag is a custom flag type that allows a flag to be specified multiple times
+// stringSliceFlag collects a flag that may be given more than once.
 type stringSliceFlag []string
 
-// String returns the string representation of the flag
 func (s *stringSliceFlag) String() string {
 	return strings.Join(*s, ",")
 }
 
-// Set appends a value to the slice
 func (s *stringSliceFlag) Set(value string) error {
 	*s = append(*s, value)
 	return nil
 }
 
-// quote formats a string with appropriate quoting based on the output format.
-// For "text" output, uses single quotes. For "md" (Markdown) output, uses backticks.
-//
-// Parameters:
-//   - s: The string to quote
-//   - format: Output format ("text" or "md")
-//
-// Returns:
-//   - string: The quoted string
-//
-// Examples:
-//   - quote("vpc", "text") returns "'vpc'"
-//   - quote("vpc", "md") returns "`vpc`"
+// quote wraps a user-facing value for the output format: 'vpc' for text, `vpc` for Markdown.
 func quote(s, format string) string {
 	if format == "md" {
 		return "`" + s + "`"
@@ -128,7 +115,16 @@ func quote(s, format string) string {
 	return "'" + s + "'"
 }
 
-// cliFlags holds all command-line flags
+// updateVerb returns the line prefix and verb for an update line: "✓ Updated", or "→ Would update"
+// in a dry run.
+func updateVerb(dryRun bool) (prefix, action string) {
+	if dryRun {
+		return "→", "Would update"
+	}
+	return "✓", "Updated"
+}
+
+// cliFlags holds the parsed command-line flags and, with -report-file, the report being built.
 type cliFlags struct {
 	pattern              string
 	moduleSource         string
@@ -152,21 +148,26 @@ type cliFlags struct {
 	report               updateReport
 }
 
+// updateReport is the -report-file document: exact counts of the distinct blocks a run changed.
 type updateReport struct {
 	SchemaVersion          int `json:"schema_version"`
 	TerraformBlocksUpdated int `json:"terraform_blocks_updated"`
 	ModuleBlocksUpdated    int `json:"module_blocks_updated"`
 	ProviderBlocksUpdated  int `json:"provider_blocks_updated"`
-	terraformBlockIDs      map[string]struct{}
-	moduleBlockIDs         map[string]struct{}
-	fileIdentities         []fs.FileInfo
+
+	terraformBlockIDs map[string]struct{}
+	moduleBlockIDs    map[string]struct{}
+	fileIdentities    []fs.FileInfo
 }
 
+// preparedReportFile is a JSON output opened as a temporary file beside its destination, so a
+// run that fails leaves no partial document there.
 type preparedReportFile struct {
 	destination string
 	file        *os.File
 }
 
+// reportRecorder returns the report to record changed blocks in, or nil without -report-file.
 func (flags *cliFlags) reportRecorder() *updateReport {
 	if flags.reportFile == "" {
 		return nil
@@ -175,41 +176,44 @@ func (flags *cliFlags) reportRecorder() *updateReport {
 }
 
 func (report *updateReport) recordTerraformBlocks(filename string, blockIndexes []int) {
-	var recorded int
-	report.terraformBlockIDs, recorded = report.recordTopLevelBlocks(filename, blockIndexes, report.terraformBlockIDs)
-	report.TerraformBlocksUpdated += recorded
+	if report.terraformBlockIDs == nil {
+		report.terraformBlockIDs = make(map[string]struct{})
+	}
+	report.TerraformBlocksUpdated += report.recordNewBlocks(filename, blockIndexes, report.terraformBlockIDs)
 }
 
 func (report *updateReport) recordModuleBlocks(filename string, blockIndexes []int) {
-	var recorded int
-	report.moduleBlockIDs, recorded = report.recordTopLevelBlocks(filename, blockIndexes, report.moduleBlockIDs)
-	report.ModuleBlocksUpdated += recorded
+	if report.moduleBlockIDs == nil {
+		report.moduleBlockIDs = make(map[string]struct{})
+	}
+	report.ModuleBlocksUpdated += report.recordNewBlocks(filename, blockIndexes, report.moduleBlockIDs)
 }
 
-func (report *updateReport) recordTopLevelBlocks(filename string, blockIndexes []int, existingBlockIDs map[string]struct{}) (blockIDs map[string]struct{}, recordedBlocks int) {
+// recordNewBlocks adds the file's blocks to seen and returns how many were not there already. A
+// module block can be changed by more than one config entry, and the same file can be selected
+// through more than one path, so the count is of distinct blocks.
+func (report *updateReport) recordNewBlocks(filename string, blockIndexes []int, seen map[string]struct{}) int {
 	fileID := report.fileIdentity(filename)
-	blockIDs = existingBlockIDs
-	if blockIDs == nil {
-		blockIDs = make(map[string]struct{})
-	}
+	var recorded int
 	for _, blockIndex := range blockIndexes {
 		blockID := fmt.Sprintf("%s\x00%d", fileID, blockIndex)
-		if _, recorded := blockIDs[blockID]; recorded {
+		if _, ok := seen[blockID]; ok {
 			continue
 		}
-		blockIDs[blockID] = struct{}{}
-		recordedBlocks++
+		seen[blockID] = struct{}{}
+		recorded++
 	}
-	return blockIDs, recordedBlocks
+	return recorded
 }
 
-// recordProviderBlocks needs no de-duplication: a run names each provider once, and another path to
-// the same file, a hard link or symlink, is read already at the target. Module entries can update
-// one block more than once in a run, so modules, and Terraform blocks through the same helper, do.
+// recordProviderBlocks needs no de-duplication: a run names each provider once, and a second path
+// to the same file is read already at the target.
 func (report *updateReport) recordProviderBlocks(blockLocations []string) {
 	report.ProviderBlocksUpdated += len(blockLocations)
 }
 
+// fileIdentity names a file by inode when it can be stat'ed, so hard links and symlinks to one
+// file share an identity, and by cleaned path otherwise.
 func (report *updateReport) fileIdentity(filename string) string {
 	fileInfo, err := os.Stat(filename)
 	if err == nil {
@@ -236,7 +240,7 @@ func canonicalFileIdentity(filename string) string {
 	return filepath.Clean(filename)
 }
 
-// parseFlags parses and validates command-line flags
+// parseFlags parses the command line and validates the flags that stand on their own.
 func parseFlags() *cliFlags {
 	flags := &cliFlags{}
 	usageOutput := flag.CommandLine.Output()
@@ -283,16 +287,14 @@ func parseFlags() *cliFlags {
 		return flags
 	}
 
-	// Validate output format
 	if flags.output != "text" && flags.output != "md" {
 		fatalf("Error: Invalid output format '%s'. Must be 'text' or 'md'", flags.output)
 	}
 
 	flags.branch = strings.TrimSpace(flags.branch)
-	// Both of these name no branch, so every branch-scoped ignore pattern would be dropped
-	// silently. 'git rev-parse --abbrev-ref HEAD' prints HEAD on a detached checkout, and
-	// GITHUB_REF holds a full ref such as 'refs/heads/main'. Git permits a branch name that
-	// starts with 'refs/', but a real branch is not realistically named that way.
+	// Neither names a branch, so branch-scoped ignore patterns would silently be dropped:
+	// 'git rev-parse --abbrev-ref HEAD' prints HEAD on a detached checkout, and GITHUB_REF holds
+	// a full ref such as 'refs/heads/main'.
 	if flags.branch == "HEAD" {
 		fatalf("Error: -branch must be a branch name, not 'HEAD'. Use 'git branch --show-current', which is empty on a detached checkout")
 	}
@@ -303,9 +305,8 @@ func parseFlags() *cliFlags {
 	return flags
 }
 
-// loadModuleUpdates loads module updates for single module CLI mode
+// loadModuleUpdates builds the single module update that -module describes.
 func loadModuleUpdates(flags *cliFlags) []ModuleUpdate {
-	// Single module mode - validate required flags
 	if flags.pattern == "" || flags.moduleSource == "" || flags.toVersion == "" {
 		fmt.Println("Usage:")
 		fmt.Println("  Single module:  tf-version-bump -pattern <glob> -module <source> -to <version> [-from <version>]... [-ignore-version <version>]... [-ignore-modules <patterns>] [-branch <name>]")
@@ -314,19 +315,18 @@ func loadModuleUpdates(flags *cliFlags) []ModuleUpdate {
 		exitFunc(1)
 	}
 
-	// Parse ignore patterns from comma-separated list
 	var ignorePatterns []string
 	if flags.ignoreModules != "" {
-		for _, p := range strings.Split(flags.ignoreModules, ",") {
-			if trimmed := strings.TrimSpace(p); trimmed != "" {
-				ignorePatterns = append(ignorePatterns, trimmed)
-			}
-		}
+		ignorePatterns = trimNonEmptyStrings(strings.Split(flags.ignoreModules, ","))
 	}
 
-	updates := []ModuleUpdate{
-		{Source: flags.moduleSource, Version: flags.toVersion, From: FromVersions(flags.fromVersions), IgnoreVersions: FromVersions(flags.ignoreVersions), IgnoreModules: ignorePatterns},
-	}
+	updates := []ModuleUpdate{{
+		Source:         flags.moduleSource,
+		Version:        flags.toVersion,
+		From:           FromVersions(flags.fromVersions),
+		IgnoreVersions: FromVersions(flags.ignoreVersions),
+		IgnoreModules:  ignorePatterns,
+	}}
 	if err := resolveBranchIgnoreModules(updates, flags.branch); err != nil {
 		fatalf("Error: %v", err)
 		return nil
@@ -369,27 +369,24 @@ func resolveBranchIgnoreModules(updates []ModuleUpdate, branch string) error {
 func loadResolvedConfig(configFile, branch string) (*Config, error) {
 	config, err := loadConfig(configFile)
 	if err != nil {
-		//nolint:staticcheck // The capitalised prefix is user-facing CLI output.
 		return nil, fmt.Errorf("Error loading config file: %w", err)
 	}
 	if err := resolveBranchIgnoreModules(config.Modules, branch); err != nil {
-		//nolint:staticcheck // The capitalised prefix is user-facing CLI output.
 		return nil, fmt.Errorf("Error: %w", err)
 	}
 	return config, nil
 }
 
-// processFiles applies the module updates to every matching file in order, parsing each file once so
-// an update meets the changes earlier updates made to it, in a dry run as in a real run. A file that
-// cannot be read or parsed counts one error per update; each failed write counts one error, and the
-// file is read again for the updates after it, and a file whose write kept its backup refuses that read.
+// processFiles applies the module updates to every file in order, parsing each file once so a
+// later update meets the changes earlier ones made, in a dry run as in a real run. A file that
+// cannot be read or parsed counts one error per update. A failed write counts one error and the
+// file is read again for the updates after it, which a file whose write kept its backup refuses.
 func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (totalUpdates, totalSkips, totalErrors int) {
 	for _, file := range files {
 		parsed, readErr := readTerraformFile(file)
-		// Entries for one source are applied to the same file in turn, so one unpinned module is
+		// Entries for one source are applied to the same file in turn, so an unpinned module is
 		// skipped once per entry. The count speaks for modules, so the blocks are unioned.
 		skippedBlocks := make(map[int]struct{})
-		// Index rather than copy: gocritic's rangeValCopy rejects ranging over ModuleUpdate by value.
 		for i := range updates {
 			update := &updates[i]
 			if readErr != nil {
@@ -404,28 +401,24 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (tota
 			if err != nil {
 				log.Printf("Error processing %s: %v", file, err)
 				totalErrors++
-				// Read the file again rather than keep the unsaved change: a restored file gives later
-				// updates its original content, and a file whose backup was kept is refused.
+				// Re-read rather than keep the unsaved change: a restored file gives later updates
+				// its original content, and a file whose backup was kept is refused.
 				parsed, readErr = readTerraformFile(file)
 				continue
 			}
-			if updated {
-				if report := flags.reportRecorder(); report != nil && !flags.dryRun && len(changedBlocks) > 0 {
-					report.recordModuleBlocks(file, changedBlocks)
-				}
-				prefix := "✓"
-				action := "Updated"
-				if flags.dryRun {
-					prefix = "→"
-					action = "Would update"
-				}
-				if len(update.From) > 0 {
-					fmt.Printf("%s %s module source %s from version(s) %v to %s in %s\n", prefix, action, quote(update.Source, flags.output), update.From, quote(update.Version, flags.output), file)
-				} else {
-					fmt.Printf("%s %s module source %s to version %s in %s\n", prefix, action, quote(update.Source, flags.output), quote(update.Version, flags.output), file)
-				}
-				totalUpdates++
+			if !updated {
+				continue
 			}
+			if report := flags.reportRecorder(); report != nil && !flags.dryRun && len(changedBlocks) > 0 {
+				report.recordModuleBlocks(file, changedBlocks)
+			}
+			prefix, action := updateVerb(flags.dryRun)
+			if len(update.From) > 0 {
+				fmt.Printf("%s %s module source %s from version(s) %v to %s in %s\n", prefix, action, quote(update.Source, flags.output), update.From, quote(update.Version, flags.output), file)
+			} else {
+				fmt.Printf("%s %s module source %s to version %s in %s\n", prefix, action, quote(update.Source, flags.output), quote(update.Version, flags.output), file)
+			}
+			totalUpdates++
 		}
 		totalSkips += len(skippedBlocks)
 	}
@@ -433,9 +426,8 @@ func processFiles(files []string, updates []ModuleUpdate, flags *cliFlags) (tota
 }
 
 // failureNote reports the updates that failed, so a summary of what succeeded is never mistaken
-// for the whole story of the run. Every counted failure is logged where it happens, so the count
-// is also the number of diagnostics; it names stderr because the summary is on stdout, and a
-// redirected stdout would otherwise end with a pointer to errors it does not contain.
+// for the whole run. Every counted failure is logged where it happens, so the count is also the
+// number of diagnostics. It names stderr because the summary goes to stdout.
 func failureNote(errorCount int) string {
 	if errorCount == 0 {
 		return ""
@@ -443,10 +435,8 @@ func failureNote(errorCount int) string {
 	return fmt.Sprintf("%d update(s) failed; see the errors on stderr\n", errorCount)
 }
 
-// skipNote reports the modules the run left unpinned, so a run that declined to act on a block
-// it recognised does not read like a run with nothing to do. Every skip it counts is warned
-// about, which is why it names the warnings rather than repeating them, but not every warned
-// skip counts: a local module can never carry a version, so nothing is left outstanding.
+// skipNote reports the entries the run matched but left unpinned, each of which was warned about
+// where it happened. A local module is warned about but not counted: it can never carry a version.
 func skipNote(skipCount int, kind string) string {
 	if skipCount == 0 {
 		return ""
@@ -454,21 +444,17 @@ func skipNote(skipCount int, kind string) string {
 	return fmt.Sprintf("%d %s(s) skipped; see the warnings on stderr\n", skipCount, kind)
 }
 
-// printRunSummary prints one run's summary line followed by its failures. A run that updated
-// nothing reports why instead of the line, which would otherwise claim a clean zero it cannot
-// vouch for: a mistyped source, a glob over the wrong tree and an already-current file all
-// counted as a success. It names every cause it cannot tell apart, including the skips the count
-// below leaves out, so it never denies a skip the run has just printed. It promises no tool that
-// answers "which", because -audit-file needs a config and -verbose lists only filtered modules.
+// printRunSummary prints a direct run's summary line, then its failure and skip notes. A run that
+// updated nothing explains why instead of claiming a clean zero, because a mistyped source, a glob
+// over the wrong tree and an already-current file all look alike from here; a run that updated
+// nothing and failed prints only the notes.
 func printRunSummary(line string, totalUpdates, errorCount int, skipped string, dryRun bool) {
 	fmt.Println()
 	switch {
 	case totalUpdates > 0:
 		fmt.Println(line)
 	case errorCount > 0:
-		// Nothing was updated and something failed, so the failures below are the whole summary:
-		// a nothing-to-do line would read as a clean result. A skip does not suppress it, because
-		// the line names skipping as one of the causes and the note then quantifies it.
+		// The failure note is the whole summary: a nothing-to-do line would read as a clean result.
 	case dryRun:
 		fmt.Println("No updates would be performed. Nothing matched, or every match was already at the target version or skipped.")
 	default:
@@ -478,8 +464,7 @@ func printRunSummary(line string, totalUpdates, errorCount int, skipped string, 
 	fmt.Print(skipped)
 }
 
-// printSummary prints the final summary of updates. A direct run carries one module operation,
-// so the count is always a count of files.
+// printSummary prints the summary of a direct module run, which counts files.
 func printSummary(totalUpdates, errorCount, skipCount int, dryRun bool) {
 	line := fmt.Sprintf("Successfully updated %d file(s)", totalUpdates)
 	if dryRun {
@@ -491,7 +476,6 @@ func printSummary(totalUpdates, errorCount, skipCount int, dryRun bool) {
 func main() {
 	flags := parseFlags()
 
-	// Handle version flag
 	if flags.showVersion {
 		fmt.Printf("tf-version-bump %s\n", version)
 		fmt.Printf("  commit: %s\n", commit)
@@ -499,7 +483,6 @@ func main() {
 		exitFunc(0)
 	}
 
-	// Validate operation modes
 	validateOperationModes(flags)
 	if flags.validationConfigFile != "" {
 		if err := validateConfigFile(flags.validationConfigFile); err != nil {
@@ -512,7 +495,6 @@ func main() {
 		flags.dryRun = true
 	}
 
-	// Find and validate matching files
 	files := findMatchingFiles(flags)
 	validateRequiredOperationFlags(flags)
 
@@ -559,7 +541,7 @@ func runUpdateMode(files []string, flags *cliFlags) (int, error) {
 	if err == nil && preparedReport != nil {
 		flags.report.SchemaVersion = 2
 		if publishErr := preparedReport.publish(&flags.report); publishErr != nil {
-			err = fmt.Errorf("Error writing update report: %v", publishErr) //nolint:staticcheck // User-facing CLI diagnostic.
+			err = fmt.Errorf("Error writing update report: %w", publishErr)
 		}
 	}
 	if err == nil {
@@ -567,25 +549,24 @@ func runUpdateMode(files []string, flags *cliFlags) (int, error) {
 	}
 	if preparedReport != nil {
 		if discardErr := preparedReport.discard(); discardErr != nil {
-			err = fmt.Errorf("%w; failed to discard prepared report: %v", err, discardErr)
+			err = fmt.Errorf("%w; failed to discard prepared report: %w", err, discardErr)
 		}
-		// A report describes the tree it was written from. Only a run that changed that tree and
-		// then failed leaves one describing a tree that no longer exists, so only such a run takes
-		// it away: a run refused for its config, a run whose every file failed and a dry run all
-		// leave the tree, and the report, exactly as they found them. A file a write left
-		// untrusted counts as changed even though no update is counted for it, because it holds
-		// neither version for certain. The publish failure reaches here too, which is the case
-		// most certain to need it — the files changed and the counts describing them never
-		// landed.
+		// A report an earlier run left at the destination describes the tree as it was then. A
+		// failed run that changed the tree, including one whose publish failed, removes it so a
+		// consumer that skips the exit status cannot act on stale counts. A run refused for its
+		// config, a run whose every file failed and a dry run leave tree and report untouched. A
+		// file left untrusted by a write counts as changed even though no update is counted for it.
 		if (totalUpdates > 0 && !flags.dryRun) || anyUntrusted() {
 			if removeErr := preparedReport.removeDestination(); removeErr != nil {
-				err = fmt.Errorf("%w; failed to remove the stale report: %v", err, removeErr)
+				err = fmt.Errorf("%w; failed to remove the stale report: %w", err, removeErr)
 			}
 		}
 	}
 	return totalUpdates, err
 }
 
+// validateRequiredOperationFlags rejects a direct operation missing a flag it needs. It runs after
+// file selection, so the usage message follows the file count as it always has.
 func validateRequiredOperationFlags(flags *cliFlags) {
 	if flags.moduleSource != "" {
 		_ = loadModuleUpdates(flags)
@@ -595,7 +576,7 @@ func validateRequiredOperationFlags(flags *cliFlags) {
 	}
 }
 
-// jsonOutput describes a JSON document the command writes through a temporary file once its
+// jsonOutput describes a JSON document the command publishes through a temporary file once its
 // work succeeds, and how diagnostics name it.
 type jsonOutput struct {
 	fileLabel     string // the destination, as in "report file must not overwrite input file"
@@ -618,16 +599,17 @@ func prepareJSONOutput(output jsonOutput, destination string, inputFiles []strin
 
 	file, err := os.CreateTemp(filepath.Dir(destination), output.tempPattern)
 	if err != nil {
-		return nil, fmt.Errorf("Error preparing %s: %w", output.documentLabel, err) //nolint:staticcheck // User-facing CLI diagnostic.
+		return nil, fmt.Errorf("Error preparing %s: %w", output.documentLabel, err)
 	}
 	return &preparedReportFile{destination: destination, file: file}, nil
 }
 
+// publish encodes the document into the temporary file, syncs it and moves it onto the
+// destination, so the destination only ever holds a complete document.
 func (prepared *preparedReportFile) publish(document any) error {
 	var data bytes.Buffer
 	encoder := json.NewEncoder(&data)
-	// encoding/json writes <, > and & as Unicode escapes by default, which would make
-	// constraints such as ">= 1.5" unreadable in the audit.
+	// Without this, constraints such as ">= 1.5" would be written with Unicode escapes.
 	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(document); err != nil {
@@ -658,12 +640,9 @@ func (prepared *preparedReportFile) publish(document any) error {
 	return nil
 }
 
-// removeDestination deletes a report an earlier run left at the destination. Its caller decides
-// when that is right: only a failed run that changed files leaves a report describing a tree which
-// no longer exists, where a consumer reading it without checking the exit status would act on
-// counts for another run. Audit mode never removes its own destination, for the same reason a run
-// that changed nothing does not: a failed audit changes nothing on disk, so the previous audit is
-// still a true snapshot.
+// removeDestination deletes a report an earlier run left at the destination. The caller decides
+// when: only a failed run that changed files, which runUpdateMode explains. Audit mode never calls
+// it, because a failed audit changes nothing on disk and the previous audit is still true.
 func (prepared *preparedReportFile) removeDestination() error {
 	if prepared == nil {
 		return nil
@@ -674,6 +653,7 @@ func (prepared *preparedReportFile) removeDestination() error {
 	return nil
 }
 
+// discard closes and removes the temporary file, if one is still open.
 func (prepared *preparedReportFile) discard() error {
 	if prepared == nil || prepared.file == nil {
 		return nil
@@ -688,6 +668,8 @@ func (prepared *preparedReportFile) discard() error {
 	return removeErr
 }
 
+// validateOutputDoesNotOverwriteInput rejects a destination that is one of the files the command
+// reads, by path or, when the destination exists, by file identity.
 func validateOutputDoesNotOverwriteInput(output jsonOutput, destination string, inputFiles []string) error {
 	if destination == "" {
 		return nil
@@ -695,40 +677,40 @@ func validateOutputDoesNotOverwriteInput(output jsonOutput, destination string, 
 
 	destinationPath, err := filepath.Abs(destination)
 	if err != nil {
-		return fmt.Errorf("Error resolving %s: %w", output.fileLabel, err) //nolint:staticcheck // User-facing CLI diagnostic.
+		return fmt.Errorf("Error resolving %s: %w", output.fileLabel, err)
 	}
 	destinationInfo, destinationStatErr := os.Stat(destinationPath)
 	if destinationStatErr != nil && !os.IsNotExist(destinationStatErr) {
-		return fmt.Errorf("Error inspecting %s: %w", output.fileLabel, destinationStatErr) //nolint:staticcheck // User-facing CLI diagnostic.
+		return fmt.Errorf("Error inspecting %s: %w", output.fileLabel, destinationStatErr)
 	}
 	if destinationStatErr == nil && destinationInfo.IsDir() {
-		return fmt.Errorf("Error preparing %s: destination is a directory: %s", output.documentLabel, destination) //nolint:staticcheck // User-facing CLI diagnostic.
+		return fmt.Errorf("Error preparing %s: destination is a directory: %s", output.documentLabel, destination)
 	}
 
 	for _, inputFile := range inputFiles {
 		inputPath, absErr := filepath.Abs(inputFile)
 		if absErr != nil {
-			return fmt.Errorf("Error resolving input file %s: %w", inputFile, absErr) //nolint:staticcheck // User-facing CLI diagnostic.
+			return fmt.Errorf("Error resolving input file %s: %w", inputFile, absErr)
 		}
 		if filepath.Clean(destinationPath) == filepath.Clean(inputPath) {
-			return fmt.Errorf("Error: %s must not overwrite input file: %s", output.fileLabel, destination) //nolint:staticcheck // User-facing CLI diagnostic.
+			return fmt.Errorf("Error: %s must not overwrite input file: %s", output.fileLabel, destination)
 		}
 		if destinationStatErr != nil {
 			continue
 		}
 		inputInfo, inputStatErr := os.Stat(inputPath)
 		if inputStatErr != nil {
-			return fmt.Errorf("Error inspecting input file %s: %w", inputFile, inputStatErr) //nolint:staticcheck // User-facing CLI diagnostic.
+			return fmt.Errorf("Error inspecting input file %s: %w", inputFile, inputStatErr)
 		}
 		if os.SameFile(destinationInfo, inputInfo) {
-			return fmt.Errorf("Error: %s must not overwrite input file: %s", output.fileLabel, destination) //nolint:staticcheck // User-facing CLI diagnostic.
+			return fmt.Errorf("Error: %s must not overwrite input file: %s", output.fileLabel, destination)
 		}
 	}
 
 	return nil
 }
 
-// validateOperationModes validates that the CLI flags are properly set
+// validateOperationModes rejects flag combinations that mix or omit operation modes.
 func validateOperationModes(flags *cliFlags) {
 	if flags.validationConfigFile != "" {
 		if configValidationHasConflicts(flags) {
@@ -746,13 +728,11 @@ func validateOperationModes(flags *cliFlags) {
 		fatalf("Error: Cannot use -check with -report-file")
 	}
 
-	// Config file mode is exclusive with all other CLI flags
 	if flags.configFile != "" {
 		validateConfigUpdateMode(flags)
 		return
 	}
 
-	// CLI mode - validate that at least one operation is specified
 	modesSet := 0
 	if flags.moduleSource != "" {
 		modesSet++
@@ -780,6 +760,7 @@ func validateOperationModes(flags *cliFlags) {
 	}
 }
 
+// validateConfigUpdateMode keeps -config exclusive with the direct operation flags.
 func validateConfigUpdateMode(flags *cliFlags) {
 	if flags.moduleSource != "" || flags.terraformVersion != "" || flags.providerName != "" ||
 		flags.toVersion != "" || len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" {
@@ -799,8 +780,8 @@ func validateAuditMode(flags *cliFlags) {
 }
 
 // configValidationHasConflicts reports whether any update or report flag accompanies
-// -validate-config, which validates a config on its own. It is split in two so neither half
-// exceeds the cyclomatic limit as flags are added.
+// -validate-config, which validates a config on its own. The check is split in two to keep each
+// half under the cyclomatic limit as flags are added.
 func configValidationHasConflicts(flags *cliFlags) bool {
 	return configValidationHasOperationFlags(flags) || configValidationHasBehaviourFlags(flags)
 }
@@ -812,29 +793,21 @@ func configValidationHasOperationFlags(flags *cliFlags) bool {
 		flags.reportFile != "" || flags.auditFile != ""
 }
 
-// configValidationHasBehaviourFlags covers the filters and switches that change how an update or audit runs.
+// configValidationHasBehaviourFlags covers the filters and switches that change how a run behaves.
 func configValidationHasBehaviourFlags(flags *cliFlags) bool {
 	return len(flags.fromVersions) > 0 || len(flags.ignoreVersions) > 0 || flags.ignoreModules != "" ||
 		flags.branch != "" || flags.forceAdd || flags.dryRun || flags.check || flags.verbose
 }
 
-// findMatchingFiles finds all files matching the pattern
+// findMatchingFiles returns the sorted files matching -pattern, or exits when nothing matches.
 func findMatchingFiles(flags *cliFlags) []string {
 	if flags.pattern == "" {
 		fatalf("Error: -pattern flag is required")
 	}
 
-	// doublestar rather than filepath.Glob: it supports '**', which spans zero or more
-	// directories. filepath.Glob treats '**' as a plain '*', silently matching only one
-	// level deep.
-	//
-	// The filtered filesystem prevents wildcards from walking into dot-directories, so
-	// '**/*.tf' skips tool-managed .terraform and .git trees without excluding dotfiles.
-	// Naming a dot-directory explicitly places it in the non-glob base path, so it remains
-	// reachable.
-	//   - WithNoFollow: don't traverse directory symlinks, which would otherwise match the
-	//     same physical file via both its real path and the link.
-	//   - WithFilesOnly: '**' matches directories as readily as files; we only want files.
+	// doublestar rather than filepath.Glob, because filepath.Glob treats '**' as a plain '*'.
+	// visibleDirFS keeps wildcards out of dot-directories; WithNoFollow stops a directory symlink
+	// matching the same file twice or cycling; WithFilesOnly keeps '**' from returning directories.
 	pattern := filepath.ToSlash(filepath.Clean(flags.pattern))
 	base, globPattern := doublestar.SplitPattern(pattern)
 	fileSystem := os.DirFS(base)
@@ -865,8 +838,7 @@ func findMatchingFiles(flags *cliFlags) []string {
 		files = append(files, filename)
 	}
 
-	// doublestar walks depth-first, so results come back in traversal order rather than
-	// sorted. File order is user-visible in the per-file output.
+	// doublestar returns traversal order, and file order is user-visible in the per-file output.
 	slices.Sort(files)
 
 	if len(files) == 0 {
@@ -884,99 +856,77 @@ func findMatchingFiles(flags *cliFlags) []string {
 	return files
 }
 
-// runConfigFileMode handles config file mode operations.
+// runConfigFileMode applies every update in the config, in the order Terraform version, providers,
+// modules, and returns the update-operation total.
 func runConfigFileMode(files []string, flags *cliFlags) (int, error) {
 	config, err := loadResolvedConfig(flags.configFile, flags.branch)
 	if err != nil {
 		return 0, err
 	}
-	// -validate-config rejects a config that asks for nothing, so an update run does too: a file
-	// truncated by a bad merge would otherwise be a cheerful no-op. The refusal lives here rather
-	// than in the loader, which audit mode shares and which must keep reporting such a config.
+	// -validate-config rejects a config that asks for nothing, so an update run does too, or a
+	// file truncated by a bad merge would be a cheerful no-op. The refusal is here rather than in
+	// the loader, which audit mode shares and which must keep auditing such a config.
 	if config.declaresNoUpdates() {
-		return 0, fmt.Errorf("Error: %w", errConfigDeclaresNoUpdates) //nolint:staticcheck // User-facing CLI diagnostic.
+		return 0, fmt.Errorf("Error: %w", errConfigDeclaresNoUpdates)
 	}
 
-	var terraformUpdates, terraformErrors, providerUpdates, providerSkips, providerErrors, moduleUpdates, moduleSkips, moduleErrors int
-
-	// Process terraform version if specified
+	var outcome configOutcome
 	if config.TerraformVersion != "" {
-		terraformUpdates, terraformErrors = processTerraformVersion(files, config.TerraformVersion, flags.dryRun, flags.output, flags.reportRecorder())
+		outcome.terraformUpdates, outcome.terraformErrors = processTerraformVersion(files, config.TerraformVersion, flags.dryRun, flags.output, flags.reportRecorder())
 	}
-
-	// Process provider updates if specified
 	for _, provider := range config.Providers {
-		count, skips, updateErrors := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output, flags.reportRecorder())
-		providerUpdates += count
-		providerSkips += skips
-		providerErrors += updateErrors
+		updates, skips, errs := processProviderVersion(files, provider.Name, provider.Version, flags.dryRun, flags.output, flags.reportRecorder())
+		outcome.providerUpdates += updates
+		outcome.providerSkips += skips
+		outcome.providerErrors += errs
 	}
-
-	// Process module updates if specified
 	if len(config.Modules) > 0 {
-		moduleUpdates, moduleSkips, moduleErrors = processFiles(files, config.Modules, flags)
+		outcome.moduleUpdates, outcome.moduleSkips, outcome.moduleErrors = processFiles(files, config.Modules, flags)
 	}
 
-	// Print summary
-	outcome := configOutcome{
-		terraformUpdates: terraformUpdates, terraformErrors: terraformErrors,
-		providerUpdates: providerUpdates, providerErrors: providerErrors,
-		moduleUpdates: moduleUpdates, moduleErrors: moduleErrors,
-		moduleSkips: moduleSkips, providerSkips: providerSkips,
-	}
 	printConfigSummary(outcome, flags.dryRun)
-	if outcome.onlyModuleErrors() {
-		return outcome.updates(), fmt.Errorf("Error: %d module update error(s)", outcome.moduleErrors) //nolint:staticcheck // User-facing CLI diagnostic.
-	}
-	if outcome.errors() > 0 {
-		return outcome.updates(), fmt.Errorf("Error: %d update error(s)", outcome.errors()) //nolint:staticcheck // User-facing CLI diagnostic.
+	switch {
+	case outcome.onlyModuleErrors():
+		return outcome.updates(), fmt.Errorf("Error: %d module update error(s)", outcome.moduleErrors)
+	case outcome.errors() > 0:
+		return outcome.updates(), fmt.Errorf("Error: %d update error(s)", outcome.errors())
 	}
 	return outcome.updates(), nil
 }
 
-// runCLIMode handles CLI mode operations
+// runCLIMode applies the one direct operation the flags name and returns its update total.
 func runCLIMode(files []string, flags *cliFlags) (int, error) {
-	var totalUpdates int
-	var updates []ModuleUpdate
-
 	switch {
 	case flags.terraformVersion != "":
-		var totalErrors int
-		totalUpdates, totalErrors = processTerraformVersion(files, flags.terraformVersion, flags.dryRun, flags.output, flags.reportRecorder())
+		totalUpdates, totalErrors := processTerraformVersion(files, flags.terraformVersion, flags.dryRun, flags.output, flags.reportRecorder())
 		printTerraformSummary(totalUpdates, totalErrors, flags.dryRun)
 		if totalErrors > 0 {
-			return totalUpdates, fmt.Errorf("Error: %d Terraform version update error(s)", totalErrors) //nolint:staticcheck // User-facing CLI diagnostic.
+			return totalUpdates, fmt.Errorf("Error: %d Terraform version update error(s)", totalErrors)
 		}
 		return totalUpdates, nil
 	case flags.providerName != "":
 		if flags.toVersion == "" {
 			fatalf("Error: -to flag is required when using -provider")
 		}
-		var totalErrors int
-		var totalSkips int
-		totalUpdates, totalSkips, totalErrors = processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output, flags.reportRecorder())
+		totalUpdates, totalSkips, totalErrors := processProviderVersion(files, flags.providerName, flags.toVersion, flags.dryRun, flags.output, flags.reportRecorder())
 		printProviderSummary(flags.providerName, totalUpdates, totalErrors, totalSkips, flags.dryRun, flags.output)
 		if totalErrors > 0 {
-			return totalUpdates, fmt.Errorf("Error: %d provider update error(s)", totalErrors) //nolint:staticcheck // User-facing CLI diagnostic.
+			return totalUpdates, fmt.Errorf("Error: %d provider update error(s)", totalErrors)
 		}
 		return totalUpdates, nil
 	default:
-		updates = loadModuleUpdates(flags)
-		var totalErrors int
-		var totalSkips int
-		totalUpdates, totalSkips, totalErrors = processFiles(files, updates, flags)
+		totalUpdates, totalSkips, totalErrors := processFiles(files, loadModuleUpdates(flags), flags)
 		printSummary(totalUpdates, totalErrors, totalSkips, flags.dryRun)
 		if totalErrors > 0 {
-			return totalUpdates, fmt.Errorf("Error: %d module update error(s)", totalErrors) //nolint:staticcheck // User-facing CLI diagnostic.
+			return totalUpdates, fmt.Errorf("Error: %d module update error(s)", totalErrors)
 		}
 		return totalUpdates, nil
 	}
 }
 
-// configOutcome counts what one config-mode run applied, or in a dry run would apply, and what
-// it failed on. The summary needs the failures as well as the updates: without them a run whose
-// every update failed cannot be told from one with nothing to do, and the operator is sent to
-// the config when the files were at fault.
+// configOutcome counts what one config-mode run applied, or would apply in a dry run, and what it
+// failed on. Without the failures a run whose every update failed would read like one with
+// nothing to do, sending the operator to the config when the files were at fault.
 type configOutcome struct {
 	terraformUpdates, terraformErrors int
 	providerUpdates, providerErrors   int
@@ -984,54 +934,34 @@ type configOutcome struct {
 	moduleSkips, providerSkips        int
 }
 
-// updates counts the Terraform, provider and module version updates.
 func (o configOutcome) updates() int {
 	return o.terraformUpdates + o.providerUpdates + o.moduleUpdates
 }
 
-// errors counts the failed Terraform, provider and module update operations.
 func (o configOutcome) errors() int {
 	return o.terraformErrors + o.providerErrors + o.moduleErrors
 }
 
-// onlyModuleErrors reports whether every failure was a module update, which lets the run name the
-// modules in its error rather than blame the whole config.
+// onlyModuleErrors reports whether every failure was a module update, so the run's error can name
+// modules rather than blame the whole config.
 func (o configOutcome) onlyModuleErrors() bool {
 	return o.terraformErrors == 0 && o.providerErrors == 0 && o.moduleErrors > 0
 }
 
-// printConfigSummary prints the summary for config file mode
+// printConfigSummary prints a config-mode run's summary, then its failure and skip notes. The
+// no-op wording points at -audit-file, which can say which updates were already applied, skipped
+// or matched nothing; a run that updated nothing and failed prints only the notes.
 func printConfigSummary(outcome configOutcome, dryRun bool) {
 	switch {
 	case outcome.updates() > 0:
 		fmt.Println("\n" + strings.Repeat("=", 50))
 		fmt.Println("Config File Update Summary")
 		fmt.Println(strings.Repeat("=", 50))
-		if outcome.terraformUpdates > 0 {
-			if dryRun {
-				fmt.Printf("Terraform version: would update %d file(s)\n", outcome.terraformUpdates)
-			} else {
-				fmt.Printf("Terraform version: %d file(s) updated\n", outcome.terraformUpdates)
-			}
-		}
-		if outcome.providerUpdates > 0 {
-			if dryRun {
-				fmt.Printf("Providers: would apply %d update(s)\n", outcome.providerUpdates)
-			} else {
-				fmt.Printf("Providers: %d update(s) applied\n", outcome.providerUpdates)
-			}
-		}
-		if outcome.moduleUpdates > 0 {
-			if dryRun {
-				fmt.Printf("Modules: would apply %d update(s)\n", outcome.moduleUpdates)
-			} else {
-				fmt.Printf("Modules: %d update(s) applied\n", outcome.moduleUpdates)
-			}
-		}
+		printConfigCount(outcome.terraformUpdates, dryRun, "Terraform version: would update %d file(s)", "Terraform version: %d file(s) updated")
+		printConfigCount(outcome.providerUpdates, dryRun, "Providers: would apply %d update(s)", "Providers: %d update(s) applied")
+		printConfigCount(outcome.moduleUpdates, dryRun, "Modules: would apply %d update(s)", "Modules: %d update(s) applied")
 	case outcome.errors() > 0:
-		// Nothing was updated and something failed, so the notes below are the whole summary: a
-		// "nothing to do" message here would blame the config for a file-level fault. A skip does
-		// not suppress it, because the message names skipping and the note then quantifies it.
+		// The failure note is the whole summary: a nothing-to-do line would blame the config.
 		fmt.Println()
 	case dryRun:
 		fmt.Println("\nNo updates would be performed. Every configured update is already applied, skipped or matched nothing; use -audit-file to see which.")
@@ -1043,9 +973,20 @@ func printConfigSummary(outcome configOutcome, dryRun bool) {
 	fmt.Print(skipNote(outcome.moduleSkips, "module"))
 }
 
-// printTerraformSummary prints the summary for terraform version updates
+// printConfigCount prints one line of the config summary when its count is non-zero.
+func printConfigCount(count int, dryRun bool, dryRunFormat, format string) {
+	if count == 0 {
+		return
+	}
+	if dryRun {
+		format = dryRunFormat
+	}
+	fmt.Printf(format+"\n", count)
+}
+
+// printTerraformSummary prints the summary of a direct Terraform version run. A required_version
+// is set whether or not one is there, so nothing is ever skipped.
 func printTerraformSummary(totalUpdates, errorCount int, dryRun bool) {
-	// A Terraform required_version is set whether or not one is already there, so nothing is skipped.
 	line := fmt.Sprintf("Successfully updated Terraform version in %d file(s)", totalUpdates)
 	if dryRun {
 		line = fmt.Sprintf("Dry run: would update Terraform version in %d file(s)", totalUpdates)
@@ -1053,7 +994,7 @@ func printTerraformSummary(totalUpdates, errorCount int, dryRun bool) {
 	printRunSummary(line, totalUpdates, errorCount, "", dryRun)
 }
 
-// printProviderSummary prints the summary for provider version updates
+// printProviderSummary prints the summary of a direct provider run.
 func printProviderSummary(providerName string, totalUpdates, errorCount, skipCount int, dryRun bool, outputFormat string) {
 	line := fmt.Sprintf("Successfully updated %s provider version in %d file(s)", quote(providerName, outputFormat), totalUpdates)
 	if dryRun {
@@ -1062,35 +1003,8 @@ func printProviderSummary(providerName string, totalUpdates, errorCount, skipCou
 	printRunSummary(line, totalUpdates, errorCount, skipNote(skipCount, "provider"), dryRun)
 }
 
-// containsVersion checks if a version string is present in a slice of versions.
-// This helper function reduces code duplication when checking version filters.
-//
-// Parameters:
-//   - versions: List of version strings to search through
-//   - version: The version string to search for
-//
-// Returns:
-//   - bool: true if the version is found in the list, false otherwise
-func containsVersion(versions []string, version string) bool {
-	for _, v := range versions {
-		if v == version {
-			return true
-		}
-	}
-	return false
-}
-
-// processTerraformVersion updates the required_version in terraform blocks across all files
-//
-// Parameters:
-//   - files: List of file paths to process
-//   - version: Target Terraform version to set
-//   - dryRun: If true, show what would be changed without modifying files
-//   - outputFormat: Output format ("text" or "md")
-//
-// Returns:
-//   - totalUpdates: Number of files that were updated (or would be updated in dry-run mode)
-//   - totalErrors: Number of files that could not be processed
+// processTerraformVersion sets required_version in every file's terraform blocks and returns the
+// files updated, or that a dry run would update, and the files that failed.
 func processTerraformVersion(files []string, version string, dryRun bool, outputFormat string, report *updateReport) (totalUpdates, totalErrors int) {
 	for _, file := range files {
 		updated, changedBlocks, err := updateTerraformVersionWithCount(file, version, dryRun)
@@ -1099,39 +1013,24 @@ func processTerraformVersion(files []string, version string, dryRun bool, output
 			totalErrors++
 			continue
 		}
-		if updated {
-			if report != nil && !dryRun && len(changedBlocks) > 0 {
-				report.recordTerraformBlocks(file, changedBlocks)
-			}
-			prefix := "✓"
-			action := "Updated"
-			if dryRun {
-				prefix = "→"
-				action = "Would update"
-			}
-			fmt.Printf("%s %s Terraform required_version to %s in %s\n", prefix, action, quote(version, outputFormat), file)
-			totalUpdates++
+		if !updated {
+			continue
 		}
+		if report != nil && !dryRun && len(changedBlocks) > 0 {
+			report.recordTerraformBlocks(file, changedBlocks)
+		}
+		prefix, action := updateVerb(dryRun)
+		fmt.Printf("%s %s Terraform required_version to %s in %s\n", prefix, action, quote(version, outputFormat), file)
+		totalUpdates++
 	}
 	return totalUpdates, totalErrors
 }
 
-// processProviderVersion updates provider versions in terraform required_providers blocks across all files
-//
-// Parameters:
-//   - files: List of file paths to process
-//   - providerName: Name of the provider to update (e.g., "aws", "azurerm")
-//   - version: Target provider version to set
-//   - dryRun: If true, show what would be changed without modifying files
-//   - outputFormat: Output format ("text" or "md")
-//
-// Returns:
-//   - totalUpdates: Number of files that were updated (or would be updated in dry-run mode)
-//   - totalErrors: Number of files that could not be processed
+// processProviderVersion sets one provider's version in every file's required_providers and
+// returns the files updated, the entries matched but left as they were, and the files that failed.
 func processProviderVersion(files []string, providerName, version string, dryRun bool, outputFormat string, report *updateReport) (totalUpdates, totalSkips, totalErrors int) {
 	for _, file := range files {
 		updated, changedBlocks, skipReasons, err := updateProviderVersionWithCount(file, providerName, version, dryRun)
-		// An entry this run matched and would not change is warned about per entry, as a module is.
 		for _, reason := range skipReasons {
 			fmt.Fprintf(os.Stderr, "Warning: Provider %s in %s %s, skipping\n", quote(providerName, outputFormat), file, reason)
 		}
@@ -1141,39 +1040,22 @@ func processProviderVersion(files []string, providerName, version string, dryRun
 			totalErrors++
 			continue
 		}
-		if updated {
-			if report != nil && !dryRun && len(changedBlocks) > 0 {
-				report.recordProviderBlocks(changedBlocks)
-			}
-			prefix := "✓"
-			action := "Updated"
-			if dryRun {
-				prefix = "→"
-				action = "Would update"
-			}
-			fmt.Printf("%s %s provider %s to version %s in %s\n", prefix, action, quote(providerName, outputFormat), quote(version, outputFormat), file)
-			totalUpdates++
+		if !updated {
+			continue
 		}
+		if report != nil && !dryRun && len(changedBlocks) > 0 {
+			report.recordProviderBlocks(changedBlocks)
+		}
+		prefix, action := updateVerb(dryRun)
+		fmt.Printf("%s %s provider %s to version %s in %s\n", prefix, action, quote(providerName, outputFormat), quote(version, outputFormat), file)
+		totalUpdates++
 	}
 	return totalUpdates, totalSkips, totalErrors
 }
 
-// updateTerraformVersion updates the required_version attribute in terraform blocks
-//
-// Parameters:
-//   - filename: Path to the Terraform file to process
-//   - version: Target Terraform version to set
-//   - dryRun: If true, show what would be changed without modifying files
-//
-// Returns:
-//   - bool: true if a terraform block was updated (or would be updated in dry-run mode)
-//   - error: Any error encountered during file reading, parsing, or writing
-func updateTerraformVersion(filename, version string, dryRun bool) (bool, error) {
-	updated, _, err := updateTerraformVersionWithCount(filename, version, dryRun)
-	return updated, err
-}
-
-// updateTerraformVersionWithCount updates required_version and identifies changed terraform blocks.
+// updateTerraformVersionWithCount sets required_version in each terraform block of the file that
+// does not already hold it, adding the attribute where it is missing, and returns the indexes of
+// the blocks it changed.
 func updateTerraformVersionWithCount(filename, version string, dryRun bool) (updated bool, changedBlocks []int, err error) {
 	file, err := readTerraformFile(filename)
 	if err != nil {
@@ -1184,11 +1066,10 @@ func updateTerraformVersionWithCount(filename, version string, dryRun bool) (upd
 		if block.Type() != "terraform" {
 			continue
 		}
-		currentVersion := block.Body().GetAttribute("required_version")
-		if currentVersion != nil && attributeHasStringValue(currentVersion, version) {
+		current := block.Body().GetAttribute("required_version")
+		if current != nil && attributeHasStringValue(current, version) {
 			continue
 		}
-		// Update or add the required_version attribute
 		block.Body().SetAttributeValue("required_version", cty.StringVal(version))
 		updated = true
 		changedBlocks = append(changedBlocks, blockIndex)
@@ -1203,28 +1084,10 @@ func updateTerraformVersionWithCount(filename, version string, dryRun bool) (upd
 	return updated, changedBlocks, nil
 }
 
-// updateProviderVersionWithCount updates a provider version and counts blocks whose values changed.
-//
-// This implementation supports both provider syntax styles:
-//
-// Block-based syntax:
-//
-//	required_providers { aws { source = "..." version = "..." } }
-//
-// Attribute-based syntax:
-//
-//	required_providers { aws = { source = "..." version = "..." } }
-//
-// Parameters:
-//   - filename: Path to the Terraform file to process
-//   - providerName: Name of the provider to update (e.g., "aws", "azurerm")
-//   - version: Target provider version to set
-//   - dryRun: If true, show what would be changed without modifying files
-//
-// Returns:
-//   - updated: true if a provider operation was applied (or would be applied in dry-run mode)
-//   - changedBlocks: locations of provider blocks whose version values differ from the target
-//   - error: Any error encountered during file reading, parsing, or writing
+// updateProviderVersionWithCount sets a provider's version in each required_providers of the
+// file, in both the block form (aws { version = "..." }) and the object form
+// (aws = { version = "..." }). changedBlocks locates each changed declaration; skipReasons
+// describes each declaration the run matched but would not change, in the words of its warning.
 func updateProviderVersionWithCount(filename, providerName, version string, dryRun bool) (updated bool, changedBlocks, skipReasons []string, err error) {
 	file, err := readTerraformFile(filename)
 	if err != nil {
@@ -1249,106 +1112,101 @@ func updateProviderVersionWithCount(filename, providerName, version string, dryR
 	return updated, changedBlocks, skipReasons, nil
 }
 
+// updateProviderTerraformBlockResult updates the provider in each required_providers block of a
+// terraform block. A required_providers that declares the provider in block form is not also
+// searched for the object form.
 func updateProviderTerraformBlockResult(block *hclwrite.Block, providerName, version string) (updated bool, changedBlocks, skipReasons []string) {
 	if block.Type() != "terraform" {
 		return false, nil, nil
 	}
 
-	updated = false
-	changedBlocks = nil
 	for nestedIndex, nestedBlock := range block.Body().Blocks() {
 		if nestedBlock.Type() != "required_providers" {
 			continue
 		}
-		blockSyntaxUpdated, blockSyntaxChanges := updateProviderBlockSyntaxResult(nestedBlock, providerName, version)
-		if blockSyntaxUpdated {
+		if blockSyntaxChanges := updateProviderBlockSyntaxResult(nestedBlock, providerName, version); len(blockSyntaxChanges) > 0 {
 			updated = true
 			for _, blockSyntaxIndex := range blockSyntaxChanges {
 				changedBlocks = append(changedBlocks, fmt.Sprintf("%d/block/%d", nestedIndex, blockSyntaxIndex))
 			}
 			continue
 		}
-		attributeUpdated, attributeChanged, skipReason := updateProviderAttributeVersionResult(nestedBlock, providerName, version)
+		attributeUpdated, skipReason := updateProviderAttributeVersionResult(nestedBlock, providerName, version)
 		if skipReason != "" {
 			skipReasons = append(skipReasons, skipReason)
 		}
 		if attributeUpdated {
 			updated = true
-			if attributeChanged {
-				changedBlocks = append(changedBlocks, fmt.Sprintf("%d/attribute/%s", nestedIndex, providerName))
-			}
+			changedBlocks = append(changedBlocks, fmt.Sprintf("%d/attribute/%s", nestedIndex, providerName))
 		}
 	}
 
 	return updated, changedBlocks, skipReasons
 }
 
-func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, version string) (updated bool, changedBlocks []int) {
-	updated = false
-	changedBlocks = nil
+// updateProviderBlockSyntaxResult sets the version in each block-form declaration of the provider
+// that does not already hold it, and returns the indexes of the blocks it changed.
+func updateProviderBlockSyntaxResult(nestedBlock *hclwrite.Block, providerName, version string) (changedBlocks []int) {
 	for providerIndex, providerBlock := range nestedBlock.Body().Blocks() {
 		if providerBlock.Type() != providerName {
 			continue
 		}
-		versionAttribute := providerBlock.Body().GetAttribute("version")
-		if versionAttribute != nil && attributeHasStringValue(versionAttribute, version) {
+		current := providerBlock.Body().GetAttribute("version")
+		if current != nil && attributeHasStringValue(current, version) {
 			continue
 		}
-		changedBlocks = append(changedBlocks, providerIndex)
 		providerBlock.Body().SetAttributeValue("version", cty.StringVal(version))
-		updated = true
+		changedBlocks = append(changedBlocks, providerIndex)
 	}
-
-	return updated, changedBlocks
+	return changedBlocks
 }
 
-// updateProviderAttributeVersion updates the version value within a provider attribute's object expression
-// This handles the attribute-based syntax: aws = { source = "..." version = "..." }
-// The third result describes an entry this run matched and would not change, in the words the
-// warning reports, or is empty when there is nothing to report. Block syntax never reaches it,
-// because a missing version there is simply set.
-func updateProviderAttributeVersionResult(nestedBlock *hclwrite.Block, providerName, newVersion string) (updated, changed bool, skipReason string) {
+// updateProviderAttributeVersionResult replaces the version in an object-form declaration of the
+// provider. Only the version expression's bytes are replaced, so other items such as
+// configuration_aliases remain. skipReason describes a declaration the run matched but would not
+// change: one with no version item, which updates do not add, or one that is a bare version
+// string, which updates do not change.
+func updateProviderAttributeVersionResult(nestedBlock *hclwrite.Block, providerName, newVersion string) (updated bool, skipReason string) {
 	objExpr, expression, ok, present := providerAttributeObject(nestedBlock, providerName)
 	if !ok {
 		if !present {
-			return false, false, ""
+			return false, ""
 		}
-		return false, false, "is a version string rather than an object or block, which updates do not change"
+		return false, "is a version string rather than an object or block, which updates do not change"
 	}
 
 	updatedExpression, hasVersion, changed := replaceProviderObjectVersion(objExpr, expression, newVersion)
 	if !hasVersion {
-		return false, false, "has no version argument and updates cannot add one"
+		return false, "has no version argument and updates cannot add one"
 	}
 	if !changed {
-		return false, false, ""
+		return false, ""
 	}
 
+	// hclwrite builds tokens only from a parsed body, so the expression is parsed as an attribute.
 	newAttribute := append([]byte(providerName+" = "), updatedExpression...)
-	newExpr, diags := hclwrite.ParseConfig(newAttribute, "inline", hcl.Pos{Line: 1, Column: 1})
+	parsed, diags := hclwrite.ParseConfig(newAttribute, "inline", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return false, false, ""
+		return false, ""
 	}
-
-	for _, newAttr := range newExpr.Body().Attributes() {
-		nestedBlock.Body().SetAttributeRaw(providerName, newAttr.Expr().BuildTokens(nil))
-		return true, changed, ""
+	newAttr := parsed.Body().GetAttribute(providerName)
+	if newAttr == nil {
+		return false, ""
 	}
-
-	return false, false, ""
+	nestedBlock.Body().SetAttributeRaw(providerName, newAttr.Expr().BuildTokens(nil))
+	return true, ""
 }
 
-// The last result separates an entry this run cannot change from one that is not there at all: a
-// provider given as a bare version string is matched, and left at the version it names, because
-// updates change the object and block forms only.
+// providerAttributeObject returns the provider's object-form declaration and its source bytes.
+// present separates a declaration that is not an object, such as a bare version string, from a
+// provider that is not declared in attribute form at all.
 func providerAttributeObject(nestedBlock *hclwrite.Block, providerName string) (objExpr *hclsyntax.ObjectConsExpr, expression []byte, ok, present bool) {
 	attr, exists := nestedBlock.Body().Attributes()[providerName]
 	if !exists {
 		return nil, nil, false, false
 	}
 
-	tokens := attr.Expr().BuildTokens(nil)
-	expression = tokens.Bytes()
+	expression = attr.Expr().BuildTokens(nil).Bytes()
 	expr, diags := hclsyntax.ParseExpression(expression, "inline", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
 		return nil, nil, false, true
@@ -1358,37 +1216,40 @@ func providerAttributeObject(nestedBlock *hclwrite.Block, providerName string) (
 	return objExpr, expression, ok, true
 }
 
+// replaceProviderObjectVersion returns expression with each version item's value replaced by
+// newVersion. Items are visited last to first so earlier byte offsets stay valid as the bytes
+// change. hasVersion reports whether the object has a version item; changed whether any was
+// not already at newVersion.
 func replaceProviderObjectVersion(objExpr *hclsyntax.ObjectConsExpr, expression []byte, newVersion string) (updated []byte, hasVersion, changed bool) {
-	updated = append([]byte(nil), expression...)
-	hasVersion = false
-	changed = false
+	updated = slices.Clone(expression)
 	newValue := hclwrite.TokensForValue(cty.StringVal(newVersion)).Bytes()
 
 	for index := len(objExpr.Items) - 1; index >= 0; index-- {
 		item := objExpr.Items[index]
-		keyName, ok := providerObjectItemKey(item)
-		if !ok || keyName != "version" {
+		if key, ok := providerObjectItemKey(item); !ok || key != "version" {
 			continue
 		}
-
-		valueRange := item.ValueExpr.Range()
-		if valueRange.Start.Byte < 0 || valueRange.End.Byte > len(expression) || valueRange.Start.Byte > valueRange.End.Byte {
+		start, end, ok := objectItemValueRange(item, expression)
+		if !ok {
 			return nil, false, false
 		}
 		hasVersion = true
-		if expressionHasStringValue(expression[valueRange.Start.Byte:valueRange.End.Byte], newVersion) {
+		if expressionHasStringValue(expression[start:end], newVersion) {
 			continue
 		}
-
-		next := make([]byte, 0, len(updated)-valueRange.End.Byte+valueRange.Start.Byte+len(newValue))
-		next = append(next, updated[:valueRange.Start.Byte]...)
-		next = append(next, newValue...)
-		next = append(next, updated[valueRange.End.Byte:]...)
-		updated = next
+		updated = slices.Concat(updated[:start], newValue, updated[end:])
 		changed = true
 	}
 
 	return updated, hasVersion, changed
+}
+
+// objectItemValueRange returns the byte range of an object item's value within the expression it
+// was parsed from, or false for a range the expression does not contain.
+func objectItemValueRange(item hclsyntax.ObjectConsItem, expression []byte) (start, end int, ok bool) {
+	valueRange := item.ValueExpr.Range()
+	start, end = valueRange.Start.Byte, valueRange.End.Byte
+	return start, end, start >= 0 && start <= end && end <= len(expression)
 }
 
 // expressionHasStringValue reports whether expression evaluates to value as an update would write
@@ -1404,6 +1265,8 @@ func expressionHasStringValue(expression []byte, value string) bool {
 		expressionValue.Type().Equals(cty.String) && expressionValue.Equals(cty.StringVal(value)).True()
 }
 
+// providerObjectItemKey returns the bare identifier an object item is keyed by, such as the
+// "version" in version = "...".
 func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
 	keyExpr, ok := item.KeyExpr.(*hclsyntax.ObjectConsKeyExpr)
 	if !ok {
@@ -1423,38 +1286,8 @@ func providerObjectItemKey(item hclsyntax.ObjectConsItem) (string, bool) {
 	return rootName.Name, true
 }
 
-// updateModuleVersionWithCount updates modules with the specified source and counts changed blocks.
-//
-// The function retains comments and other HCL structures, then normalises the changed file with
-// hclwrite.Format.
-// If a matching module doesn't have a version attribute:
-//   - When forceAdd is false (default): a warning is printed and the module is skipped
-//   - When forceAdd is true and the source is a registry module: a version attribute is added
-//   - When forceAdd is true and the source is not a registry module: a warning is printed and the
-//     module is skipped because Terraform does not permit version constraints for those sources
-//
-// All modules with the same source attribute will be updated to the same version.
-// If fromVersions is specified, only modules with current version matching any in the list will be updated.
-// If ignoreVersions is specified, modules with current version matching any in the list will be skipped.
-// If ignorePatterns is specified, modules with names matching any pattern will be skipped.
-//
-// Parameters:
-//   - filename: Path to the Terraform file to process
-//   - moduleSource: The module source to match (e.g., "terraform-aws-modules/vpc/aws")
-//   - version: The target version to set (e.g., "5.0.0")
-//   - fromVersions: Optional: only update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
-//   - ignoreVersions: Optional: skip update if current version matches any in this list (e.g., ["4.0.0", "~> 3.0"])
-//   - ignorePatterns: Optional: list of module names or patterns to ignore (e.g., ["vpc", "legacy-*"])
-//   - forceAdd: If true, add a version attribute to registry modules that don't have one
-//   - dryRun: If true, show what would be changed without modifying files
-//   - verbose: If true, print informational messages about skipped modules
-//   - outputFormat: Output format ("text" or "md")
-//
-// Returns:
-//   - updated: true if at least one module operation was applied (or would be applied in dry-run mode)
-//   - changedBlocks: indexes of module blocks whose version values differ from the target
-//   - skippedBlocks: indexes of module blocks left unpinned by a skip the run warns about
-//   - error: Any error encountered during file reading, parsing, or writing
+// updateModuleVersionWithCount reads the file and applies one module update to it; see
+// applyModuleVersion. Most module tests call this wrapper.
 func updateModuleVersionWithCount(filename, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, changedBlocks, skippedBlocks []int, err error) {
 	file, err := readTerraformFile(filename)
 	if err != nil {
@@ -1463,7 +1296,8 @@ func updateModuleVersionWithCount(filename, moduleSource, version string, fromVe
 	return applyModuleVersion(file, moduleSource, version, fromVersions, ignoreVersions, ignorePatterns, forceAdd, dryRun, verbose, outputFormat)
 }
 
-// terraformFile is a Terraform file parsed once, with the identity the untrusted-file check compares.
+// terraformFile is a Terraform file parsed once, with the identity the untrusted-file check
+// compares.
 type terraformFile struct {
 	name string
 	info os.FileInfo
@@ -1498,9 +1332,8 @@ var (
 	untrustedFiles []untrustedFile // refused by readTerraformFile for the rest of the run
 )
 
-// anyUntrusted reports whether a write left a file whose content cannot be confirmed. Such a file
-// was changed by this run, and no update is counted for it, so the update total alone cannot say
-// whether the tree still matches a report an earlier run left behind.
+// anyUntrusted reports whether a write left a file whose content cannot be confirmed. No update is
+// counted for such a file, so the update total alone cannot say whether the run changed the tree.
 func anyUntrusted() bool {
 	untrustedMu.Lock()
 	defer untrustedMu.Unlock()
@@ -1526,6 +1359,8 @@ func untrustedBackup(info os.FileInfo) (backup string, untrusted bool) {
 	return "", false
 }
 
+// readTerraformFile stats, reads and parses a Terraform file, refusing one an earlier failed write
+// left untrusted.
 func readTerraformFile(filename string) (*terraformFile, error) {
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
@@ -1670,6 +1505,8 @@ func removeBackup(backup string) {
 
 // applyModuleVersion applies one module update to a parsed file, changing it in memory so a later
 // update to the same file meets this one's result, and writes the file unless dryRun is set.
+// changedBlocks indexes the module blocks whose version changed; skippedBlocks indexes those left
+// unpinned by a skip the run warns about.
 func applyModuleVersion(file *terraformFile, moduleSource, version string, fromVersions, ignoreVersions, ignorePatterns []string, forceAdd, dryRun, verbose bool, outputFormat string) (updated bool, changedBlocks, skippedBlocks []int, err error) {
 	opts := moduleUpdateOptions{
 		filename:       file.name,
@@ -1684,15 +1521,13 @@ func applyModuleVersion(file *terraformFile, moduleSource, version string, fromV
 	}
 
 	for blockIndex, block := range file.hcl.Body().Blocks() {
-		blockUpdated, blockChanged, blockSkipped := updateModuleBlockResult(block, &opts)
+		blockUpdated, blockSkipped := updateModuleBlockResult(block, &opts)
 		if blockSkipped {
 			skippedBlocks = append(skippedBlocks, blockIndex)
 		}
 		if blockUpdated {
 			updated = true
-			if blockChanged {
-				changedBlocks = append(changedBlocks, blockIndex)
-			}
+			changedBlocks = append(changedBlocks, blockIndex)
 		}
 	}
 
@@ -1705,6 +1540,7 @@ func applyModuleVersion(file *terraformFile, moduleSource, version string, fromV
 	return updated, changedBlocks, skippedBlocks, nil
 }
 
+// moduleUpdateOptions carries one module update's target and filters through the per-block work.
 type moduleUpdateOptions struct {
 	filename       string
 	moduleSource   string
@@ -1717,59 +1553,56 @@ type moduleUpdateOptions struct {
 	outputFormat   string
 }
 
-// The third result reports a skip that leaves the block unpinned or defeats an explicit
-// -force-add, which the run counts. A module excluded by a filter, a local module and a module
-// already at the target version were all skipped as asked, so they do not count.
-func updateModuleBlockResult(block *hclwrite.Block, opts *moduleUpdateOptions) (updated, changed, skipped bool) {
+// updateModuleBlockResult applies the update to one block when its source matches. Precedence:
+// a local source, then ignore_modules, then a missing version (added only with -force-add on a
+// registry source), then ignore_versions, then from. skipped reports a skip that leaves the
+// block unpinned or defeats an explicit -force-add, which the run counts; a block excluded by a
+// filter, a local module and a block already at the target were skipped as asked, so it does not.
+func updateModuleBlockResult(block *hclwrite.Block, opts *moduleUpdateOptions) (updated, skipped bool) {
 	if block.Type() != "module" {
-		return false, false, false
+		return false, false
 	}
 
 	moduleName := moduleBlockName(block)
 	sourceValue, ok := moduleSourceValue(block)
 	if !ok || sourceValue != opts.moduleSource {
-		return false, false, false
+		return false, false
 	}
 
 	if isLocalModule(sourceValue) {
-		fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) is a local module and cannot be version-bumped, skipping\n",
-			quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat))
-		return false, false, false
+		opts.warnSkip("is a local module and cannot be version-bumped", moduleName)
+		return false, false
 	}
 
 	if shouldIgnoreModule(moduleName, opts.ignorePatterns) {
 		if opts.verbose {
 			fmt.Printf("  ⊗ Skipped module %s in %s (matches ignore pattern)\n", quote(moduleName, opts.outputFormat), opts.filename)
 		}
-		return false, false, false
+		return false, false
 	}
 
 	versionAttr := block.Body().GetAttribute("version")
-	if versionAttr == nil {
-		if !opts.forceAdd {
-			fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) has no version attribute, skipping\n",
-				quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat))
-			return false, false, true
-		}
-		if !isRegistryModule(sourceValue) {
-			fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) is not a registry module and cannot use a version attribute, skipping\n",
-				quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat))
-			return false, false, true
-		}
-	} else {
-		currentVersion := attributeStringValue(versionAttr)
-		if shouldSkipModuleVersion(moduleName, currentVersion, opts) {
-			return false, false, false
-		}
-		if attributeHasStringValue(versionAttr, opts.version) {
-			return false, false, false
-		}
-		block.Body().SetAttributeValue("version", cty.StringVal(opts.version))
-		return true, true, false
+	switch {
+	case versionAttr == nil && !opts.forceAdd:
+		opts.warnSkip("has no version attribute", moduleName)
+		return false, true
+	case versionAttr == nil && !isRegistryModule(sourceValue):
+		opts.warnSkip("is not a registry module and cannot use a version attribute", moduleName)
+		return false, true
+	case versionAttr != nil && shouldSkipModuleVersion(moduleName, attributeStringValue(versionAttr), opts):
+		return false, false
+	case versionAttr != nil && attributeHasStringValue(versionAttr, opts.version):
+		return false, false
 	}
 
 	block.Body().SetAttributeValue("version", cty.StringVal(opts.version))
-	return true, true, false
+	return true, false
+}
+
+// warnSkip prints the warning for a matched module the update leaves alone.
+func (opts *moduleUpdateOptions) warnSkip(reason, moduleName string) {
+	fmt.Fprintf(os.Stderr, "Warning: Module %s in %s (source: %s) %s, skipping\n",
+		quote(moduleName, opts.outputFormat), opts.filename, quote(opts.moduleSource, opts.outputFormat), reason)
 }
 
 func moduleBlockName(block *hclwrite.Block) string {
@@ -1787,11 +1620,13 @@ func moduleSourceValue(block *hclwrite.Block) (string, bool) {
 	return attributeStringValue(sourceAttr), true
 }
 
+// attributeStringValue returns an attribute's value as written, without its quotes.
 func attributeStringValue(attr *hclwrite.Attribute) string {
-	tokens := attr.Expr().BuildTokens(nil)
-	return trimQuotes(strings.TrimSpace(string(tokens.Bytes())))
+	return trimQuotes(strings.TrimSpace(string(attr.Expr().BuildTokens(nil).Bytes())))
 }
 
+// attributeHasStringValue reports whether the attribute already evaluates to value, which is the
+// updater's no-op test.
 func attributeHasStringValue(attr *hclwrite.Attribute, value string) bool {
 	return expressionHasStringValue(attr.Expr().BuildTokens(nil).Bytes(), value)
 }
@@ -1800,15 +1635,17 @@ func attributeHasStringValue(attr *hclwrite.Attribute, value string) bool {
 // "ignore_versions" when it lists the version, "from" when it is set and does not, or "" when
 // neither applies. ignore_versions takes precedence over from.
 func moduleVersionFilter(currentVersion string, ignoreVersions, fromVersions []string) string {
-	if len(ignoreVersions) > 0 && containsVersion(ignoreVersions, currentVersion) {
+	if slices.Contains(ignoreVersions, currentVersion) {
 		return "ignore_versions"
 	}
-	if len(fromVersions) > 0 && !containsVersion(fromVersions, currentVersion) {
+	if len(fromVersions) > 0 && !slices.Contains(fromVersions, currentVersion) {
 		return "from"
 	}
 	return ""
 }
 
+// shouldSkipModuleVersion reports whether a version filter excludes the block, printing why with
+// -verbose.
 func shouldSkipModuleVersion(moduleName, currentVersion string, opts *moduleUpdateOptions) bool {
 	switch moduleVersionFilter(currentVersion, opts.ignoreVersions, opts.fromVersions) {
 	case "ignore_versions":
@@ -1825,175 +1662,63 @@ func shouldSkipModuleVersion(moduleName, currentVersion string, opts *moduleUpda
 	return false
 }
 
-// isLocalModule checks if a module source is a local path.
-// Local modules use relative or absolute paths instead of registry sources.
-//
-// Parameters:
-//   - source: The module source to check
-//
-// Returns:
-//   - bool: true if the source is a local path, false otherwise
-//
-// Examples:
-//   - `./modules/vpc` returns true
-//   - `../shared/modules` returns true
-//   - `/absolute/path/module` returns true
-//   - `terraform-aws-modules/vpc/aws` returns false
+// isLocalModule reports whether a module source is a local path (./, ../ or /), which Terraform
+// gives no version attribute.
 func isLocalModule(source string) bool {
 	return strings.HasPrefix(source, "./") ||
 		strings.HasPrefix(source, "../") ||
 		strings.HasPrefix(source, "/")
 }
 
+// isRegistryModule reports whether a source is a registry address, the only kind of source that
+// may carry a version constraint.
 func isRegistryModule(source string) bool {
 	_, err := tfaddr.ParseModuleSource(source)
 	return err == nil
 }
 
-// shouldIgnoreModule checks if a module name matches any of the ignore patterns.
-// Patterns support wildcard matching using '*' for zero or more characters.
-//
-// Parameters:
-//   - moduleName: The name of the module to check
-//   - patterns: List of patterns to match against (e.g., ["vpc", "legacy-*", "*-test"])
-//
-// Returns:
-//   - bool: true if the module name matches any pattern, false otherwise
-//
-// Examples:
-//   - shouldIgnoreModule("vpc", ["vpc"]) returns true (exact match)
-//   - shouldIgnoreModule("legacy-vpc", ["legacy-*"]) returns true (wildcard prefix)
-//   - shouldIgnoreModule("vpc-test", ["*-test"]) returns true (wildcard suffix)
-//   - shouldIgnoreModule("prod-vpc-test", ["*-vpc-*"]) returns true (wildcard both sides)
-//   - shouldIgnoreModule("vpc", ["s3"]) returns false (no match)
+// shouldIgnoreModule reports whether a module name matches any ignore pattern. A module block
+// always has a name label, so an empty name means malformed HCL and never matches.
 func shouldIgnoreModule(moduleName string, patterns []string) bool {
-	// Defensive: According to HCL/Terraform syntax, module blocks must have labels ("module" "name"),
-	// so moduleName should never be empty in practice. This check handles malformed HCL or unexpected
-	// parsing results. If moduleName is empty, do not ignore the module.
 	if moduleName == "" {
 		return false
 	}
-
-	if len(patterns) == 0 {
-		return false
-	}
-
-	for _, pattern := range patterns {
-		if matchPattern(moduleName, pattern) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(patterns, func(pattern string) bool {
+		return matchPattern(moduleName, pattern)
+	})
 }
 
-// matchPattern performs wildcard pattern matching.
-// Supports '*' as a wildcard that matches zero or more characters.
-//
-// Matching behavior:
-//   - Uses greedy matching for middle parts (finds first occurrence of each part in order)
-//   - Consecutive wildcards (**, ***, etc.) are treated as a single wildcard
-//   - For patterns with multiple wildcards and repeated literal parts (e.g., "a*c*c"),
-//     the algorithm ensures all parts fit without overlapping by checking that middle
-//     parts don't extend past where the suffix begins
-//
-// Parameters:
-//   - name: The string to match
-//   - pattern: The pattern to match against (may contain '*' wildcards)
-//
-// Returns:
-//   - bool: true if the name matches the pattern, false otherwise
-//
-// Examples:
-//   - matchPattern("vpc", "vpc") returns true (exact match)
-//   - matchPattern("legacy-vpc", "legacy-*") returns true (wildcard suffix)
-//   - matchPattern("vpc-test", "*-test") returns true (wildcard prefix)
-//   - matchPattern("prod-vpc-test", "*-vpc-*") returns true (wildcard both sides)
-//   - matchPattern("abc", "a**c") returns true (consecutive wildcards)
-//   - matchPattern("acc", "a*c*c") returns true (repeated parts, wildcards match zero chars)
-//   - matchPattern("vpc", "s3") returns false (no match)
+// matchPattern reports whether name matches pattern, in which '*' matches zero or more characters:
+// "vpc" exactly, "legacy-*" a prefix, "*-test" a suffix, "*-vpc-*" a substring. Consecutive
+// wildcards act as one.
 func matchPattern(name, pattern string) bool {
-	// If pattern has no wildcards, do exact match
 	if !strings.Contains(pattern, "*") {
 		return name == pattern
 	}
 
-	// Split pattern by '*' to get the literal parts
 	parts := strings.Split(pattern, "*")
-
-	if !patternBoundsMatch(name, parts) {
+	first, last := parts[0], parts[len(parts)-1]
+	if !strings.HasPrefix(name, first) || !strings.HasSuffix(name, last) || len(name) < len(first)+len(last) {
 		return false
 	}
 
-	pos, ok := orderedMiddlePartsEnd(name, parts)
-	return ok && suffixDoesNotOverlap(name, parts, pos)
+	// The middle parts must appear in order between the prefix and the suffix. Taking each at its
+	// first occurrence is safe, because a later occurrence leaves less room for the rest.
+	middle := name[len(first) : len(name)-len(last)]
+	for _, part := range parts[1 : len(parts)-1] {
+		index := strings.Index(middle, part)
+		if index < 0 {
+			return false
+		}
+		middle = middle[index+len(part):]
+	}
+	return true
 }
 
-func patternBoundsMatch(name string, parts []string) bool {
-	first := parts[0]
-	last := parts[len(parts)-1]
-
-	if first != "" && !strings.HasPrefix(name, first) {
-		return false
-	}
-	if last != "" && !strings.HasSuffix(name, last) {
-		return false
-	}
-
-	return first == "" || last == "" || len(name) >= len(first)+len(last)
-}
-
-func orderedMiddlePartsEnd(name string, parts []string) (int, bool) {
-	pos := 0
-	for i, part := range parts {
-		if part == "" {
-			continue
-		}
-		if i == 0 {
-			pos = len(part)
-			continue
-		}
-		if i == len(parts)-1 {
-			break
-		}
-
-		idx := strings.Index(name[pos:], part)
-		if idx == -1 {
-			return 0, false
-		}
-		pos += idx + len(part)
-	}
-
-	return pos, true
-}
-
-func suffixDoesNotOverlap(name string, parts []string, pos int) bool {
-	last := parts[len(parts)-1]
-	if last == "" {
-		return true
-	}
-
-	return pos <= len(name)-len(last)
-}
-
-// trimQuotes removes surrounding single or double quotes from a string.
-// If the string doesn't have matching quotes on both ends, it returns the original string.
-//
-// Parameters:
-//   - s: The string to trim quotes from
-//
-// Returns:
-//   - string: The string with quotes removed, or the original string if no matching quotes found
-//
-// Examples:
-//   - `"hello"` returns `hello`
-//   - `'hello'` returns `hello`
-//   - `hello` returns `hello`
-//   - `"hello'` returns `"hello'` (mismatched quotes)
+// trimQuotes removes matching surrounding single or double quotes, if any.
 func trimQuotes(s string) string {
-	if len(s) >= 2 {
-		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
-			return s[1 : len(s)-1]
-		}
+	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+		return s[1 : len(s)-1]
 	}
 	return s
 }

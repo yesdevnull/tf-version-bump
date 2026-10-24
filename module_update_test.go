@@ -36,46 +36,11 @@ func captureStdoutAndStderr(t *testing.T, fn func()) capturedStreams {
 	t.Helper()
 	testOutputMu.Lock()
 	defer testOutputMu.Unlock()
-	stdoutReader, stdoutWriter, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create stdout pipe: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = stdoutWriter.Close()
-		_ = stdoutReader.Close()
-	})
-	stderrReader, stderrWriter, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create stderr pipe: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = stderrWriter.Close()
-		_ = stderrReader.Close()
-	})
-	originalStdout, originalStderr := os.Stdout, os.Stderr
-	restore := func() { os.Stdout, os.Stderr = originalStdout, originalStderr }
-	t.Cleanup(restore)
-	defer restore()
-	os.Stdout, os.Stderr = stdoutWriter, stderrWriter
-	stdout, stdoutDone := startPipeDrain(stdoutReader)
-	stderr, stderrDone := startPipeDrain(stderrReader)
+
+	stdout := redirectStream(t, &os.Stdout)
+	stderr := redirectStream(t, &os.Stderr)
 	fn()
-	restore()
-	if err := stdoutWriter.Close(); err != nil {
-		t.Fatalf("close stdout writer: %v", err)
-	}
-	if err := stderrWriter.Close(); err != nil {
-		t.Fatalf("close stderr writer: %v", err)
-	}
-	<-stdoutDone
-	<-stderrDone
-	if err := stdoutReader.Close(); err != nil {
-		t.Fatalf("close stdout reader: %v", err)
-	}
-	if err := stderrReader.Close(); err != nil {
-		t.Fatalf("close stderr reader: %v", err)
-	}
-	return capturedStreams{stdout: stdout.String(), stderr: stderr.String()}
+	return capturedStreams{stdout: stdout(), stderr: stderr()}
 }
 
 func TestUpdateModuleVersionContract(t *testing.T) {
