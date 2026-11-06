@@ -3,11 +3,11 @@ module github.com/yesdevnull/tf-version-bump
 go 1.25.0
 
 require (
-	github.com/bmatcuk/doublestar/v4 v4.10.3
+	github.com/bmatcuk/doublestar/v4 v4.10.4
 	github.com/hashicorp/hcl/v2 v2.25.0
 	github.com/hashicorp/terraform-registry-address v0.5.0
 	github.com/zclconf/go-cty v1.19.0
-	go.yaml.in/yaml/v3 v3.0.5
+	go.yaml.in/yaml/v3 v3.0.6
 )
 
 require (
